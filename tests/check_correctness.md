@@ -3,7 +3,7 @@
 
 |op name| status |
 |:---|:---|
-|flash_attention  |    |
+|flash_attention  |done|
 |RoPE             |done (绝大数值对应上)|
 |q8_1             |done|
 |top_k_moe        |done|
