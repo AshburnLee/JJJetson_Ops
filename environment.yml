@@ -1,0 +1,7 @@
+name: cuda-ops
+channels:
+  - defaults
+dependencies:
+  - python=3.12.10
+  - pybind11
+  - pip
