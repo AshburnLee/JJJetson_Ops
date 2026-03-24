@@ -12,7 +12,7 @@ conda activate cuda-ops
 PYTHONPATH="./python:${PYTHONPATH}" python ./tests/test_flash_attention.py
 
 # 复制conda 环境
-`conda env create --file environment.yml`
+conda env create --file environment.yml
 ~~~
 
 ---
