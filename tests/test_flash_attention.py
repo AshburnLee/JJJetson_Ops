@@ -153,47 +153,52 @@ def test_fa():
 
     dst = np.zeros((128, 13, 16, 1), dtype=np.float32, order="F")
     scale = 1.0  # kernel 里目前未使用 scale，这里传 1.0 即可
-    m_out = np.zeros((8, 26), dtype=np.float32)
-    l_out = np.zeros((8, 26), dtype=np.float32)
-    S_out = np.zeros((8, 8, 26, 32), dtype=np.float32)
-    row_sum_out = np.zeros((8, 8, 26), dtype=np.float32)
-    scale_old_out = np.zeros((8, 8, 26), dtype=np.float32)
-    scale_new_out = np.zeros((8, 8, 26), dtype=np.float32)
-    exp_val_out = np.zeros((8, 8, 26, 32), dtype=np.float32)
+    # 判断模块是否含有 debug 这个接口
+    debug_mode = hasattr(flash_attention_me, "launch_flash_attention_debug_ml")
 
-    flash_attention_me.launch_flash_attention_debug_ml(Q, K, V, dst, scale,
-                                                       m_out, l_out, S_out,
-                                                       row_sum_out, scale_old_out, scale_new_out,
-                                                       exp_val_out)
+    if debug_mode:
+        m_out = np.zeros((8, 26), dtype=np.float32)
+        l_out = np.zeros((8, 26), dtype=np.float32)
+        S_out = np.zeros((8, 8, 26, 32), dtype=np.float32)
+        row_sum_out = np.zeros((8, 8, 26), dtype=np.float32)
+        scale_old_out = np.zeros((8, 8, 26), dtype=np.float32)
+        scale_new_out = np.zeros((8, 8, 26), dtype=np.float32)
+        exp_val_out = np.zeros((8, 8, 26, 32), dtype=np.float32)
+
+        flash_attention_me.launch_flash_attention_debug_ml(
+            Q, K, V, dst, scale,
+            m_out, l_out, S_out,
+            row_sum_out, scale_old_out, scale_new_out,
+            exp_val_out,
+        )
+    else:
+        flash_attention_me.launch_flash_attention(Q, K, V, dst, scale)
 
     dst_ref, m_ref, l_ref, S_ref, row_sum_ref, scale_old_ref, scale_new_ref, exp_val_ref = flash_attention_ref(Q, K, V)
 
     print("ref dst[:,0,0,0]: \n", dst_ref[:,0,0,0])
     print("me  dst[:,0,0,0]: \n", dst[:,0,0,0])
     
-    # 对比 m/l
-    # for b in range(8):
-    #     print(f"[ref] block {b} m[26]:", to_5dp_strings(m_ref[b]))
-    #     print(f"[ref] block {b} l[26]:", to_5dp_strings(l_ref[b]))
+    if debug_mode:
+        # 对比 m/l
+        ml_diff_m = np.max(np.abs(m_out - m_ref))
+        ml_diff_l = np.max(np.abs(l_out - l_ref))
+        print("max abs diff m:", ml_diff_m)
+        print("max abs diff l:", ml_diff_l)
 
-    ml_diff_m = np.max(np.abs(m_out - m_ref))
-    ml_diff_l = np.max(np.abs(l_out - l_ref))
-    print("max abs diff m:", ml_diff_m)
-    print("max abs diff l:", ml_diff_l)
+        # 对比 S_shared（pass1 的 8 tiles）
+        s_shared_diff = np.max(np.abs(S_out - S_ref))
+        print("max abs diff S_shared:", s_shared_diff)
 
-    # 对比 S_shared（pass1 的 8 tiles）
-    s_shared_diff = np.max(np.abs(S_out - S_ref))
-    print("max abs diff S_shared:", s_shared_diff)
-
-    # 对比 row_sum / scale_old / scale_new
-    row_sum_diff = np.max(np.abs(row_sum_out - row_sum_ref))
-    scale_old_diff = np.max(np.abs(scale_old_out - scale_old_ref))
-    scale_new_diff = np.max(np.abs(scale_new_out - scale_new_ref))
-    exp_diff = np.max(np.abs(exp_val_out - exp_val_ref))
-    print("max abs diff row_sum:", row_sum_diff)
-    print("max abs diff scale_old:", scale_old_diff)
-    print("max abs diff scale_new:", scale_new_diff)
-    print("max abs diff exp_val:", exp_diff)
+        # 对比 row_sum / scale_old / scale_new
+        row_sum_diff = np.max(np.abs(row_sum_out - row_sum_ref))
+        scale_old_diff = np.max(np.abs(scale_old_out - scale_old_ref))
+        scale_new_diff = np.max(np.abs(scale_new_out - scale_new_ref))
+        exp_diff = np.max(np.abs(exp_val_out - exp_val_ref))
+        print("max abs diff row_sum:", row_sum_diff)
+        print("max abs diff scale_old:", scale_old_diff)
+        print("max abs diff scale_new:", scale_new_diff)
+        print("max abs diff exp_val:", exp_diff)
 
     # 对比最终 dst
     diff = np.max(np.abs(dst - dst_ref))

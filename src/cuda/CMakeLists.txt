@@ -58,5 +58,10 @@ foreach(t gated_unary_cuda
   target_include_directories(${t} PRIVATE
     ${CMAKE_SOURCE_DIR}/include
   )
+
+  # Debug 构建时 为每一个 xxx_cuda 对象编译debug相关路径
+  if(CMAKE_BUILD_TYPE MATCHES "Debug")
+    target_compile_definitions(${t} PRIVATE MY_OPS_DEBUG=1)
+  endif()
 endforeach()
 

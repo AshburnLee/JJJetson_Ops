@@ -11,14 +11,16 @@ __global__ void flash_attn_tile_kernel(
                 const half* __restrict__ K,  // [128, 256, 8, 1] 
                 const half* __restrict__ V,  // [128, 256, 8, 1]
                 float* __restrict__ dst,      // 输出 [128, 13, 16, 1]
-                const float scale,            // 缩放因子
-                float* __restrict__ m_out,    // [8,26] optional (可 nullptr)
-                float* __restrict__ l_out,    // [8,26] optional (可 nullptr)
-                float* __restrict__ s_out,    // [8,8,26,32] optional (可 nullptr)
-                float* __restrict__ row_sum_out,   // [8,8,26] optional (可 nullptr)
-                float* __restrict__ scale_old_out, // [8,8,26] optional (可 nullptr)
-                float* __restrict__ scale_new_out, // [8,8,26] optional (可 nullptr)
-                float* __restrict__ exp_val_out    // [8,8,26,32] optional (可 nullptr)
+                const float scale             // 缩放因子
+#if defined(MY_OPS_DEBUG)
+                , float* __restrict__ m_out,       // [8,26] optional (可 nullptr)
+                float* __restrict__ l_out,       // [8,26] optional (可 nullptr)
+                float* __restrict__ s_out,       // [8,8,26,32] optional (可 nullptr)
+                float* __restrict__ row_sum_out,    // [8,8,26] optional (可 nullptr)
+                float* __restrict__ scale_old_out,  // [8,8,26] optional (可 nullptr)
+                float* __restrict__ scale_new_out,  // [8,8,26] optional (可 nullptr)
+                float* __restrict__ exp_val_out     // [8,8,26,32] optional (可 nullptr)
+#endif
                 ){
     constexpr int HEAD_DIM = 128;
     constexpr int TOKENS_PER_Q = 13;
@@ -131,13 +133,15 @@ __global__ void flash_attn_tile_kernel(
                 sum += __half2float(q->x) * __half2float(k->x) + __half2float(q->y) * __half2float(k->y);
             }
             s_shared[i][j] = sum;
-            // TODO: 写成debug mode
+#if defined(MY_OPS_DEBUG)
+            // 仅 debug 编译路径下，把 logits(对应的 s_shared) dump 出来
             if (s_out != nullptr) {
                 int block = blockIdx.x;
                 int tile  = tile_id;
                 int idx4  = (((block * LOOP_KV) + tile) * (TOKENS_PER_Q * QHEAD_PER_BLOCK) + i) * KV_TOKEN_TILE + j;
                 s_out[idx4] = sum;
             }
+#endif
         }
         __syncthreads();
 
@@ -159,11 +163,13 @@ __global__ void flash_attn_tile_kernel(
 
             // 2.3.3: Warp 内计算 exp(s - row_max) 并归约 sum
             float exp_val = expf(s - row_max);
-            // TODO: 写成debug mode
+#if defined(MY_OPS_DEBUG)
+            // 仅 debug 编译路径下，把每个 (row, col) 的 exp(logit) dump 出来
             if (exp_val_out != nullptr) {
                 int idx4 = (((blockIdx.x * LOOP_KV) + tile_id) * 26 + r) * 32 + lane_id;
                 exp_val_out[idx4] = exp_val;
             }
+#endif
             // float row_sum = warp_reduce_down_sum(exp_val);
             float row_sum = warp_reduce_xor_sum(exp_val);
 
@@ -176,18 +182,21 @@ __global__ void flash_attn_tile_kernel(
                 l[r] = l[r] * scale_old + row_sum * scale_new;
                 m[r] = m_new;
 
-                // TODO: 写成debug mode
+#if defined(MY_OPS_DEBUG)
+                // 仅 debug 编译路径下 dump 归一化所需中间量
                 if (row_sum_out != nullptr && scale_old_out != nullptr && scale_new_out != nullptr) {
                     int idx3 = ((blockIdx.x * LOOP_KV) + tile_id) * 26 + r; // [8,8,26]
                     row_sum_out[idx3] = row_sum;
                     scale_old_out[idx3] = scale_old;
                     scale_new_out[idx3] = scale_new;
                 }
+#endif
             }
         }
         __syncthreads();
     }
 
+#if defined(MY_OPS_DEBUG)
     // debug: dump m/l after pass1
     if (m_out != nullptr && l_out != nullptr) {
         // 8 blocks in x dimension
@@ -197,6 +206,7 @@ __global__ void flash_attn_tile_kernel(
         }
         __syncthreads();
     }
+#endif
 
     /// 3. 
     // Loop_8_times_{
@@ -339,11 +349,15 @@ extern "C" void flash_attention(
     dim3 threads(32, 4, 1);  // 32 * 4 = 128 threads / block
     dim3 blocks(8, 1, 1);    // 8 blocks -> 8 * 2 = 16 Q heads（QHEAD_PER_BLOCK=2）
 
-    // release call, debug 内容输入空
+#if defined(MY_OPS_DEBUG)
+    // debug 构建下，flash_attention 本身只做 dst 计算，debug 参数保持空
     flash_attn_tile_kernel<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale,
                                                      nullptr, nullptr, nullptr,
                                                      nullptr, nullptr, nullptr,
                                                      nullptr);
+#else
+    flash_attn_tile_kernel<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale);
+#endif
     LAUNCH_CHECK();
 
     CUDA_CHECK(cudaMemcpyAsync(dst_host, d_dst, dst_elems * sizeof(float), cudaMemcpyDeviceToHost, stream));
@@ -356,6 +370,7 @@ extern "C" void flash_attention(
     CUDA_CHECK(cudaFreeAsync(d_dst, nullptr));
 }
 
+#if defined(MY_OPS_DEBUG)
 // debug 入口：额外输出每个 block 的 m/l(float32, shape [8,26])和 S_tile(float32, shape [8,8,26,32])
 extern "C" void flash_attention_debug(
                 const uint16_t* q_host,
@@ -452,3 +467,4 @@ extern "C" void flash_attention_debug(
     CUDA_CHECK(cudaFreeAsync(d_scale_new, nullptr));
     CUDA_CHECK(cudaFreeAsync(d_exp_val,   nullptr));
 }
+#endif  // MY_OPS_DEBUG

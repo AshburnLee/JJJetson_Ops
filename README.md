@@ -3,8 +3,10 @@
 
 ~~~sh
 conda activate cuda-ops
-# 构建所有 op
+# 构建所有 op，默认是 release，
 ./build_all.sh
+# debug mode：
+./build_all.sh --debug
 # 执行正确性检测
 ./run_tests.sh
 

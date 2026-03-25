@@ -14,6 +14,7 @@ extern "C" void flash_attention(
     float* dst_host,
     float scale);
 
+#if defined(MY_OPS_DEBUG)
 extern "C" void flash_attention_debug(
     const uint16_t* q_host,
     const uint16_t* k_host,
@@ -27,6 +28,7 @@ extern "C" void flash_attention_debug(
     float* scale_old_host,
     float* scale_new_host,
     float* exp_val_host);
+#endif  // MY_OPS_DEBUG
 
 // Python 友好的包装函数
 void flash_attention_py(
@@ -54,6 +56,7 @@ void flash_attention_py(
         scale);
 }
 
+#if defined(MY_OPS_DEBUG)
 void flash_attention_debug_py(
     py::buffer q,
     py::buffer k,
@@ -95,6 +98,7 @@ void flash_attention_debug_py(
     flash_attention_debug(q_ptr, k_ptr, v_ptr, dst_ptr, scale,
                              m_ptr, l_ptr, s_ptr, rs_ptr, so_ptr, sn_ptr, ev_ptr);
 }
+#endif  // MY_OPS_DEBUG
 
 PYBIND11_MODULE(flash_attention_me, m) {
     m.doc() = "Python binding for CUDA Flash Attention";
@@ -108,6 +112,7 @@ PYBIND11_MODULE(flash_attention_me, m) {
         py::arg("dst"),
         py::arg("scale"));
 
+#if defined(MY_OPS_DEBUG)
     m.def(
         "launch_flash_attention_debug_ml",
         &flash_attention_debug_py,
@@ -124,5 +129,6 @@ PYBIND11_MODULE(flash_attention_me, m) {
         py::arg("scale_old_out"),
         py::arg("scale_new_out"),
         py::arg("exp_val_out"));
+#endif  // MY_OPS_DEBUG
 }
 

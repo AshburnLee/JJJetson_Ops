@@ -8,7 +8,11 @@ BUILD_DIR="${ROOT_DIR}/build"
 mkdir -p "${BUILD_DIR}"
 cd "${BUILD_DIR}"
 
-cmake -DCMAKE_BUILD_TYPE=Release ..
+BUILD_TYPE="Release"
+if [[ "${1:-}" == "--debug" ]]; then
+  BUILD_TYPE="Debug"
+fi
+cmake -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" ..
 make -j"$(( $(nproc) - 2 ))"
 
 echo "Done building. Python extensions are in: ${ROOT_DIR}/python"
