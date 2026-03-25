@@ -7,14 +7,21 @@ conda activate cuda-ops
 ./build_all.sh
 # debug mode：
 ./build_all.sh --debug
+
+# 复制conda 环境
+conda env create --file environment.yml
+~~~
+
+~~~sh
 # 执行正确性检测
 ./run_tests.sh
 
 # 测试单个op
-PYTHONPATH="./python:${PYTHONPATH}" python ./tests/test_flash_attention.py
+PYTHONPATH="${PWD}/python:${PYTHONPATH}" python ./tests/test_flash_attention.py
 
-# 复制conda 环境
-conda env create --file environment.yml
+# kernel 基本性能, （ncu需要 sudo 权限）
+export PYTHONPATH="$PWD/python"
+sudo -E env PYTHONPATH="$PYTHONPATH" $(which ncu) --section SpeedOfLight $(which python) tests/test_flash_attention.py
 ~~~
 
 ---
