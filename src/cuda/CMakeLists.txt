@@ -10,7 +10,7 @@
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -fPIC")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -fPIC -lineinfo")
 set(CMAKE_CUDA_ARCHITECTURES 87)
 
 add_library(gated_unary_cuda OBJECT
