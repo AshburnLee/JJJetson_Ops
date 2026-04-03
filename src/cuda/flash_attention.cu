@@ -1,4 +1,5 @@
 #include <cuda_runtime.h>
+#include <cstdio>
 #include <vector>
 #include "cuda_fp16.h"   // __device__ __host__ __half2 make_half2(__half x, __half y);
 #include "cuda_utils.cuh"
@@ -350,6 +351,11 @@ extern "C" void flash_attention(
     dim3 blocks(8, 1, 1);    // 8 blocks -> 8 * 2 = 16 Q heads（QHEAD_PER_BLOCK=2）
 
 #if defined(MY_OPS_DEBUG)
+    std::printf(
+        "Kernel launch config: block=(%u,%u,%u), grid=(%u,%u,%u)\n",
+        threads.x, threads.y, threads.z,
+        blocks.x, blocks.y, blocks.z);
+    std::fflush(stdout);
     // debug 构建下，flash_attention 本身只做 dst 计算，debug 参数保持空
     flash_attn_tile_kernel<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale,
                                                      nullptr, nullptr, nullptr,
@@ -437,6 +443,10 @@ extern "C" void flash_attention_debug(
     dim3 threads(32, 4, 1);
     dim3 blocks(8, 1, 1);
 
+    std::printf(
+        "Kernel launch config: block=(%u,%u,%u), grid=(%u,%u,%u)\n",
+        threads.x, threads.y, threads.z,
+        blocks.x, blocks.y, blocks.z);
     flash_attn_tile_kernel<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale,
                                                      d_m, d_l, d_s,
                                                      d_row_sum, d_scale_old, d_scale_new,

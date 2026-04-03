@@ -1,4 +1,5 @@
 #include <cuda_runtime.h>
+#include <cstdio>
 #include <vector>
 #include "cuda_utils.cuh"
 
@@ -93,6 +94,12 @@ static void unary_gated(const T * src0, const T * src1, T * dst,
     // num_block = 312
     const int64_t blocks = (dst_elem + CUDA_GLU_BLOCK_SIZE - 1) / CUDA_GLU_BLOCK_SIZE;
     const int64_t threads = CUDA_GLU_BLOCK_SIZE;
+#if defined(MY_OPS_DEBUG)
+    std::printf(
+        "Kernel launch config: block=(%lld, 1, 1), grid=(%lld, 1, 1)\n",
+        static_cast<long long>(threads), static_cast<long long>(blocks));
+    std::fflush(stdout);
+#endif
     unary_gated_op_kernel<op><<<blocks, threads, 0, stream>>>(
         d_src0, d_src1, d_dst, dst_elem, dst_ne0, o0, o1);
     LAUNCH_CHECK();

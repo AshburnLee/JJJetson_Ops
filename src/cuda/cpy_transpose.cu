@@ -1,4 +1,5 @@
 #include <cuda_runtime.h>
+#include <cstdio>
 #include <vector>
 #include "cuda_utils.cuh"
 
@@ -95,7 +96,13 @@ extern "C" void cpy_transpose(
                     (n_elem/(ne0_0*ne0_1) + CUDA_CPY_BLOCK_NM - 1) / CUDA_CPY_BLOCK_NM);
     // num_threads: (32,8,1)
     dim3 threads(CUDA_CPY_TILE_DIM_2D, CUDA_CPY_BLOCK_ROWS, 1);
-
+#if defined(MY_OPS_DEBUG)
+    std::printf(
+        "Kernel launch config: Blcok=(%u,%u,%u), grid=(%u,%u,%u))\n",
+        threads.x, threads.y, threads.z,
+        blocks.x, blocks.y, blocks.z);
+    std::fflush(stdout);
+#endif 
     cpy_transpose_kernel<float><<<blocks, threads, 0, stream>>>
         (d_csrc, d_cdst, n_elem, ne0_0, ne0_1, ne0_2);
     LAUNCH_CHECK();

@@ -199,6 +199,13 @@ extern "C" void top_k_moe(const float* logits,
     const int rows_per_block = 4;
     dim3 blocks((n_tokens + rows_per_block - 1) / rows_per_block, 1, 1);
     dim3 threads(WARP_SIZE, rows_per_block, 1);
+#if defined(MY_OPS_DEBUG)
+    std::printf(
+        "Kernel launch config: block=(%u,%u,%u), grid=(%u,%u,%u)\n",
+        threads.x, threads.y, threads.z,
+        blocks.x, blocks.y, blocks.z);
+    std::fflush(stdout);
+#endif
     switch (n_experts) {
         case 2: 
             top_k_moe_kernel<2,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);

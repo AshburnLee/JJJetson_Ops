@@ -125,6 +125,14 @@ extern "C" void q8_1(float* input, uint8_t* output, std::vector<int>& input_dims
     const dim3 blocks(ne0_1, blocks_y, ne0_2*ne0_3);         // (13,4,1)
     const dim3 threads(block_size, 1, 1);                 // (128,1,1)
 
+#if defined(MY_OPS_DEBUG)
+    std::printf(
+        "Kernel launch config: block=(%u,%u,%u), grid=(%u,%u,%u)\n",
+        threads.x, threads.y, threads.z,
+        blocks.x, blocks.y, blocks.z
+        );
+    std::fflush(stdout);
+#endif
     quantize_q8_1_kernel<<<blocks, threads, 0, stream>>>(
             d_x, d_y,
             ne0_0, s0_1, s0_2, s0_3,

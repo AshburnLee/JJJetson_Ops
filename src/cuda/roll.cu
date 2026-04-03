@@ -89,6 +89,13 @@ extern "C" void roll(
     const dim3 threads(CUDA_ROPE_BLOCK_SIZE, 1, 1);
     const int blocks_x = (n_elem + CUDA_ROPE_BLOCK_SIZE - 1) / (CUDA_ROPE_BLOCK_SIZE);
     const dim3 blocks(blocks_x, 1, 1);
+#if defined(MY_OPS_DEBUG)
+    std::printf(
+        "Kernel launch config: block=(%u,%u,%u), grid=(%u,%u,%u)\n",
+        threads.x, threads.y, threads.z,
+        blocks.x, blocks.y, blocks.z);
+    std::fflush(stdout);
+#endif
     roll_kernel<<<blocks, threads, 0, stream>>>(d_x, d_y, ne0_0, ne0_1, ne0_2, ne0_3, shift0, shift1, shift2, shift3);
     LAUNCH_CHECK();
 

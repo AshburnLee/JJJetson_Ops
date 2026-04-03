@@ -167,6 +167,13 @@ static void cpy_conitune_impl(
     // cpy_continue_kernel 函数没有表示类型的模版参数，我出纳入的 src_t* 的 d_src 和 dst_t* 的d_dst，肯定报错
     // 下面的 src_t, dst_t 仅仅是 cuda_cast_t 的模版参数。
     // 所以只能传入 cpy_continue_kernel const char*的d_src 和 char* 的 d_dst！！ 
+#if defined(MY_OPS_DEBUG)
+    std::printf(
+        "Kernel launch config: block=(%lld,1,1), grid=(%lld,1,1)\n",
+        static_cast<long long>(CUDA_CPY_BLOCK_SIZE),
+        static_cast<long long>(num_blocks));
+    std::fflush(stdout);
+#endif
     cpy_continue_kernel<cuda_cast_t<src_t, dst_t>><<<num_blocks, CUDA_CPY_BLOCK_SIZE, 0, stream>>>
         (reinterpret_cast<const char*>(d_src), 
          reinterpret_cast<char*>(d_dst), n_elem,

@@ -120,6 +120,14 @@ extern "C" void rope(float* input, int* pos, float* output, std::vector<int>& in
     const rope_corr_dims corr_dims = {24.f, 41.f};
     const float attn_factor = 1.f;
 
+#if defined(MY_OPS_DEBUG)
+    std::printf(
+        "Kernel launch config: block=(%u,%u,%u), grid=(%u,%u,%u)\n",
+        threads.x, threads.y, threads.z,
+        blocks.x, blocks.y, blocks.z
+        );
+    std::fflush(stdout);
+#endif
     rope_neox_kernel<true><<<blocks, threads, 0, stream>>>(d_x, d_y, ne0_0, ne0_1, s0_1, s0_2, n_dims, 
         d_pos,
         freq_scale,
