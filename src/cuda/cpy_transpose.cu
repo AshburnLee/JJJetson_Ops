@@ -21,12 +21,12 @@ static __global__ void cpy_transpose_kernel(
 
     const int64_t nmat = ne / (ne0_0 * ne0_1);
 
-    // 转置前索引
+    // 逻辑 (dim0, dim1, batch)：sx/sy 覆盖子块的两维；blockIdx.x -> dim0，blockIdx.y -> dim1
     const int sx = blockIdx.x * CUDA_CPY_TILE_DIM_2D + threadIdx.x;
     const int sy = blockIdx.y * CUDA_CPY_TILE_DIM_2D + threadIdx.y;
-    // 转置之后的索引 从读写示意图推导出
-    const int tx = blockIdx.y/*画出示意图就明了了*/ * CUDA_CPY_TILE_DIM_2D + threadIdx.x;
-    const int ty = blockIdx.x/*画出示意图就明了了*/ * CUDA_CPY_TILE_DIM_2D + threadIdx.y;
+    // 交换 dim0、dim1, tx 沿原 dim1，ty 沿原 dim0
+    const int tx = blockIdx.y * CUDA_CPY_TILE_DIM_2D + threadIdx.x; //画出示意图就明了了
+    const int ty = blockIdx.x * CUDA_CPY_TILE_DIM_2D + threadIdx.y; //画出示意图就明了了
 
     // block wise 每一个block都有一个 [32][32+1] 的 tile
     __shared__ float tile[CUDA_CPY_TILE_DIM_2D][CUDA_CPY_TILE_DIM_2D + 1];
@@ -41,17 +41,12 @@ static __global__ void cpy_transpose_kernel(
         // j = 0/8/16/24，将 src[] 内容循环地读到 tile[row][col]，读转之前，故与 x，y 相关
         // row_id/col_id 是数据 tile 的索引；src_idx 是输入数据索引
         for (int j = 0; j < CUDA_CPY_TILE_DIM_2D/*=32*/; j += CUDA_CPY_BLOCK_ROWS/*=8*/) {
-            if(sx < ne0_1 && sy + j < ne0_0) {
+            if (sx < ne0_0 && sy + j < ne0_1) {
                 const int row_id = threadIdx.y + j; // (0~7) + j
                 const int col_id = threadIdx.x * sizeof(float)/sizeof(T); 
-                // 转之前 [ne0_0][ne0_1][ne0_2] 
+                // 列主序 (dim0,dim1,batch)
                 T *tile2 = reinterpret_cast<T*>(tile[row_id]);
-                // row-major indx
-                const int src_idx = sx + (sy + j) * /*num_col=*/ne0_1 + imat * ne0_0 * ne0_1;
-                // col-major indx
-                // const int src_idx = (sy + j)              // 行 r
-                //                     + sx * ne0_0           // 列 c
-                //                     + imat * ne0_0 * ne0_1; // batch m
+                const int src_idx = sx + (sy + j) * ne0_0 + imat * (ne0_0 * ne0_1);
                 tile2[col_id] = src[src_idx];
             }
         }
@@ -62,16 +57,10 @@ static __global__ void cpy_transpose_kernel(
         // j = 0/8/16/24，将 tile[row][col] 内容写入 dst[]，读转之后，故与 tx,ty 相关
         // row_id/col_id 是数据 tile 的索引；dst_idx 是目标数据索引
         for (int j = 0; j < CUDA_CPY_TILE_DIM_2D/*=32*/; j += CUDA_CPY_BLOCK_ROWS/*=8*/) {
-            if (ty + j < ne0_1 && tx < ne0_0) {
-                const int row_id = threadIdx.x; // 0~31
+            if (tx < ne0_1 && ty + j < ne0_0) {
+                const int row_id = threadIdx.x;
                 const int col_id = (threadIdx.y + j) * sizeof(float)/sizeof(T);
-                // 转之后 [ne0_1][ne0_0][ne0_2]
-                // row-major indx
-                const int dst_idx = tx + (ty + j) * /*转之后num_col=*/ne0_0 + imat * ne0_0 * ne0_1;
-                // col-major indx
-                // const int dst_idx = (ty + j)              // 行' = 列 c
-                //                     + tx * ne0_1           // 列' = 行 r
-                //                     + imat * ne0_0 * ne0_1; // batch m 不变
+                const int dst_idx = tx + (ty + j) * ne0_1 + imat * (ne0_0 * ne0_1);
                 const T *tile2 = reinterpret_cast<const T*>(tile[row_id]);
                 dst[dst_idx] = tile2[col_id];
             }
@@ -84,10 +73,10 @@ extern "C" void cpy_transpose(
         char * cdst,
         const std::vector<int>& src_dims) {
 
-    // 转置 ne0_0 和 ne0_1
-    const int ne0_2 = src_dims[0];
-    const int ne0_0 = src_dims[1];
-    const int ne0_1 = src_dims[2];
+    // src_dims = (dim0, dim1, batch)；转置交换 dim0 与 dim1
+    const int ne0_0 = src_dims[0];
+    const int ne0_1 = src_dims[1];
+    const int ne0_2 = src_dims[2];
 
     const int n_elem = ne0_0 * ne0_1 * ne0_2; // ne[3] is 1 assumed
 
@@ -100,10 +89,10 @@ extern "C" void cpy_transpose(
     CUDA_CHECK(cudaMallocAsync(&d_cdst, n_elem * sizeof(float),stream));
     CUDA_CHECK(cudaMemcpyAsync(d_csrc, csrc, n_elem * sizeof(float), cudaMemcpyHostToDevice,stream));
 
-    // num_blocks: ((ne0_1 + 32-1)/32, (ne0_0 + 32-1)/32, (ne/(ne0_1*ne0_0) + 8-1)/8)
-    dim3 blocks( (ne0_1 + CUDA_CPY_TILE_DIM_2D - 1) / CUDA_CPY_TILE_DIM_2D,
-                    (ne0_0 + CUDA_CPY_TILE_DIM_2D - 1) / CUDA_CPY_TILE_DIM_2D,
-                    (n_elem/(ne0_1*ne0_0) + CUDA_CPY_BLOCK_NM - 1) / CUDA_CPY_BLOCK_NM);
+    // grid.x -> dim0，grid.y -> dim1，grid.z -> batch 条带
+    dim3 blocks( (ne0_0 + CUDA_CPY_TILE_DIM_2D - 1) / CUDA_CPY_TILE_DIM_2D,
+                    (ne0_1 + CUDA_CPY_TILE_DIM_2D - 1) / CUDA_CPY_TILE_DIM_2D,
+                    (n_elem/(ne0_0*ne0_1) + CUDA_CPY_BLOCK_NM - 1) / CUDA_CPY_BLOCK_NM);
     // num_threads: (32,8,1)
     dim3 threads(CUDA_CPY_TILE_DIM_2D, CUDA_CPY_BLOCK_ROWS, 1);
 
