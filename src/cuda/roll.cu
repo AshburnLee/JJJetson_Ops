@@ -25,7 +25,7 @@ static __global__ void roll_kernel(const float * __restrict__ src,
                                  const int     shift1,
                                  const int     shift2,
                                  const int     shift3) {
-    // grid 和 block 都是只有x方向有值，故索引计算只有x
+    // 《核心公式》， 使用方式与 cpy_continue 完全相同
     const int64_t idx       = threadIdx.x + int64_t(blockDim.x) * blockIdx.x; 
     const int64_t stride0   = 1;
     const int64_t stride1   = ne0_0;
