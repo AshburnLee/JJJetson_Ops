@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import flash_attention_me
 
@@ -154,7 +155,7 @@ def test_fa():
     dst = np.zeros((128, 13, 16, 1), dtype=np.float32, order="F")
     scale = 1.0  # kernel 里目前未使用 scale，这里传 1.0 即可
     # 判断模块是否含有 debug 这个接口
-    debug_mode = hasattr(flash_attention_me, "launch_flash_attention_debug_ml")
+    debug_mode = hasattr(flash_attention_me, "launch_flash_attention_debug_ml") and os.environ.get("DEBUG_MY_OPS", "") == "1"
 
     if debug_mode:
         m_out = np.zeros((8, 26), dtype=np.float32)

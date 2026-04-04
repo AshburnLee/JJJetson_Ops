@@ -11,8 +11,19 @@
 
 # define CUDA_CPY_BLOCK_SIZE 64
 
+// 计算含有padding的最后一个真实值的其实位置
+static int add_padding_to_storage(int ne0, int ne1, int ne2, int ne3,
+                                    int nb0, int nb1, int nb2, int nb3,
+                                    size_t elem_size) {
+    const int last_off = (ne0 - 1) * nb0 +
+                         (ne1 - 1) * nb1 +
+                         (ne2 - 1) * nb2 +
+                         (ne3 - 1) * nb3;
+    return last_off + elem_size;
+}
+
 template<typename dst_t, typename src_t>
-__host__ __device__ inline dst_t cuda_cast(src_t x) {
+static __host__ __device__ inline dst_t cuda_cast(src_t x) {
     if constexpr (std::is_same_v<dst_t, src_t>) {
         return x;
     // 如果 dst_t 是 bf16，先将 src_t 转为 float，仅为转为 bf16
@@ -86,33 +97,35 @@ static __global__ void cpy_continue_kernel(const char * src, char * dst, const i
     if (i >= ne) {
         return;
     }
+    // 从全局id到各个维度的id，然后再到全局 id，实现不同布局的转换。
+    // 对应于《核心公式》， 注意“/”和“*”计算顺序
+    const int64_t i03 = (i / (ne0_0*ne0_1*ne0_2)) % ne0_3;
+    const int64_t i02 = (i / (ne0_0*ne0_1)) % ne0_2;
+    const int64_t i01 = (i / ne0_0) % ne0_1;
+    const int64_t i00 = (i / 1) % ne0_0;   // fastest change
+    const int64_t src_offset = i00*nb0_0 + i01*nb0_1 + i02*nb0_2 + i03 * nb0_3;
 
-    /// TODO: 我的公式有问题，why
-    // const int64_t i03 = (i / ne0_0*ne0_1*ne0_2) % ne0_3;
-    // const int64_t i02 = (i / ne0_0*ne0_1) % ne0_2;
-    // const int64_t i01 = (i / ne0_0) % ne0_1;
-    // const int64_t i00 = (i / 1) % ne0_0;   // fastest change
-    // const int64_t src_offset = i00*nb0_0 + i01*nb0_1 + i02*nb0_2 + i03 * nb0_3;
+    const int64_t i13 = (i / (ne1_0*ne1_1*ne1_2)) % ne1_3;
+    const int64_t i12 = (i / (ne1_0*ne1_1)) % ne1_2;
+    const int64_t i11 = (i / ne1_0) % ne1_1;
+    const int64_t i10 = (i / 1) % ne1_0;   // fastest change
+    const int64_t dst_offset = i10*nb1_0 + i11*nb1_1 + i12*nb1_2 + i13 * nb1_3;
 
-    // const int64_t i13 = (i / ne1_0*ne1_1*ne1_2) % ne1_3;
-    // const int64_t i12 = (i / ne1_0*ne1_1) % ne1_2;
-    // const int64_t i11 = (i / ne1_0) % ne1_1;
-    // const int64_t i10 = (i / 1) % ne1_0;   // fastest change
-    // const int64_t dst_offset = i10*nb1_0 + i11*nb1_1 + i12*nb1_2 + i13 * nb1_3;
+    // 另一种 《核心公式》中另一种形式，正确
+    // const int64_t i03 = i/(ne0_0 * ne0_1 * ne0_2);
+    // const int64_t i02 = (i - i03 * ne0_0 * ne0_1 * ne0_2 ) / (ne0_0 * ne0_1);
+    // const int64_t i01 = (i - i03 * ne0_0 * ne0_1 * ne0_2  -  i02 * ne0_1 * ne0_0) / ne0_0;
+    // const int64_t i00 = i - i03 * ne0_0 * ne0_1 * ne0_2 - i02 * ne0_1 * ne0_0 - i01 * ne0_0;
+    // // 始终对应的有效元素在内存中的真实位置
+    // const int64_t src_offset = i00 * nb0_0 + i01 * nb0_1 + i02 * nb0_2 + i03 * nb0_3;
 
-    const int64_t i03 = i/(ne0_0 * ne0_1 * ne0_2);
-    const int64_t i02 = (i - i03 * ne0_0 * ne0_1 * ne0_2 ) / (ne0_0 * ne0_1);
-    const int64_t i01 = (i - i03 * ne0_0 * ne0_1 * ne0_2  -  i02 * ne0_1 * ne0_0) / ne0_0;
-    const int64_t i00 = i - i03 * ne0_0 * ne0_1 * ne0_2 - i02 * ne0_1 * ne0_0 - i01 * ne0_0;
-    // 始终对应的有效元素在内存中的真实位置
-    const int64_t src_offset = i00 * nb0_0 + i01 * nb0_1 + i02 * nb0_2 + i03 * nb0_3;
-
-    const int64_t i13 = i/(ne1_0 * ne1_1 * ne1_2);
-    const int64_t i12 = (i - i13 * ne1_0 * ne1_1 * ne1_2) / (ne1_0 * ne1_1);
-    const int64_t i11 = (i - i13 * ne1_0 * ne1_1 * ne1_2 - i12 * ne1_0 * ne1_1) / ne1_0;
-    const int64_t i10 = i - i13 * ne1_0 * ne1_1 * ne1_2 - i12 * ne1_0 * ne1_1 - i11 * ne1_0;
+    // const int64_t i13 = i/(ne1_0 * ne1_1 * ne1_2);
+    // const int64_t i12 = (i - i13 * ne1_0 * ne1_1 * ne1_2) / (ne1_0 * ne1_1);
+    // const int64_t i11 = (i - i13 * ne1_0 * ne1_1 * ne1_2 - i12 * ne1_0 * ne1_1) / ne1_0;
+    // const int64_t i10 = i - i13 * ne1_0 * ne1_1 * ne1_2 - i12 * ne1_0 * ne1_1 - i11 * ne1_0;
     // dst 的nb值表示 dst元素是连续的，无padding
-    const int64_t dst_offset = i10 * nb1_0 + i11 * nb1_1 + i12 * nb1_2 + i13 * nb1_3;
+    // const int64_t dst_offset = i10 * nb1_0 + i11 * nb1_1 + i12 * nb1_2 + i13 * nb1_3;
+
     // src + src_offset 准确指向 src tensor 中逻辑索引为 (i03,i02,i01,i00) 的有效值的内存位置
     cpy_1(src + src_offset, dst + dst_offset);
 }
@@ -125,13 +138,12 @@ static void cpy_conitune_impl(
     const std::vector<int>& src_stride,
     const std::vector<int>& dst_stride
 ) {
-    // 
-    const src_t* src = reinterpret_cast<const src_t*>(csrc);
-    dst_t* dst = reinterpret_cast<dst_t*>(cdst);
+    // const src_t* src = reinterpret_cast<const src_t*>(csrc);
+    // dst_t* dst = reinterpret_cast<dst_t*>(cdst);
 
     assert(src_dims.size() <= 4 && "src_dims must be <= 4");
     assert(dst_dims.size() <= 4 && "dst_dims must be <= 4");
-    // array is row-major in python, kernel is col-major 
+    // kernel is col-major 
     const int ne0_0 = src_dims[0];
     const int ne0_1 = src_dims[1];
     const int ne0_2 = src_dims[2];
@@ -154,19 +166,25 @@ static void cpy_conitune_impl(
 
     const int n_elem = ne0_0 * ne0_1 * ne0_2 * ne0_3;
 
+    const int src_w_padding = add_padding_to_storage(
+        ne0_0, ne0_1, ne0_2, ne0_3, 
+        nb0_0, nb0_1, nb0_2, nb0_3, 
+        sizeof(src_t));
+    const int dst_w_padding = add_padding_to_storage(
+        ne1_0, ne1_1, ne1_2, ne1_3, 
+        nb1_0, nb1_1, nb1_2, nb1_3, 
+        sizeof(dst_t));
+
     src_t* d_src = nullptr; 
     dst_t* d_dst = nullptr; 
 
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-    CUDA_CHECK(cudaMallocAsync(&d_src, n_elem * sizeof(src_t),stream));
-    CUDA_CHECK(cudaMallocAsync(&d_dst, n_elem * sizeof(dst_t),stream));
-    CUDA_CHECK(cudaMemcpyAsync(d_src, src, n_elem * sizeof(src_t), cudaMemcpyHostToDevice,stream));
+    CUDA_CHECK(cudaMallocAsync(&d_src, (size_t)src_w_padding, stream));
+    CUDA_CHECK(cudaMallocAsync(&d_dst, (size_t)dst_w_padding, stream));
+    CUDA_CHECK(cudaMemcpyAsync(d_src, csrc, (size_t)src_w_padding, cudaMemcpyHostToDevice, stream));
 
     const int num_blocks = (n_elem + CUDA_CPY_BLOCK_SIZE - 1) / CUDA_CPY_BLOCK_SIZE;
-    // cpy_continue_kernel 函数没有表示类型的模版参数，我出纳入的 src_t* 的 d_src 和 dst_t* 的d_dst，肯定报错
-    // 下面的 src_t, dst_t 仅仅是 cuda_cast_t 的模版参数。
-    // 所以只能传入 cpy_continue_kernel const char*的d_src 和 char* 的 d_dst！！ 
 #if defined(MY_OPS_DEBUG)
     std::printf(
         "Kernel launch config: block=(%lld,1,1), grid=(%lld,1,1)\n",
@@ -181,7 +199,7 @@ static void cpy_conitune_impl(
          ne1_0, ne1_1, ne1_2, ne1_3, nb1_0, nb1_1, nb1_2, nb1_3);
     LAUNCH_CHECK();
     
-    CUDA_CHECK(cudaMemcpyAsync(dst, d_dst, n_elem * sizeof(dst_t), cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaMemcpyAsync(cdst, d_dst, (size_t)dst_w_padding, cudaMemcpyDeviceToHost, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
     CUDA_CHECK(cudaStreamDestroy(stream));
     CUDA_CHECK(cudaFreeAsync(d_src, nullptr));

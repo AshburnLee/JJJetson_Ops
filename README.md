@@ -17,12 +17,20 @@ conda env create --file environment.yml
 ./run_tests.sh
 
 # 测试单个op
-PYTHONPATH="${PWD}/python:${PYTHONPATH}" python ./tests/test_flash_attention.py
+export PYTHONPATH="${PWD}/python:${PYTHONPATH}"
+# 如果需要python端的debug信息：
+export DEBUG_MY_OPS=1
+python ./tests/test_flash_attention.py
 
 # kernel 基本性能, （ncu需要 sudo 权限）
 export PYTHONPATH="$PWD/python"
+export PROFILE_KERNEL_FROM_PYTHON=1
 sudo -E env PYTHONPATH="$PYTHONPATH" $(which ncu) --section SpeedOfLight $(which python) tests/test_flash_attention.py
 ~~~
+
+可用环境变量：
+- python 端的debug 模式，显示更多信息：`DEBUG_MY_OPS=1`
+- python 端开启制定Kernel的 profile：`PROFILE_KERNEL_FROM_PYTHON=1`
 
 ---
 

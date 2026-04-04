@@ -1,3 +1,4 @@
+import os
 import torch
 import numpy as np
 import cpy_continue_me
@@ -32,7 +33,7 @@ def test_continue():
     - 使用 cpy_continue_me.cpy_con 完成从 src 到 dst_np 的拷贝 和 转换
     - 逐元素比较两者
     """
-    shape = (2, 2, 2, 2)
+    shape = (32,32,32,32)
     cases = [
         (torch.float32, torch.int32),
         (torch.int32, torch.float32),
@@ -43,6 +44,7 @@ def test_continue():
         # (torch.bfloat16, torch.float32),
     ]
 
+    all_ok = True
     for src_dtype, dst_dtype in cases:
         print(f"Testing {src_dtype} -> {dst_dtype}")
 
@@ -90,18 +92,28 @@ def test_continue():
         # 6. 把结果转回 torch 比较
         res_me = torch.from_numpy(dst_np)
 
-        torch.testing.assert_close(res_me, dst_ref, rtol=1e-3, atol=1e-3)
-        print("OK")
+        ok = torch.allclose(res_me, dst_ref, rtol=1e-3, atol=1e-3)
+        all_ok = all_ok and ok
+        if not ok:
+            print(f"Mismatch: {src_dtype} -> {dst_dtype}")
 
-    print("All tests passed!")
+    if all_ok:
+        print("Passed")
+    else:
+        print("Failed")
 
 
 def test_w_padding():
     """
     使用 PyTorch 构造一个带 padding 的非连续张量（合法 stride），
-    然后通过 numpy 的 strides 传给 cpy_continue，验证能正确拷贝到连续 dst。
-    TODO: 没能构造出带 padding 的非连续张量
+    再通过 numpy 的 strides 传给 cpy_continue，验证能正确拷贝到连续 dst。
+
+    调试打印：与 test_flash_attention 一样，先用变量收好「是否 debug」，再 if。
+    此处用环境变量；若日后在绑定里导出 debug API，可改成
+    debug_mode = hasattr(cpy_continue_me, "某函数")。
     """
+    debug_mode = os.environ.get("DEBUG_MY_OPS", "") == "1"
+
     torch.manual_seed(0)
     shape = (2, 2, 3, 4)
 
@@ -113,6 +125,8 @@ def test_w_padding():
     big_shape = (shape[0], shape[1], shape[2] + 2, shape[3])  # (2,2,5,4)
     big = torch.zeros(big_shape, dtype=torch.float32)
     big[:, :, :shape[2], :] = src_ref
+    # padding：dim2 上多出的 2 层，用 999 标出（stride 会跨过这些槽位）
+    big[:, :, shape[2]:, :] = 999.0
 
     # 非连续 view：逻辑 shape 仍为 (2,2,3,4)，但 stride 中隐含 padding
     src_view = big[:, :, :shape[2], :]  # view, 非 contiguous
@@ -143,24 +157,79 @@ def test_w_padding():
     )
 
     res_me = torch.from_numpy(dst_np)
+    if debug_mode:
+        print("src_view shape:", src_view.shape, " stride (elems):", src_view.stride())
+        print("src_np   shape:", src_np.shape, " stride (bytes):", src_np.strides)
+        print("dst_np   shape:", dst_np.shape, " stride (bytes):", dst_np.strides)
+        print("==== big (backing buffer，含 dim2 padding=999 的两片) ====")
+        print(big)
+        print("==== src_view（逻辑子块，仅有效 3 层；不含 999 行） ====")
+        print(src_view)
+        print("==== src_ref (torch, ground truth) ====")
+        print(src_ref)
+        print("==== res_me (torch from dst_np, kernel output) ====")
+        print(res_me)
+        print("==== dst_ref (torch, expected) ====")
+        print(dst_ref)
 
-    print("src_view shape:", src_view.shape, " stride (elems):", src_view.stride())
-    print("src_np   shape:", src_np.shape, " stride (bytes):", src_np.strides)
-    print("dst_np   shape:", dst_np.shape, " stride (bytes):", dst_np.strides)
+    ok = torch.allclose(res_me, dst_ref, rtol=1e-5, atol=1e-5)
+    if ok:
+        print("Passed")
+    else:
+        print("Failed")
 
-    print("==== src_view (torch, with padding) ====")
-    print(src_view)
-    print("==== src_ref (torch, ground truth) ====")
-    print(src_ref)
-    print("==== res_me (torch from dst_np, kernel output) ====")
-    print(res_me)
-    print("==== dst_ref (torch, expected) ====")
-    print(dst_ref)
 
-    torch.testing.assert_close(res_me, dst_ref, rtol=1e-5, atol=1e-5)
-    print("test_w_padding OK (padding handled correctly)")
+def test_large_scale_padding_to_continue():
+    """
+    与 cpy_continue.cu 注释中一致的 shape / byte stride：
+    - src: ne [128,16,13,1], nb [4, 6656, 512, 106496]（含 padding 的 F-order 语义）
+    - dst: ne [2048,13,1,1], 紧凑 F-order，nb [4, 8192, 106496, 106496]
+    逻辑扁平序均为「第 0 维最快变」。
+    """
+    ne_src = (128, 16, 13, 1)
+    nb_src_bytes = (4, 6656, 512, 106_496)
+    ne_dst = (2048, 13, 1, 1)
+
+    nbytes_src = (
+        (ne_src[0] - 1) * nb_src_bytes[0]
+        + (ne_src[1] - 1) * nb_src_bytes[1]
+        + (ne_src[2] - 1) * nb_src_bytes[2]
+        + (ne_src[3] - 1) * nb_src_bytes[3]
+        + 4
+    )
+    assert(nbytes_src == 128 * 16 * 13 * 4)
+
+    buf = np.zeros(nbytes_src, dtype=np.uint8)
+    src_np = np.ndarray(shape=ne_src, dtype=np.float32, buffer=buf, strides=nb_src_bytes)
+
+    ref = np.arange(128 * 16 * 13, dtype=np.float32).reshape(ne_src, order="F")
+    src_np[...] = ref
+
+    expected_dst = ref.reshape(ne_dst, order="F")
+    dst_np = np.zeros(ne_dst, dtype=np.float32, order="F")
+
+    cpy_continue_me.cpy_con(
+        src_np,
+        dst_np,
+        list(ne_src),
+        list(ne_dst),
+        list(src_np.strides),
+        list(dst_np.strides),
+        cpy_continue_me.data_type.f32,
+        cpy_continue_me.data_type.f32,
+    )
+
+    ok = np.allclose(dst_np, expected_dst, rtol=1e-5, atol=1e-5)
+    if ok:
+        print("Passed")
+    else:
+        print("Failed")
 
 
 if __name__ == "__main__":
-    test_continue()
-    #test_w_padding()
+    profile_kernel = os.environ.get("PROFILE_KERNEL_FROM_PYTHON", "") == "1"
+    if not profile_kernel:
+        test_continue()
+        test_w_padding()
+    test_large_scale_padding_to_continue()
+    

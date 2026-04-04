@@ -9,7 +9,7 @@
 |top_k_moe        |done|
 |roll             |done|
 |cpy_transpose    |done|
-|cpy_continue     |create padded input failed|
+|cpy_continue     |done|
 |gated_unary      |done|
 
 # flash_attention 正确性

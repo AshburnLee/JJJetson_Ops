@@ -22,8 +22,8 @@ def test_transpose():
     batch 维 [2] 不变。Torch 侧经 from_numpy(F) 得到列主序 stride。
     """
     torch.manual_seed(24)
-
-    shape = (128, 256, 32)  # (dim0, dim1, batch)
+    # baseline (256,128,4)
+    shape = (256,128,4)  # (dim0, dim1, batch)
     dst_shape = (shape[1], shape[0], shape[2])  # (dim1, dim0, batch)
 
     # 先用 C 连续张量固定随机序列，再转为列主序 NumPy，再交还给 Torch

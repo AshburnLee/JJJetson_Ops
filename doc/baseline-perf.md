@@ -54,12 +54,14 @@
 
 # Perf 记录
 
-平台 Jetson Orin Nano，SM 频率 305.99 Mhz
+平台 Jetson Orin Nano，SM 频率 305.99 Mhz，确保 Release 编译
 
-|kernel | shape |duration|
-|---|---|---|
-|flash_attn_tile_kernel | (8, 1, 1)x(32, 4, 1) shape: |  3.39 ms|
-|quantize_q8_1_kernel | (13, 4, 1)x(128, 1, 1) shape: | 26.78 us|
-|rope_neox_kernel | (208, 1, 1)x(1, 256, 1) shape: | 48.54 us|
-|top_k_moe_kernel | (1024, 1, 1)x(32, 4, 1) shape: | 1.02 ms|
+|kernel | gridxblock |shape |duration|
+|---|---|---|---|
+|flash_attn_tile_kernel | (8,1,1),(32,4,1) |  |  3.39 ms|
+|quantize_q8_1_kernel | (13,4,1),(128,1,1) |  | 26.78 us|
+|rope_neox_kernel | (208,1,1),(1,256,1) |  | 48.54 us|
+|top_k_moe_kernel | (1024,1,1),(32,4,1) |  | 1.02 ms|
+|cpy_transpose    | (8,4,1),(32,8,1) | (256,128,4) | 145.73 us -> 52.22 us |
+|cpy_continue| (416,1,1),(64,1,1) | (128,16,13,1) | 105.31 us|
 
