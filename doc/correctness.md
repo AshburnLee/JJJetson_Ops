@@ -65,6 +65,20 @@ float row_sum = warp_reduce_down_sum(exp_val);
 
 lane0 的 row_max 是全局 max；其他 lane 的 row_max 不是全局 max（是部分归约值）。 所以这些 lane 的 exp_val 就错了。 然后 lane0 在做 row_sum 归约时，把这些“错的 exp_val”也加进来了，导致最终 lane0 的 row_sum 当然也会错。
 
+已修复！
+
+# RoPE 正确性
+
+max abs diff: 1.2293458e-07
+max abs diff: 2.682209e-07
+max abs diff: 2.30968e-07
+max abs diff: 4.3027103e-07
+max abs diff: 2.6077032e-07
+max abs diff: 3.5762787e-07
+max abs diff: 9.536743e-07
+max abs diff: 0.08268285     <- 错误
+
+
 
 # 类型对应
 

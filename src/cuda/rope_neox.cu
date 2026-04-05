@@ -16,8 +16,8 @@ static __global__ void rope_neox_kernel(
         float * dst,                         // 将结果写入 dst
         const int ne0,                   // 128，变化最快（第一个维度）的维度大小
         const int ne1,                   // 16，变化其次块（第二个维度）的维度大小
-        const int s1,                    // stride Of dim1：128
-        const int s2,                    // stride of dim2：128*16=2048
+        const int es1,                    // stride Of dim1：128
+        const int es2,                    // stride of dim2：128*16=2048
         const int n_dims,                // 128 每个 head 的前 n_dims 维参与旋转，后半部分直接拷贝
         const int *pos,
         const float freq_scale,          // 1，
@@ -26,33 +26,37 @@ static __global__ void rope_neox_kernel(
         const rope_corr_dims corr_dims,  // [24,41],
         const float theta_scale
 ) {
-    // y 方向，即变化最快的实际值索引 0~255
+    // y 方向， 对应 head_head 需要rope的维度，即变化最快的实际值索引 0~255
     const int id_fast = threadIdx.y + blockDim.y * blockIdx.y ;
 
     if (id_fast >= ne0) {
         return;
     }
-    // x 方向（将head和token合并为1维度），表示（num_head=16, token=13）索引 0~207
+    // x 方向（将head和token 扁平为1维度），表示（num_head=16, token=13）索引 0~207
     const int id_flat_ht = threadIdx.x + blockDim.x * blockIdx.x ;
-    // 因为是 col-major，故这里除数是 ne1, 即两者变化较快的维度
+    // 因为是 col-major，故这里除数是 ne1, 即两者（ne1,ne2）变化较快的维度
     const int id_head       = id_flat_ht % ne1;
     const int id_token      = id_flat_ht / ne1;
 
     // 扁平化后的输出数据索引。与核心公式1一致
-    const int id_dest = id_fast + ne0 * id_flat_ht;
+    const int id_dst = id_fast + ne0 * id_flat_ht;
     // 扁平化后的输入 x 索引。与核心公式1一致
-    const int ix      = id_fast + s1 * id_head + s2 * id_token;
+    const int id_x     = id_fast + es1 * id_head + es2 * id_token;
 
-    // 超出 n_dims的位置元素直接copy， 与方向只有64个 thread 在工作
-    // [TODO]: id_dest和ix 中 已经有了 id_fast 的信息，这里还要 id_dest + id_fast有问题 ？
-    if (id_fast*2 >= n_dims) {
-        dst[id_dest + id_fast + 0] = x[ix + id_fast + 0];
-        dst[id_dest + id_fast + 1] = x[ix + id_fast + 1];
+    // bug 修复：id_dst / id_x 已含本线程的 id_fast，不能再写入 id_dst + id_fast（会重复加一遍）。
+    // RoPE 成对：线程 id_fast 在 [0, n_dims/2) 会写 [id_fast] 与 [id_fast + n_dims/2] 两处；
+    // 故 id_fast 在 [n_dims/2, n_dims) 已由对侧线程写完，此处直接返回。
+    // 仅当 head 维 ne0 > n_dims 时，id_fast ≥ n_dims 的通道不参与旋转，逐元素拷贝。
+    if (id_fast >= n_dims) {
+        dst[id_dst] = x[id_x];
+        return;
+    }
+    if (id_fast >= n_dims / 2) {
         return;
     }
 
-    // 不同的 token pos 不同，pos 的长度与 token个数相同
-    // theta_base 随id_fast 和 id_token 不同而不同
+    // 不同的 token，pos 不同，pos 的长度与 token个数相同
+    // theta_base 随 id_fast 和 id_token 不同而不同
     const float theta_base = pos[id_token] * powf(theta_scale, (float)id_fast);
     // const float freq_factor = 1.0f;
     float cos_theta;
@@ -66,11 +70,11 @@ static __global__ void rope_neox_kernel(
     }
     // Rotation 核心计算
     // 1. 获取旋转对
-    const float x0 = x[ix + 0];
-    const float x1 = x[ix + n_dims/2];
+    const float x0 = x[id_x + 0];
+    const float x1 = x[id_x + n_dims/2];
 
-    dst[id_dest + 0]        = x0*cos_theta - x1*sin_theta;
-    dst[id_dest + n_dims/2] = x0*sin_theta + x1*cos_theta;
+    dst[id_dst + 0]        = x0*cos_theta - x1*sin_theta;
+    dst[id_dst + n_dims/2] = x0*sin_theta + x1*cos_theta;
 }
 
 
@@ -104,13 +108,9 @@ extern "C" void rope(float* input, int* pos, float* output, std::vector<int>& in
 
     CUDA_CHECK(cudaMemcpyAsync(d_x, input, n_elem * sizeof(float), cudaMemcpyHostToDevice,stream));
     CUDA_CHECK(cudaMemcpyAsync(d_pos, pos, ne0_2 * sizeof(int), cudaMemcpyHostToDevice,stream));
-
-    const dim3 threads(1, CUDA_ROPE_BLOCK_SIZE, 1); // (1,256,1)
-    const int n_blocks_x = (ne0_0 + 2*CUDA_ROPE_BLOCK_SIZE - 1) / (2*CUDA_ROPE_BLOCK_SIZE);
-    const dim3 blocks(nr, n_blocks_x, 1);  // (208,1,1)
     
     // 旋转角度
-    int n_dims = 128;
+    int n_dims = 128;  // 所有位置都参与 rope
     const float freq_base = 10000.0f;
     const float theta_scale = powf(freq_base, -2.0f/n_dims);
 
@@ -120,6 +120,15 @@ extern "C" void rope(float* input, int* pos, float* output, std::vector<int>& in
     const rope_corr_dims corr_dims = {24.f, 41.f};
     const float attn_factor = 1.f;
 
+    // 配置的考量：做 rope的只有 head_dim 其他维度，n-heads & n_seq 都是需要并行的不猜与rope的。
+    // 故，block 只有y方向有，grid只有x方向有，这样执行器铺成一个长方形
+    // 正好 head_dim 是变化最快的，所以其他维度自然并行
+    // block (1,256,1)：每个 (head,token) 上仅 id_fast 在 [0, n_dims/2) 做旋转；[n_dims/2, n_dims) 为空转；≥n_dims 为拷贝
+    //
+    // threadIdx.y 是连续的，warp 中的thread id 是连续的吗？
+    const dim3 threads(1, CUDA_ROPE_BLOCK_SIZE, 1); // (1,256,1)
+    const int n_blocks_x = (ne0_0 + 2*CUDA_ROPE_BLOCK_SIZE - 1) / (2*CUDA_ROPE_BLOCK_SIZE);
+    const dim3 blocks(nr, n_blocks_x, 1);  // (208,1,1)
 #if defined(MY_OPS_DEBUG)
     std::printf(
         "Kernel launch config: block=(%u,%u,%u), grid=(%u,%u,%u)\n",

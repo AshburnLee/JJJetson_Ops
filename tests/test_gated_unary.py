@@ -124,9 +124,9 @@ def test_gated_unary():
     src0_nb = [s * 4 for s in src0.stride()]
     src1_nb = src0_nb
 
-    # 目标输出 dst：连续、列主序（这里 numpy 默认即可，dims 用逻辑 shape）
+    # 目标输出 dst：与 kernel 的 g_id（维 0 最快扁化）一致，须列主序连续
     dst_dims = (n0, n1, n2, n3)
-    dst_np = np.zeros(dst_dims, dtype=np.float32)
+    dst_np = np.zeros(dst_dims, dtype=np.float32, order="F")
 
     # 将非连续视图转为 numpy，保留底层 buffer 与 strides
     src0_np = src0.numpy()
@@ -248,7 +248,7 @@ def demo_relu_gated_padded_colmajor():
     
 if __name__ == "__main__":
     # 连续场景
-    # demo_relu_gated_simple()
+    demo_relu_gated_simple()
     # 带 padding 的列主序 2D 场景
     demo_relu_gated_padded_colmajor()
     # test_data_generated()

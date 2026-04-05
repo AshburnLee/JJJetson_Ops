@@ -35,10 +35,12 @@ def test_token(input_np, output_np, pos_np, head, token):
     vec_out = output_np[:, head, token, 0].copy()
     ref = rope_ref_single(vec_in, p)
     max_error = np.max(np.abs(vec_out - ref))
-    print("max abs diff:", max_error)
-    if max_error > 1e-5:
-        print(f"token {token} input: \n", vec_in)
-        print(f"token {token} output \n:", vec_out)
+    print(f"head {head} token {token} max abs diff:", max_error)
+    ok = max_error <= 1e-5
+    if not ok:
+        print(f"head {head} token {token} input: \n", vec_in)
+        print(f"head {head} token {token} output \n:", vec_out)
+    return ok
 
 
 def test_all():
@@ -48,14 +50,21 @@ def test_all():
     input_f = np.random.randn(D, H, T, B).astype(np.float32)
     input_np = np.asfortranarray(input_f)
 
-    n_elem = input_np.size
     pos_np = np.arange(T, dtype=np.int32)
     output_np = np.zeros_like(input_np, order="F")
 
     rope_me.RoPE(input_np, pos_np, output_np, [D, H, T, B])
 
-    for _h, _t in zip(range(H), range(T)):
-        test_token(input_np,output_np, pos_np, _h,_t)
+    all_ok = True
+    for _h in range(H):
+        for _t in range(T):
+            all_ok = test_token(input_np, output_np, pos_np, _h, _t) and all_ok
+
+    if all_ok:
+        print("Passed")
+    else:
+        print("Failed")
+    assert all_ok, "test_all: one or more (head, token) checks failed"
 
 
 def test_rope_small():

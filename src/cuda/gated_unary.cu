@@ -7,7 +7,9 @@ static __device__ __forceinline__ float op_relu(float x) {
     return fmaxf(x, 0);
 }
 static __device__ __forceinline__ float op_gelu(float x) {
+    // 近似值，约定约定俗成，系数
     const float GELU_COEF_A    = 0.044715f;
+    // 常数值直接写出，避免无意义的计算 
     const float SQRT_2_OVER_PI = 0.79788456080286535587989211986876f;
 
     return 0.5f * x * (1.0f + tanhf(SQRT_2_OVER_PI * x * (1.0f + GELU_COEF_A * x * x)));
@@ -16,6 +18,7 @@ static __device__ __forceinline__ float op_silu(float x) {
     return x / (1.0f + expf(-x));
 }
 static __device__ __forceinline__ float op_gelu_erf(float x) {
+    // 1/sqrt(2)
     const float SQRT_2_INV = 0.70710678118654752440084436210484f;
     return 0.5f*x*(1.0f + erff(x*SQRT_2_INV));
 }
@@ -33,30 +36,40 @@ src0_p  (6144,13,1,1)   只有第一个维度可以有padding
 src1_p  (6144,13,1,1)   只有第一个维度可以有padding
 nc = n = ne0 = 6144         dst->ne[0] == nc
 k = dst.num_elem = 79872    输出元素个数
-o0 = 6144              src_0->nb[1]/sizeof(T)
-o1 = 6144              src_1->nb[1]/sizeof(T) = 6144*4/4=6144（这是连续的情况下），即第二个维度元素的 stride
+ne_stride0 = 6144              src_0->nb[1]/sizeof(T)
+ne_stride1 = 6144              src_1->nb[1]/sizeof(T) = 6144*4/4=6144（这是连续的情况下），即第二个维度元素的 stride
 num_block = 312
 num_thread = 256
 */
 template <float (*op)(float), typename T>
-static __global__ void unary_gated_op_kernel(const T * src, const T * g, T * dst, 
-                                             const int64_t k, 
+static __global__ void unary_gated_op_kernel(const T * src, const T * gate, T * dst, 
+                                             const int64_t dst_elem, 
                                              const int64_t ne0, 
-                                             const int64_t o0, 
-                                             const int64_t o1) {
-    const int64_t i = threadIdx.x + blockDim.x * blockIdx.x;
-    // k 是不含 padding 的元素个数
+                                             const int64_t ne1, 
+                                             const int64_t ne_stride0, 
+                                             const int64_t ne_stride1) {
+    const int64_t g_id = threadIdx.x + blockDim.x * blockIdx.x;
+    // dst_elem 是不含 padding 的元素个数
     // 为什么会遍历所有真实值，并且不会将 padding 写入dst？
-    // 答：因为有 o0 存在，得到的 j0 不是连续的：j = (0,1,2,3,8,9,10,11,16,17,18,19)，中间跳过的就是padding值
+    // 答：因为有 ne_stride0 存在，得到的 j0 不是连续的：j = (0,1,2,3,8,9,10,11,16,17,18,19)，中间跳过的就是padding值
     // 故 dst 中只有真实值
-    if (i >= k) {
+    if (g_id >= dst_elem) {
         return;
     }
-    // (i / ne0) 是行号，乘以 o0 就是跳过前整行（含 padding）
-    const int64_t j0 = (i / ne0) * o0 + (i % ne0);
-    const int64_t j1 = o0 == o1 ? j0 : (i / ne0) * o1 + (i % ne0);
+    // (g_id / ne0) 是行号，乘以 ne_stride0 就是跳过前整行（含 padding）
+    // 《核心公式-3》 对应
+    // const int64_t x0 = (g_id/1) % ne0;
+    // const int64_t y0 = (g_id/(1*ne0)) % ne1;
+    // const int64_t j0 = y0 * ne_stride0 + x0;
 
-    dst[i] = (T)(op((float)src[j0]) * (float)g[j1]);
+    // const int64_t x1 = (g_id/1) % ne0;
+    // const int64_t y1 = (g_id/(1*ne0)) % ne1;
+    // const int64_t j1 = y1 * ne_stride1 + x1;
+
+    const int64_t j0 = (g_id / ne0) * ne_stride0 + (g_id % ne0);
+    const int64_t j1 = ne_stride0 == ne_stride1 ? j0 : (g_id / ne0) * ne_stride1 + (g_id % ne0);
+
+    dst[g_id] = (T)(op((float)src[j0]) * (float)gate[j1]);
 }
 
 
@@ -70,11 +83,12 @@ static void unary_gated(const T * src0, const T * src1, T * dst,
     // src0/src1 在“可 padding 维度”上物理长度可能更大（o0/o1），需按物理大小分配和拷贝
     int64_t dst_elem = dst_dims[0] * dst_dims[1] * dst_dims[2] * dst_dims[3];
     int64_t dst_ne0 = dst_dims[0];
-    int64_t o0=src0_nb[1]/sizeof(T);  // 这个维度 包括padding的元素数stride 即该维度可以含有padding
-    int64_t o1=src1_nb[1]/sizeof(T);  // 这个维度 包括padding的元素数stride 即该维度可以含有padding
+    int64_t dst_ne1 = dst_dims[1];
+    int64_t ne_stride0=src0_nb[1]/sizeof(T);  // 这个维度 包括padding，将Byte stride 转换成 元素个数后的 stride
+    int64_t ne_stride1=src1_nb[1]/sizeof(T);  // 这个维度 包括padding，将Byte stride 转换成 元素个数后的 stride
     // 注意这里要通过 物理布局，即含有padding的布局分配空间
-    int64_t src0_elem = o0 * dst_dims[1] * dst_dims[2] * dst_dims[3];
-    int64_t src1_elem = o1 * dst_dims[1] * dst_dims[2] * dst_dims[3];
+    int64_t src0_elem = ne_stride0 * dst_dims[1] * dst_dims[2] * dst_dims[3];
+    int64_t src1_elem = ne_stride1 * dst_dims[1] * dst_dims[2] * dst_dims[3];
 
     T* d_src0 = nullptr;
     T* d_src1 = nullptr;
@@ -101,7 +115,7 @@ static void unary_gated(const T * src0, const T * src1, T * dst,
     std::fflush(stdout);
 #endif
     unary_gated_op_kernel<op><<<blocks, threads, 0, stream>>>(
-        d_src0, d_src1, d_dst, dst_elem, dst_ne0, o0, o1);
+        d_src0, d_src1, d_dst, dst_elem, dst_ne0, dst_ne1, ne_stride0, ne_stride1);
     LAUNCH_CHECK();
     
     CUDA_CHECK(cudaMemcpyAsync(dst, d_dst, dst_elem * sizeof(T), cudaMemcpyDeviceToHost,stream));

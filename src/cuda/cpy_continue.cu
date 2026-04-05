@@ -11,7 +11,8 @@
 
 # define CUDA_CPY_BLOCK_SIZE 64
 
-// 计算含有padding的最后一个真实值的其实位置
+// 计算含有padding的最后一个真实值的其实位置，其中的nbx 是包含padding的 Byte stride
+// 即当前布局下的 字节 stride
 static int add_padding_to_storage(int ne0, int ne1, int ne2, int ne3,
                                     int nb0, int nb1, int nb2, int nb3,
                                     size_t elem_size) {
@@ -133,10 +134,10 @@ static __global__ void cpy_continue_kernel(const char * src, char * dst, const i
 template<typename src_t, typename dst_t>
 static void cpy_conitune_impl(
     const char * csrc, char * cdst,
-    const std::vector<int>& src_dims,
-    const std::vector<int>& dst_dims,
-    const std::vector<int>& src_stride,
-    const std::vector<int>& dst_stride
+    const std::vector<int>& src_dims,   // 不含padding
+    const std::vector<int>& dst_dims,   // 不含padding
+    const std::vector<int>& src_stride,  // 包含padding的字节 stride
+    const std::vector<int>& dst_stride   // 包含padding的字节 stride, dst 这里是紧凑的
 ) {
     // const src_t* src = reinterpret_cast<const src_t*>(csrc);
     // dst_t* dst = reinterpret_cast<dst_t*>(cdst);

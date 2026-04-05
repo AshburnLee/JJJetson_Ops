@@ -29,8 +29,11 @@ sudo -E env PYTHONPATH="$PYTHONPATH" $(which ncu) --section SpeedOfLight $(which
 ~~~
 
 可用环境变量：
+
 - python 端的debug 模式，显示更多信息：`DEBUG_MY_OPS=1`
 - python 端开启制定Kernel的 profile：`PROFILE_KERNEL_FROM_PYTHON=1`
+
+另：资源有限的机器上，`./build_all.sh --debug` 可能会导致机器卡死，只构建制定目标： `cd build && make -j3 xxx_me `
 
 ---
 
