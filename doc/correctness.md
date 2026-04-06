@@ -4,7 +4,7 @@
 |op name| status |
 |:---|:---|
 |flash_attention  |done|
-|RoPE             |done (绝大数值对应上)|
+|RoPE             |done|
 |q8_1             |done|
 |top_k_moe        |done|
 |roll             |done|
@@ -78,6 +78,7 @@ max abs diff: 3.5762787e-07
 max abs diff: 9.536743e-07
 max abs diff: 0.08268285     <- 错误
 
+已修复！
 
 
 # 类型对应
