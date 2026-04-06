@@ -54,6 +54,15 @@ __device__ void softmax_warp_inplace(float (&vals)[experts_per_thread], const in
     }
 }
 
+/*
+输入shape是：logits 1024 个tokens(=n_rows)，128 个expert，topk=4=n_expert_used，
+block (32,4,1), grid(256,1,1), kernel 做的事情：
+
+1. 1024 行并行：grid 上 256 个 block × 每 block 4 行，block 的 一个warp（一行 thread） 负责一个token 的128个expert，
+2. 每行一个 warp（32 线程） 把 128 个 logits 按 4 个一组摊到 32 个 lane，
+3. 经 4 轮 warp 内比较 + shuffle 选出 top-4，再写 ids/weights，
+4. 最后对结果进行归一化
+*/
 template <int n_experts, bool with_norm, bool delayed_softmax = false>
 __launch_bounds__ (WARP_SIZE * 4, 1)
 __global__ void top_k_moe_kernel(const float* logits,
@@ -73,19 +82,39 @@ __global__ void top_k_moe_kernel(const float* logits,
     weights += row_id * n_expert_used;
     ids     += row_id * n_expert_used;
 
-    // 每个 thread 负责的 expert 数量。96>32, 则这个值是3
+    // 每个 thread 负责的 expert 数量。一个token的一行（128个expert）由block一行thread（32个）负责，
+    // 所以每一个thread 负责128/32=4 个logits
     constexpr int experts_per_thread = (n_experts > WARP_SIZE) ? n_experts / WARP_SIZE : 1;
-    float wt[experts_per_thread];  // 开辟 3 个临时空间，分散存储，避免race condition
+    float thread_hold_logits[experts_per_thread];  // 开辟 4 个临时空间，分散存储，避免race condition
 
-    // 每个 thread 读取自己负责的 几个 logits
+    // 每个 thread 读取自己负责的 4 个 logits
+    // lane0:
+    // thread_hold_logits[0] <- logits[0 + 0]
+    // thread_hold_logits[1] <- logits[0 + 32]
+    // thread_hold_logits[2] <- logits[0 + 64]
+    // thread_hold_logits[3] <- logits[0 + 96]
+    // lane1:
+    // thread_hold_logits[0] <- logits[1 + 0]
+    // thread_hold_logits[1] <- logits[1 + 32]
+    // thread_hold_logits[2] <- logits[1 + 64]
+    // thread_hold_logits[3] <- logits[1 + 96]
+    // ...
+    // lane31:
+    // thread_hold_logits[0] <- logits[31 + 0]
+    // thread_hold_logits[1] <- logits[31 + 32]
+    // thread_hold_logits[2] <- logits[31 + 64]
+    // thread_hold_logits[3] <- logits[31 + 96]
 #pragma unroll 
     for (int i = 0; i < n_experts; i += WARP_SIZE) {
         const int expert_id = threadIdx.x + i;
-        wt[i / WARP_SIZE] = (n_experts % WARP_SIZE == 0 || expert_id < n_experts) ? logits[expert_id] : -INFINITY;
+        thread_hold_logits[i / WARP_SIZE] = (n_experts % WARP_SIZE == 0 || expert_id < n_experts) ? logits[expert_id] : -INFINITY;
     }
 
     float wt_sum = 0.f;
-    float out_wt[experts_per_thread]; // 分散存储，避免race condition
+    // 缓存起来的结果，分散存储，避免race condition
+    // 这里每个 thread out_wt 大小是4，正好覆盖 32*4=128 个expert，当top-k=128 时，依然可以存下
+    // 这128个值！
+    float out_wt[experts_per_thread];
 
 #pragma unroll
     for (int i = 0; i < experts_per_thread; i++) {
@@ -94,38 +123,54 @@ __global__ void top_k_moe_kernel(const float* logits,
     // top-k, 故循环 k 次
     for (int k = 0; k < n_expert_used; ++k) {
         // 找当前 WARP 内局部最大值
-        float max_val       = wt[0];
+        float max_val       = thread_hold_logits[0];
         int   max_expert_id = threadIdx.x;
 
 #pragma unroll
-        // 先循环找到每个 thread 负责专家组中的最大值
+        // 先循环找到每个 thread 负责4个expert中的最大值，（结束后32个thread 各自HOLD部分最大值）
         for (int i = 1; i < experts_per_thread; i++) {
+            // i = 1, expert_id = threadIdx.x + 32
+            // i = 2, expert_id = threadIdx.x + 64
+            // i = 3, expert_id = threadIdx.x + 96
             const int expert_id = threadIdx.x + i * WARP_SIZE;
-            if ((n_experts % WARP_SIZE == 0 || expert_id < n_experts) && wt[i] > max_val) {
-                max_val       = wt[i];
+            if ((n_experts % WARP_SIZE == 0 || expert_id < n_experts) && thread_hold_logits[i] > max_val) {
+                max_val       = thread_hold_logits[i];
                 max_expert_id = expert_id;
             }
         }
 #pragma unroll
-        // warp level reduce 得到 warp 内32个最大值的最大值
-        for (int mask = WARP_SIZE / 2; mask > 0; mask /= 2) {
+        // 然后在找到32个thread中的最大值。
+        for (int mask = WARP_SIZE / 2; mask > 0; mask >>= 1) {
             const float val     = __shfl_xor_sync(0xFFFFFFFF, max_val, mask, WARP_SIZE);
             const int expert_id = __shfl_xor_sync(0xFFFFFFFF, max_expert_id, mask, WARP_SIZE);
+            // 如果两个max相同，则选id小的
             if (val > max_val || (val == max_val && expert_id < max_expert_id)) {
                 max_val       = val;
                 max_expert_id = expert_id;
             }
         }
 
-        // 至此，得到了 96 个专家中的最大值，max_val 是分数，max_expert_id 是对应的索引。
-        // 找到一个最大值后，将其写入新的寄存器（不是wt，wt中是每个thread 负责的原始expert 值）
+        // 至此，得到了 128 个专家中的最大值，max_val 是分数，max_expert_id 是对应的索引。
+        // 找到一个最大值后，将其写入对应的寄存器 out_wt
+        // 这里的if 条件的设计是：top-i 的那个值写入 lane id=i 的out_w中：
+        // k=0 (找 top-1)  =>   lane 0  (threadIdx.x==0)  执行写入
+        //         写自己的 out_wt[0] , 本轮全局 max（第 1 大的 logit）
+        // k=1 (找 top-2)  =>   lane 1  (threadIdx.x==1)  执行写入
+        //         写自己的 out_wt[0] , 本轮全局 max（第 2 大）
+        // k=2 (找 top-3)  =>   lane 2  (threadIdx.x==2)
+        //         写自己的 out_wt[0] , 第 3 大
+        // k=3 (找 top-4)  =>   lane 3  (threadIdx.x==3)
+        //         写自己的 out_wt[0] , 第 4 大
         if ((k & (WARP_SIZE - 1)/*= (k % WARP_SIZE)*/) == threadIdx.x) {
             out_wt[k / WARP_SIZE] = max_val;  // 每次循环k, max_val 写入的位置都不一样
         }
 
-        // 找到一个 top-1 后，把它分数设为 -inf，进入下一次循环找 top-2
+        // 只有拥有这个 expert 的那条 lane 才能把 thread_hold_logits[] 置成 -inf，其他不能变
+        // 根据expert的划分，编号为 e 的 expert 一定落在：
+        // lane：e % 32（即是 e & 31）
+        // 该 lane 上的槽位：wt[e / 32]
         if ((max_expert_id & (WARP_SIZE - 1)) == threadIdx.x) {
-            wt[max_expert_id / WARP_SIZE] = -INFINITY;
+            thread_hold_logits[max_expert_id / WARP_SIZE] = -INFINITY;
             ids[k] = max_expert_id;
 
             if constexpr (with_norm) {
@@ -143,8 +188,12 @@ __global__ void top_k_moe_kernel(const float* logits,
             out_wt[i] *= inv_sum;
         }
     }
+    // 至此，out_wt 中存放了topk个logits只是，分别存在于不同lane的 out_wt 中，如：
+    // 第 k 大的logit 写在 lane k 的 out_wt[0], 即 4 个数值分布在 4 个不同线程的寄存器里
 
     if constexpr (delayed_softmax) {
+        // 这里的softmax 不是在“连续的存储上做的”，warp-level reduce是warp 的 32 条 lane 
+        // 各自寄存器里的 vals[] 上，拼成一条固定长度（这里长度是n_expert_used）的向量，然后用__shfl 指令 在 lane之间交换信息
         softmax_warp_inplace<experts_per_thread, true>(out_wt, n_expert_used, threadIdx.x);
     }
 #pragma unroll

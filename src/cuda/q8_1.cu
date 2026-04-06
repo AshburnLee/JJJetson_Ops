@@ -87,6 +87,7 @@ __global__ void quantize_q8_1_kernel(
 
     // 8. 存储量化值
     // qs 在结构体里是 int8_t 数组；每个线程写 4 个 int8，CUDA 无 int4，故用 char4（4个1 字节）
+    //  nvcc 里多数情况下 char 按有符号 8 位用, 并且下游按 int8* 解引用，原本语义不变
     // 将同一块内存视为“每 4 字节一组”的向量，布局与连续 4 个 int8_t 一致，便于一次写入 q。
     char4* y_qs4 = (char4*)y[id_q8_1_block].qs;
     // 一个thread写入4个字节， id_qs/4 表示了这连续4个字节的首地址。
