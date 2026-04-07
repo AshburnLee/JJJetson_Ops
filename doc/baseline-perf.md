@@ -58,7 +58,7 @@
 
 |kernel | gridxblock |shape |duration|
 |---|---|---|---|
-|flash_attn_tile_kernel | (8,1,1),(32,4,1) | .. |  3.39 ms|
+|flash_attn_tile_kernel | (8,1,1),(32,4,1) | (128,13,16,1)(128,256,8,1) |  3.39 ms ->  1.35 ms|
 |quantize_q8_1_kernel   | (13,4,1),(128,1,1) | .. | 26.78 us|
 |rope_neox_kernel | (208,1,1),(1,256,1) | .. | 48.54 us|
 |top_k_moe_kernel | (1024,1,1),(32,4,1) | .. | 1.02 ms|

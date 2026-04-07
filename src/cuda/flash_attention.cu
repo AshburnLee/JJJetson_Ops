@@ -72,8 +72,8 @@ __global__ void flash_attn_tile_kernel(
     __syncthreads();
 
     /// loop_8_times_{load K_tile -> compute Q_tile * K_tile -> compute M&L}
-    __shared__ half k_shared[KV_TOKEN_TILE][HEAD_DIM];                        // [32][128]
-    __shared__ half v_shared[KV_TOKEN_TILE][HEAD_DIM];                        // [32][128]
+    __shared__ half k_shared[KV_TOKEN_TILE][HEAD_DIM+2];                        // [32][128+2]
+    __shared__ half v_shared[KV_TOKEN_TILE][HEAD_DIM+2];                        // [32][128+2]
     __shared__ float s_shared[TOKENS_PER_Q * QHEAD_PER_BLOCK][KV_TOKEN_TILE]; // [13*2][32]
     //__shared__ float m_l[TOKENS_PER_Q * QHEAD_PER_BLOCK][2];                  // [13*2][2] 
     __shared__ float dst_shared[TOKENS_PER_Q * QHEAD_PER_BLOCK][HEAD_DIM];    //[13*2][128]
