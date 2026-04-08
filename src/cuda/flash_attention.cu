@@ -1,7 +1,7 @@
 #include <cuda_runtime.h>
 #include <cstdio>
 #include <vector>
-#include "cuda_fp16.h"   // __device__ __host__ __half2 make_half2(__half x, __half y);
+#include "cuda_fp16.h"   // __device__ __host__ __half2
 #include "cuda_utils.cuh"
 
 // Tensor 坐标均按 **列主序 (column-major)** 解释，
@@ -51,23 +51,17 @@ __global__ void flash_attn_tile_kernel(
     int qhead_id_global = qhead_block_offset + qheadid_in_block;
     // 跨过一个 qhead 所有元素后的 id，即Global的 Q head 起始位置
     const half* qhead_elem_start = Q + qhead_id_global * 13 * 128;
-
+    // 总是偶数；half2 列下标为 s_col0_id/2（HEAD_DIM=128 时全覆盖）
     int s_col0_id = lane_id * 2 + row_start;
-    int s_col1_id = s_col0_id + 1;
 
-    /// 1. Load Q tile（每一个thread 读连续两个值）
+    /// 1. Load Q tile：一次 (load Global)LDG.half2
 #pragma unroll
     for (int token_id = 0; token_id < TOKENS_PER_Q/*=13*/; token_id++) {
-        if (s_col1_id < 128) {
-            const half* src0 = qhead_elem_start + s_col0_id * 1 + token_id * 128;
-            const half* src1 = qhead_elem_start + s_col1_id * 1 + token_id * 128;
-            half2 data = make_half2(*src0, *src1);
-
-            // shared memory 是 block-wise 的
-            int s_row_id = qheadid_in_block * TOKENS_PER_Q + token_id;
-            q_shared[s_row_id][s_col0_id] = data.x;
-            q_shared[s_row_id][s_col1_id] = data.y;
-        }
+        const half2* row_h2 =
+            reinterpret_cast<const half2*>(qhead_elem_start + token_id * HEAD_DIM);
+        half2 data = row_h2[s_col0_id / 2];
+        int s_row_id = qheadid_in_block * TOKENS_PER_Q + token_id;
+        *reinterpret_cast<half2*>(&q_shared[s_row_id][s_col0_id]) = data;
     }
     __syncthreads();
 
@@ -111,12 +105,11 @@ __global__ void flash_attn_tile_kernel(
         /// 2.1. Load K tile, 不同的 tile_id 对应 K 不同的 分块
         for(int token_id = 0; token_id < KV_TOKEN_TILE/*=32*/; token_id += 2) {
             int col_warp_id = warp_row_id + token_id;
-            const half* src0 = K + s_col0_id + col_warp_id * 128 + tile_id * 32 * 128 + kv_head_block_offset *  256 * 128;
-            const half* src1 = K + s_col1_id + col_warp_id * 128 + tile_id * 32 * 128 + kv_head_block_offset *  256 * 128;
-
-            half2 data = make_half2(*src0, *src1);
-            k_shared[col_warp_id][s_col0_id] = data.x;
-            k_shared[col_warp_id][s_col1_id] = data.y;
+            const half* row_base = K + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
+                                   kv_head_block_offset * 256 * HEAD_DIM;
+            const half2* row_h2 = reinterpret_cast<const half2*>(row_base);
+            half2 data = row_h2[s_col0_id / 2];
+            *reinterpret_cast<half2*>(&k_shared[col_warp_id][s_col0_id]) = data;
         }
         __syncthreads();
 
@@ -218,12 +211,13 @@ __global__ void flash_attn_tile_kernel(
         // 3.1. load K_tile
         for(int token_id = 0; token_id < KV_TOKEN_TILE/*=32*/; token_id += 2) {
             int col_warp_id = warp_row_id + token_id;
-            const half* src0 = K + s_col0_id + col_warp_id * 128 + tile_id * 32 * 128 + kv_head_block_offset *  256 * 128;
-            const half* src1 = K + s_col1_id + col_warp_id * 128 + tile_id * 32 * 128 + kv_head_block_offset *  256 * 128;
+            const half* row_base = K + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
+                                   kv_head_block_offset * 256 * HEAD_DIM;
+            const half2* row_h2 = reinterpret_cast<const half2*>(row_base);
 
-            half2 data = make_half2(*src0, *src1);
-            k_shared[col_warp_id][s_col0_id] = data.x;
-            k_shared[col_warp_id][s_col1_id] = data.y;
+            half2 data = row_h2[s_col0_id / 2];
+            *reinterpret_cast<half2*>(&k_shared[col_warp_id][s_col0_id]) = data;
+
         }
         __syncthreads();
 
@@ -257,13 +251,14 @@ __global__ void flash_attn_tile_kernel(
 
         // 3.4. load V_tile (方式同load K_tile 应为两者的shape相同)
         for(int token_id = 0; token_id < KV_TOKEN_TILE/*=32*/; token_id += 2) {
-            int col_warp_id = warp_row_id + token_id; 
-            const half* src0 = V + s_col0_id + col_warp_id * 128 + tile_id * 32 * 128 + kv_head_block_offset *  256 * 128;
-            const half* src1 = V + s_col1_id + col_warp_id * 128 + tile_id * 32 * 128 + kv_head_block_offset *  256 * 128;
-            half2 data = make_half2(*src0, *src1);
+            int col_warp_id = warp_row_id + token_id;
+            const half* row_base = V + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
+                                   kv_head_block_offset * 256 * HEAD_DIM;
+            const half2* row_h2 = reinterpret_cast<const half2*>(row_base);
 
-            v_shared[col_warp_id][s_col0_id] = data.x;
-            v_shared[col_warp_id][s_col1_id] = data.y;
+            half2 data = row_h2[s_col0_id / 2];
+            *reinterpret_cast<half2*>(&v_shared[col_warp_id][s_col0_id]) = data;
+
         }
         __syncthreads();
 
