@@ -62,8 +62,8 @@ static __global__ void rope_neox_kernel(
     float cos_theta;
     float sin_theta;
     // 计算 cos_theta & sin_theta 带 $\theta$
-    cos_theta = cosf(theta_base);
-    sin_theta = sinf(theta_base);
+    // cos_theta = cosf(theta_base) & sin_theta = sinf(theta_base);
+    sincosf(theta_base, &sin_theta, &cos_theta);
     // 或 使用YaRN 得到 sing_theta 和 cos_theta
     if (!forward) {
         sin_theta *= -1.0f;
