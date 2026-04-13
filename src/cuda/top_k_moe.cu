@@ -69,7 +69,7 @@ __global__ void top_k_moe_kernel(const float* logits,
                                  float* weights,
                                  int* ids,
                                  const int n_rows,
-                                 const int n_expert_used,
+                                 const int top_k,
                                  const float clamp_val
 ) {
     const int row_id = threadIdx.y + blockDim.y * blockIdx.x;
@@ -79,8 +79,8 @@ __global__ void top_k_moe_kernel(const float* logits,
 
     // 定位 block 中这一行 thread 在输入输出的位置
     logits  += row_id * n_experts;
-    weights += row_id * n_expert_used;
-    ids     += row_id * n_expert_used;
+    weights += row_id * top_k;
+    ids     += row_id * top_k;
 
     // 每个 thread 负责的 expert 数量。一个token的一行（128个expert）由block一行thread（32个）负责，
     // 所以每一个thread 负责128/32=4 个logits
@@ -121,7 +121,7 @@ __global__ void top_k_moe_kernel(const float* logits,
         out_wt[i] = 0.f; // 初始化为0，避免未定义的数值对计算的影响
     }
     // top-k, 故循环 k 次
-    for (int k = 0; k < n_expert_used; ++k) {
+    for (int k = 0; k < top_k; ++k) {
         // 找当前 WARP 内局部最大值
         float max_val       = thread_hold_logits[0];
         int   max_expert_id = threadIdx.x;
@@ -194,14 +194,14 @@ __global__ void top_k_moe_kernel(const float* logits,
     if constexpr (delayed_softmax) {
         // 这里的softmax 不是在“连续的存储上做的”，warp-level reduce是warp 的 32 条 lane 
         // 各自寄存器里的 vals[] 上，拼成一条固定长度（这里长度是n_expert_used）的向量，然后用__shfl 指令 在 lane之间交换信息
-        softmax_warp_inplace<experts_per_thread, true>(out_wt, n_expert_used, threadIdx.x);
+        softmax_warp_inplace<experts_per_thread, true>(out_wt, top_k, threadIdx.x);
     }
 #pragma unroll
     // 写回最终的 k 个 gate weight（已归一化或 softmax）
     for (int i = 0; i < experts_per_thread; i++) {
         // 注意，这里的Idx与i有关
         const int idx = threadIdx.x + i * WARP_SIZE;
-        if (idx < n_expert_used) { // 只写回top-k个位置
+        if (idx < top_k) { // 只写回top-k个位置
             weights[idx] = out_wt[i];
         }
     }

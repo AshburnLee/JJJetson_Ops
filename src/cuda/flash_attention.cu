@@ -6,8 +6,8 @@
 
 // Tensor 坐标均按 **列主序 (column-major)** 解释，
 // 即第一个维度元素变化最快。
-
-__global__ void flash_attn_tile_kernel(
+// 2次 KV 循环
+__global__ void flash_attn_tile_online_kernel(
                 const half* __restrict__ Q,  // [128, 13, 16, 1]
                 const half* __restrict__ K,  // [128, 256, 8, 1] 
                 const half* __restrict__ V,  // [128, 256, 8, 1]
@@ -26,7 +26,6 @@ __global__ void flash_attn_tile_kernel(
     constexpr int HEAD_DIM = 128;
     constexpr int TOKENS_PER_Q = 13;
     constexpr int QHEAD_PER_BLOCK = 2; // 16/8 =2 每个block处理连续2个Qhead
-    constexpr int EITEM_PER_THREAD = 2; // 每个thread处理两个数值 
     constexpr int KV_TOKEN_TILE = 32;
     constexpr int LOOP_KV = 256 / KV_TOKEN_TILE; // 256/32 =8 即总共需要 8 次循环来加载整个 K 和 V
 
@@ -298,6 +297,226 @@ __global__ void flash_attn_tile_kernel(
     __syncthreads();
 }
 
+// 单次 KV 循环：每 tile 内 online 更新 m、l，并把未归一化权重 P=exp(S-m_new) 暂存到 s_shared，
+// 再按 FlashAttention 流式公式更新 dst_shared（即论文中的 O）：
+// O_new = (l_old * exp(m_old - m_new) * O_old + P @ V_tile) / l_new
+__global__ void flash_attn_tile_streaming_kernel(
+                const half* __restrict__ Q,
+                const half* __restrict__ K,
+                const half* __restrict__ V,
+                float* __restrict__ dst,
+                const float scale
+#if defined(MY_OPS_DEBUG)
+                , float* __restrict__ m_out,
+                float* __restrict__ l_out,
+                float* __restrict__ s_out,
+                float* __restrict__ row_sum_out,
+                float* __restrict__ scale_old_out,
+                float* __restrict__ scale_new_out,
+                float* __restrict__ exp_val_out
+#endif
+                ) {
+    constexpr int HEAD_DIM = 128;
+    constexpr int TOKENS_PER_Q = 13;
+    constexpr int QHEAD_PER_BLOCK = 2;
+    constexpr int KV_TOKEN_TILE = 32;
+    constexpr int LOOP_KV = 256 / KV_TOKEN_TILE;
+
+    __shared__ half q_shared[TOKENS_PER_Q * QHEAD_PER_BLOCK][HEAD_DIM];
+    int tid_blockwise = threadIdx.x + blockDim.x * threadIdx.y;
+    int warp_id = tid_blockwise / 32;
+    int lane_id = tid_blockwise % 32;
+    int qhead_block_offset = blockIdx.x * QHEAD_PER_BLOCK;
+
+    int qheadid_in_block = warp_id / 2;
+    int half_head        = warp_id % 2;
+    int row_start        = half_head * 64;
+
+    int qhead_id_global = qhead_block_offset + qheadid_in_block;
+    const half* qhead_elem_start = Q + qhead_id_global * 13 * 128;
+    int s_col0_id = lane_id * 2 + row_start;
+
+#pragma unroll
+    // 1. load q_shared
+    for (int token_id = 0; token_id < TOKENS_PER_Q; token_id++) {
+        const half2* row_h2 =
+            reinterpret_cast<const half2*>(qhead_elem_start + token_id * HEAD_DIM);
+        half2 data = row_h2[s_col0_id / 2];
+        int s_row_id = qheadid_in_block * TOKENS_PER_Q + token_id;
+        *reinterpret_cast<half2*>(&q_shared[s_row_id][s_col0_id]) = data;
+    }
+    __syncthreads();
+
+    __shared__ half k_shared[KV_TOKEN_TILE][HEAD_DIM+2];
+    __shared__ half v_shared[KV_TOKEN_TILE][HEAD_DIM+2];
+    __shared__ float s_shared[TOKENS_PER_Q * QHEAD_PER_BLOCK][KV_TOKEN_TILE];
+    __shared__ float dst_shared[TOKENS_PER_Q * QHEAD_PER_BLOCK][HEAD_DIM];
+    __shared__ float stream_num_scale[TOKENS_PER_Q * QHEAD_PER_BLOCK]; //[26]
+    __shared__ float stream_l_new[TOKENS_PER_Q * QHEAD_PER_BLOCK];     //[26]
+
+    int kv_head_block_offset = blockIdx.x;
+    int warp_row_id = qheadid_in_block;
+
+    __shared__ float m[26];
+    __shared__ float l[26];
+
+    if (threadIdx.x < 26) {
+        m[threadIdx.x] = -INFINITY;
+        l[threadIdx.x] = 0.0f;
+    }
+    __syncthreads();
+
+    constexpr int ROWS = 26;
+    int WARPS = blockDim.y;
+    int ROWS_PER_WARP = (ROWS + WARPS - 1) / WARPS;
+    int block_tid = threadIdx.x + blockDim.x * threadIdx.y;
+
+    // TODO: 不使用 dst_shared 直接将 block 对应的写入 global
+    for (int i = block_tid; i < TOKENS_PER_Q * QHEAD_PER_BLOCK * HEAD_DIM; i += HEAD_DIM) {
+        int row = i / 128;
+        int col = i % 128;
+        dst_shared[row][col] = 0.0f;
+    }
+    __syncthreads();
+
+    for (int tile_id = 0; tile_id < LOOP_KV/*=8*/; tile_id++) {
+        // 2. load k_shared
+        for (int token_id = 0; token_id < KV_TOKEN_TILE; token_id += 2) {
+            int col_warp_id = warp_row_id + token_id;
+            const half* row_base = K + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
+                                   kv_head_block_offset * 256 * HEAD_DIM;
+            const half2* row_h2 = reinterpret_cast<const half2*>(row_base);
+            half2 data = row_h2[s_col0_id / 2];
+            *reinterpret_cast<half2*>(&k_shared[col_warp_id][s_col0_id]) = data;
+        }
+        __syncthreads();
+
+        const int tid2 = threadIdx.y * blockDim.x + threadIdx.x;
+        // 3. 计算  q_shared * k_shared
+        for (int idx = tid2; idx < 13*2*32; idx += 128) {
+            int i = idx / 32;
+            int j = idx % 32;
+            float sum = 0.0f;
+#pragma unroll
+            for (int hd = 0; hd < 128; hd += 2) {
+                const half2* q = reinterpret_cast<const half2*>(&q_shared[i][hd]);
+                const half2* k = reinterpret_cast<const half2*>(&k_shared[j][hd]);
+                sum += __half2float(q->x) * __half2float(k->x) + __half2float(q->y) * __half2float(k->y);
+            }
+            s_shared[i][j] = sum;
+#if defined(MY_OPS_DEBUG)
+            if (s_out != nullptr) {
+                int block = blockIdx.x;
+                int idx4  = (((block * LOOP_KV) + tile_id) * (TOKENS_PER_Q * QHEAD_PER_BLOCK) + i) * KV_TOKEN_TILE + j;
+                s_out[idx4] = sum;
+            }
+#endif
+        }
+        __syncthreads();
+
+        int w_id = threadIdx.y;
+        int l_id = threadIdx.x;
+
+        int row_start_w = w_id * ROWS_PER_WARP;
+        int row_end_w = min(row_start_w + ROWS_PER_WARP, ROWS);
+
+        // 4. warp 内 xor 归约 row_max、row_sum；lane0 更新 m/l 与 stream_*，全 lane 写 P 到 s_shared
+        // 得 softmax(QK)
+        for (int r = row_start_w; r < row_end_w; ++r) {
+            float s = s_shared[r][l_id];
+            float row_max = warp_reduce_xor_max(s);
+            // 用于 P=exp(s-m_new)
+            float exp_val = expf(s - row_max);
+            float row_sum = warp_reduce_xor_sum(exp_val);
+#if defined(MY_OPS_DEBUG)
+            if (exp_val_out != nullptr) {
+                int idx4 = (((blockIdx.x * LOOP_KV) + tile_id) * 26 + r) * 32 + l_id;
+                exp_val_out[idx4] = exp_val;
+            }
+#endif
+            float scale_new = 0.0f;
+            if (l_id == 0) {
+                const float l_old = l[r];
+                const float m_new = fmaxf(m[r], row_max);
+                // exp(m_old - m_new)
+                const float scale_old = expf(m[r] - m_new);
+                // exp(row_max - m_new)，与 exp_val 相乘得 exp(s-m_new)
+                scale_new = expf(row_max - m_new);
+                const float l_new = l_old * scale_old + row_sum * scale_new;
+                // l_old * exp(m_old - m_new)
+                stream_num_scale[r] = l_old * scale_old;
+                stream_l_new[r] = l_new;
+                m[r] = m_new;
+                l[r] = l_new;
+#if defined(MY_OPS_DEBUG)
+                if (row_sum_out != nullptr && scale_old_out != nullptr && scale_new_out != nullptr) {
+                    int idx3 = ((blockIdx.x * LOOP_KV) + tile_id) * 26 + r;
+                    row_sum_out[idx3] = row_sum;
+                    scale_old_out[idx3] = scale_old;
+                    scale_new_out[idx3] = scale_new;
+                }
+#endif
+            }
+            scale_new = __shfl_sync(0xFFFFFFFFu, scale_new, 0);
+            // P = exp(s-row_max)*exp(row_max-m_new) = exp(s-m_new)，未归一 softmax 权重
+            s_shared[r][l_id] = exp_val * scale_new;
+        }
+        __syncthreads();
+
+        // 5. load v_shared
+        for (int token_id = 0; token_id < KV_TOKEN_TILE; token_id += 2) {
+            int col_warp_id = warp_row_id + token_id;
+            const half* row_base = V + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
+                                   kv_head_block_offset * 256 * HEAD_DIM;
+            const half2* row_h2 = reinterpret_cast<const half2*>(row_base);
+            half2 data = row_h2[s_col0_id / 2];
+            *reinterpret_cast<half2*>(&v_shared[col_warp_id][s_col0_id]) = data;
+        }
+        __syncthreads();
+
+        // 先对 k 累加 sum_pv = sum(P*V)，后：
+        // 6. O_new = (stream_num_scale*O_old + sum_pv) / stream_l_new。
+        for (int dst_row = 0; dst_row < TOKENS_PER_Q * QHEAD_PER_BLOCK; ++dst_row) {
+            int col = block_tid;
+            float sum_pv = 0.0f;
+#pragma unroll
+            for (int k = 0; k < 32; ++k) {
+                float v = __half2float(v_shared[k][col]);
+                sum_pv += s_shared[dst_row][k] * v;
+            }
+            const float l_new_r = stream_l_new[dst_row];
+            // 
+            dst_shared[dst_row][col] =
+                (stream_num_scale[dst_row] * dst_shared[dst_row][col] + sum_pv) / l_new_r;
+        }
+        __syncthreads();
+    }
+
+#if defined(MY_OPS_DEBUG)
+    if (m_out != nullptr && l_out != nullptr) {
+        for (int i = threadIdx.y * blockDim.x + threadIdx.x; i < 26; i += blockDim.x * blockDim.y) {
+            m_out[blockIdx.x * 26 + i] = m[i];
+            l_out[blockIdx.x * 26 + i] = l[i];
+        }
+    }
+    __syncthreads();
+#endif
+
+    if (block_tid < HEAD_DIM) {
+        for (int r = 0; r < TOKENS_PER_Q * QHEAD_PER_BLOCK; ++r) {
+            const int qhead_local  = r / TOKENS_PER_Q;
+            const int token_id     = r % TOKENS_PER_Q;
+            const int qhead_global = blockIdx.x * QHEAD_PER_BLOCK + qhead_local;
+            if (qhead_global < 16) {
+                const int hd = block_tid;
+                const int dst_id = hd + HEAD_DIM * token_id + HEAD_DIM * TOKENS_PER_Q * qhead_global;
+                dst[dst_id] = dst_shared[r][hd];
+            }
+        }
+    }
+    __syncthreads();
+}
+
 // -----------------------------------------------------------------------------
 // 入口函数
 //   - 输入 Q, K, V 为列主序 (column-major)，第一个维度元素变化最快
@@ -352,12 +571,12 @@ extern "C" void flash_attention(
         blocks.x, blocks.y, blocks.z);
     std::fflush(stdout);
     // debug 构建下，flash_attention 本身只做 dst 计算，debug 参数保持空
-    flash_attn_tile_kernel<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale,
+    flash_attn_tile_streaming_kernel<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale,
                                                      nullptr, nullptr, nullptr,
                                                      nullptr, nullptr, nullptr,
                                                      nullptr);
 #else
-    flash_attn_tile_kernel<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale);
+    flash_attn_tile_streaming_kernel<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale);
 #endif
     LAUNCH_CHECK();
 
@@ -442,7 +661,7 @@ extern "C" void flash_attention_debug(
         "Kernel launch config: block=(%u,%u,%u), grid=(%u,%u,%u)\n",
         threads.x, threads.y, threads.z,
         blocks.x, blocks.y, blocks.z);
-    flash_attn_tile_kernel<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale,
+    flash_attn_tile_online_kernel<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale,
                                                      d_m, d_l, d_s,
                                                      d_row_sum, d_scale_old, d_scale_new,
                                                      d_exp_val);
