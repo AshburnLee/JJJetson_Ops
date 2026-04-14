@@ -26,6 +26,15 @@ python ./tests/test_flash_attention.py
 export PYTHONPATH="$PWD/python"
 export PROFILE_KERNEL_FROM_PYTHON=1
 sudo -E env PYTHONPATH="$PYTHONPATH" $(which ncu) --section SpeedOfLight $(which python) tests/test_flash_attention.py
+
+sudo -E env PYTHONPATH="$PYTHONPATH" $(which ncu) \
+  --target-processes all \
+  --kernel-name-base demangled \
+  -k "regex:flash_attn" \
+  --section SpeedOfLight --section Occupancy --section MemoryWorkloadAnalysis \
+  --section SchedulerStats --section WarpStateStats \
+  --metrics dram__bytes_read.sum,dram__bytes_write.sum,l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_ld.sum,l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_st.sum \
+  $(which python) tests/test_flash_attention.py > log
 ~~~
 
 可用环境变量：

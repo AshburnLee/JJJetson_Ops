@@ -297,10 +297,8 @@ __global__ void flash_attn_tile_online_kernel(
     __syncthreads();
 }
 
-// 单次 KV 循环：每 tile 内 online 更新 m、l，并把未归一化权重 P=exp(S-m_new) 暂存到 s_shared，
-// 再按 FlashAttention 流式公式更新 dst_shared（即论文中的 O）：
-// O_new = (l_old * exp(m_old - m_new) * O_old + P @ V_tile) / l_new
-__global__ void flash_attn_tile_streaming_kernel(
+// 16-block 版本：每 block 1 个 Q head，两个相邻 block 共享同一 KV head（blockIdx.x/2）。
+__global__ void flash_attn_tile_streaming_16block_kernel(
                 const half* __restrict__ Q,
                 const half* __restrict__ K,
                 const half* __restrict__ V,
@@ -318,61 +316,56 @@ __global__ void flash_attn_tile_streaming_kernel(
                 ) {
     constexpr int HEAD_DIM = 128;
     constexpr int TOKENS_PER_Q = 13;
-    constexpr int QHEAD_PER_BLOCK = 2;
+    constexpr int QHEAD_PER_BLOCK = 1;
+    constexpr int ROWS = TOKENS_PER_Q * QHEAD_PER_BLOCK;  // 13
     constexpr int KV_TOKEN_TILE = 32;
     constexpr int LOOP_KV = 256 / KV_TOKEN_TILE;
 
-    __shared__ half q_shared[TOKENS_PER_Q * QHEAD_PER_BLOCK][HEAD_DIM];
+    __shared__ half q_shared[ROWS][HEAD_DIM];
     int tid_blockwise = threadIdx.x + blockDim.x * threadIdx.y;
     int warp_id = tid_blockwise / 32;
     int lane_id = tid_blockwise % 32;
-    int qhead_block_offset = blockIdx.x * QHEAD_PER_BLOCK;
 
-    int qheadid_in_block = warp_id / 2;
-    int half_head        = warp_id % 2;
-    int row_start        = half_head * 64;
-
-    int qhead_id_global = qhead_block_offset + qheadid_in_block;
-    const half* qhead_elem_start = Q + qhead_id_global * 13 * 128;
+    const half* qhead_elem_start = Q + blockIdx.x * TOKENS_PER_Q * HEAD_DIM;
+    int half_head = warp_id % 2;
+    int row_start = half_head * 64;
     int s_col0_id = lane_id * 2 + row_start;
 
 #pragma unroll
-    // 1. load q_shared
+    // 仅 warp0,1 写 q_shared（与原先 block 内负责第一个 Q head 的两 warp 相同）
     for (int token_id = 0; token_id < TOKENS_PER_Q; token_id++) {
-        const half2* row_h2 =
-            reinterpret_cast<const half2*>(qhead_elem_start + token_id * HEAD_DIM);
-        half2 data = row_h2[s_col0_id / 2];
-        int s_row_id = qheadid_in_block * TOKENS_PER_Q + token_id;
-        *reinterpret_cast<half2*>(&q_shared[s_row_id][s_col0_id]) = data;
+        if (warp_id < 2) {
+            const half2* row_h2 =
+                reinterpret_cast<const half2*>(qhead_elem_start + token_id * HEAD_DIM);
+            half2 data = row_h2[s_col0_id / 2];
+            *reinterpret_cast<half2*>(&q_shared[token_id][s_col0_id]) = data;
+        }
     }
     __syncthreads();
 
     __shared__ half k_shared[KV_TOKEN_TILE][HEAD_DIM+2];
     __shared__ half v_shared[KV_TOKEN_TILE][HEAD_DIM+2];
-    __shared__ float s_shared[TOKENS_PER_Q * QHEAD_PER_BLOCK][KV_TOKEN_TILE];
-    __shared__ float dst_shared[TOKENS_PER_Q * QHEAD_PER_BLOCK][HEAD_DIM];
-    __shared__ float stream_num_scale[TOKENS_PER_Q * QHEAD_PER_BLOCK]; //[26]
-    __shared__ float stream_l_new[TOKENS_PER_Q * QHEAD_PER_BLOCK];     //[26]
+    __shared__ float s_shared[ROWS][KV_TOKEN_TILE];
+    __shared__ float dst_shared[ROWS][HEAD_DIM];
+    __shared__ float stream_num_scale[ROWS];
+    __shared__ float stream_l_new[ROWS];
 
-    int kv_head_block_offset = blockIdx.x;
-    int warp_row_id = qheadid_in_block;
+    const int kv_head_block_offset = blockIdx.x / 2;
+    const int warp_row_id = warp_id / 2;
 
-    __shared__ float m[26];
-    __shared__ float l[26];
+    __shared__ float m[ROWS];
+    __shared__ float l[ROWS];
 
-    if (threadIdx.x < 26) {
+    if (threadIdx.x < ROWS) {
         m[threadIdx.x] = -INFINITY;
         l[threadIdx.x] = 0.0f;
     }
     __syncthreads();
-
-    constexpr int ROWS = 26;
     int WARPS = blockDim.y;
     int ROWS_PER_WARP = (ROWS + WARPS - 1) / WARPS;
     int block_tid = threadIdx.x + blockDim.x * threadIdx.y;
 
-    // TODO: 不使用 dst_shared 直接将 block 对应的写入 global
-    for (int i = block_tid; i < TOKENS_PER_Q * QHEAD_PER_BLOCK * HEAD_DIM; i += HEAD_DIM) {
+    for (int i = block_tid; i < ROWS * HEAD_DIM; i += HEAD_DIM) {
         int row = i / 128;
         int col = i % 128;
         dst_shared[row][col] = 0.0f;
@@ -393,9 +386,9 @@ __global__ void flash_attn_tile_streaming_kernel(
 
         const int tid2 = threadIdx.y * blockDim.x + threadIdx.x;
         // 3. 计算  q_shared * k_shared
-        for (int idx = tid2; idx < 13*2*32; idx += 128) {
-            int i = idx / 32;
-            int j = idx % 32;
+        for (int idx = tid2; idx < ROWS * KV_TOKEN_TILE; idx += 128) {
+            int i = idx / KV_TOKEN_TILE;
+            int j = idx % KV_TOKEN_TILE;
             float sum = 0.0f;
 #pragma unroll
             for (int hd = 0; hd < 128; hd += 2) {
@@ -406,8 +399,7 @@ __global__ void flash_attn_tile_streaming_kernel(
             s_shared[i][j] = sum;
 #if defined(MY_OPS_DEBUG)
             if (s_out != nullptr) {
-                int block = blockIdx.x;
-                int idx4  = (((block * LOOP_KV) + tile_id) * (TOKENS_PER_Q * QHEAD_PER_BLOCK) + i) * KV_TOKEN_TILE + j;
+                int idx4  = (((blockIdx.x * LOOP_KV) + tile_id) * ROWS + i) * KV_TOKEN_TILE + j;
                 s_out[idx4] = sum;
             }
 #endif
@@ -423,23 +415,25 @@ __global__ void flash_attn_tile_streaming_kernel(
         // 4. warp 内 xor 归约 row_max、row_sum；lane0 更新 m/l 与 stream_*，全 lane 写 P 到 s_shared
         // 得 softmax(QK)
         for (int r = row_start_w; r < row_end_w; ++r) {
-            float s = s_shared[r][l_id];
-            float row_max = warp_reduce_xor_max(s);
+            // 缩短 shared-memory short scoreboard.
+            const float s_val = s_shared[r][l_id];
+            float row_max = warp_reduce_xor_max(s_val);
             // 用于 P=exp(s-m_new)
-            float exp_val = expf(s - row_max);
+            float exp_val = expf(s_val - row_max);
             float row_sum = warp_reduce_xor_sum(exp_val);
 #if defined(MY_OPS_DEBUG)
             if (exp_val_out != nullptr) {
-                int idx4 = (((blockIdx.x * LOOP_KV) + tile_id) * 26 + r) * 32 + l_id;
+                int idx4 = (((blockIdx.x * LOOP_KV) + tile_id) * ROWS + r) * 32 + l_id;
                 exp_val_out[idx4] = exp_val;
             }
 #endif
             float scale_new = 0.0f;
             if (l_id == 0) {
+                const float m_old = m[r];
                 const float l_old = l[r];
-                const float m_new = fmaxf(m[r], row_max);
+                const float m_new = fmaxf(m_old, row_max);
                 // exp(m_old - m_new)
-                const float scale_old = expf(m[r] - m_new);
+                const float scale_old = expf(m_old - m_new);
                 // exp(row_max - m_new)，与 exp_val 相乘得 exp(s-m_new)
                 scale_new = expf(row_max - m_new);
                 const float l_new = l_old * scale_old + row_sum * scale_new;
@@ -450,7 +444,7 @@ __global__ void flash_attn_tile_streaming_kernel(
                 l[r] = l_new;
 #if defined(MY_OPS_DEBUG)
                 if (row_sum_out != nullptr && scale_old_out != nullptr && scale_new_out != nullptr) {
-                    int idx3 = ((blockIdx.x * LOOP_KV) + tile_id) * 26 + r;
+                    int idx3 = ((blockIdx.x * LOOP_KV) + tile_id) * ROWS + r;
                     row_sum_out[idx3] = row_sum;
                     scale_old_out[idx3] = scale_old;
                     scale_new_out[idx3] = scale_new;
@@ -476,16 +470,20 @@ __global__ void flash_attn_tile_streaming_kernel(
 
         // 先对 k 累加 sum_pv = sum(P*V)，后：
         // 6. O_new = (stream_num_scale*O_old + sum_pv) / stream_l_new。
-        for (int dst_row = 0; dst_row < TOKENS_PER_Q * QHEAD_PER_BLOCK; ++dst_row) {
-            int col = block_tid;
+        const int col = block_tid;
+        // 将v_shared 存入 寄存器，避免LDS 后立即使用，减轻 short scoreboard
+        float v_reg[KV_TOKEN_TILE];
+#pragma unroll
+        for (int k = 0; k < 32; ++k) {
+            v_reg[k] = __half2float(v_shared[k][col]);
+        }
+        for (int dst_row = 0; dst_row < ROWS; ++dst_row) {
             float sum_pv = 0.0f;
 #pragma unroll
             for (int k = 0; k < 32; ++k) {
-                float v = __half2float(v_shared[k][col]);
-                sum_pv += s_shared[dst_row][k] * v;
+                sum_pv += s_shared[dst_row][k] * v_reg[k];
             }
             const float l_new_r = stream_l_new[dst_row];
-            // 
             dst_shared[dst_row][col] =
                 (stream_num_scale[dst_row] * dst_shared[dst_row][col] + sum_pv) / l_new_r;
         }
@@ -494,16 +492,215 @@ __global__ void flash_attn_tile_streaming_kernel(
 
 #if defined(MY_OPS_DEBUG)
     if (m_out != nullptr && l_out != nullptr) {
-        for (int i = threadIdx.y * blockDim.x + threadIdx.x; i < 26; i += blockDim.x * blockDim.y) {
-            m_out[blockIdx.x * 26 + i] = m[i];
-            l_out[blockIdx.x * 26 + i] = l[i];
+        for (int i = threadIdx.y * blockDim.x + threadIdx.x; i < ROWS; i += blockDim.x * blockDim.y) {
+            m_out[blockIdx.x * ROWS + i] = m[i];
+            l_out[blockIdx.x * ROWS + i] = l[i];
         }
+        __syncthreads();
     }
-    __syncthreads();
 #endif
 
     if (block_tid < HEAD_DIM) {
-        for (int r = 0; r < TOKENS_PER_Q * QHEAD_PER_BLOCK; ++r) {
+        for (int r = 0; r < ROWS; ++r) {
+            const int token_id     = r;
+            const int qhead_global = blockIdx.x;
+            if (qhead_global < 16) {
+                const int hd = block_tid;
+                const int dst_id = hd + HEAD_DIM * token_id + HEAD_DIM * TOKENS_PER_Q * qhead_global;
+                dst[dst_id] = dst_shared[r][hd];
+            }
+        }
+    }
+    __syncthreads();
+}
+
+// 原始 streaming 版本：每 block 处理 2 个 Q head，对应 1 个 KV head（GQA 16Q/8KV）。
+__global__ void flash_attn_tile_streaming_kernel(
+                const half* __restrict__ Q,
+                const half* __restrict__ K,
+                const half* __restrict__ V,
+                float* __restrict__ dst,
+                const float scale
+#if defined(MY_OPS_DEBUG)
+                , float* __restrict__ m_out,
+                float* __restrict__ l_out,
+                float* __restrict__ s_out,
+                float* __restrict__ row_sum_out,
+                float* __restrict__ scale_old_out,
+                float* __restrict__ scale_new_out,
+                float* __restrict__ exp_val_out
+#endif
+                ) {
+    constexpr int HEAD_DIM = 128;
+    constexpr int TOKENS_PER_Q = 13;
+    constexpr int QHEAD_PER_BLOCK = 2;
+    constexpr int ROWS = TOKENS_PER_Q * QHEAD_PER_BLOCK;  // 26
+    constexpr int KV_TOKEN_TILE = 32;
+    constexpr int LOOP_KV = 256 / KV_TOKEN_TILE;
+
+    __shared__ half q_shared[ROWS][HEAD_DIM];
+    int tid_blockwise = threadIdx.x + blockDim.x * threadIdx.y;
+    int warp_id = tid_blockwise / 32;
+    int lane_id = tid_blockwise % 32;
+
+    const int qhead_block_offset = blockIdx.x * QHEAD_PER_BLOCK;
+    const int qheadid_in_block = warp_id / 2;
+    int half_head = warp_id % 2;
+    int row_start = half_head * 64;
+    int s_col0_id = lane_id * 2 + row_start;
+
+    const int qhead_id_global = qhead_block_offset + qheadid_in_block;
+    const half* qhead_elem_start = Q + qhead_id_global * TOKENS_PER_Q * HEAD_DIM;
+
+#pragma unroll
+    for (int token_id = 0; token_id < TOKENS_PER_Q; token_id++) {
+        const half2* row_h2 =
+            reinterpret_cast<const half2*>(qhead_elem_start + token_id * HEAD_DIM);
+        half2 data = row_h2[s_col0_id / 2];
+        const int s_row_id = qheadid_in_block * TOKENS_PER_Q + token_id;
+        *reinterpret_cast<half2*>(&q_shared[s_row_id][s_col0_id]) = data;
+    }
+    __syncthreads();
+
+    __shared__ half k_shared[KV_TOKEN_TILE][HEAD_DIM+2];
+    __shared__ half v_shared[KV_TOKEN_TILE][HEAD_DIM+2];
+    __shared__ float s_shared[ROWS][KV_TOKEN_TILE];
+    __shared__ float dst_shared[ROWS][HEAD_DIM];
+    __shared__ float stream_num_scale[ROWS];
+    __shared__ float stream_l_new[ROWS];
+
+    const int kv_head_block_offset = blockIdx.x;
+    const int warp_row_id = qheadid_in_block;
+
+    __shared__ float m[ROWS];
+    __shared__ float l[ROWS];
+
+    if (threadIdx.x < ROWS) {
+        m[threadIdx.x] = -INFINITY;
+        l[threadIdx.x] = 0.0f;
+    }
+    __syncthreads();
+    int WARPS = blockDim.y;
+    int ROWS_PER_WARP = (ROWS + WARPS - 1) / WARPS;
+    int block_tid = threadIdx.x + blockDim.x * threadIdx.y;
+
+    for (int i = block_tid; i < ROWS * HEAD_DIM; i += HEAD_DIM) {
+        int row = i / 128;
+        int col = i % 128;
+        dst_shared[row][col] = 0.0f;
+    }
+    __syncthreads();
+
+    for (int tile_id = 0; tile_id < LOOP_KV; tile_id++) {
+        for (int token_id = 0; token_id < KV_TOKEN_TILE; token_id += 2) {
+            int col_warp_id = warp_row_id + token_id;
+            const half* row_base = K + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
+                                   kv_head_block_offset * 256 * HEAD_DIM;
+            const half2* row_h2 = reinterpret_cast<const half2*>(row_base);
+            half2 data = row_h2[s_col0_id / 2];
+            *reinterpret_cast<half2*>(&k_shared[col_warp_id][s_col0_id]) = data;
+        }
+        __syncthreads();
+
+        const int tid2 = threadIdx.y * blockDim.x + threadIdx.x;
+        for (int idx = tid2; idx < ROWS * KV_TOKEN_TILE; idx += 128) {
+            int i = idx / KV_TOKEN_TILE;
+            int j = idx % KV_TOKEN_TILE;
+            float sum = 0.0f;
+#pragma unroll
+            for (int hd = 0; hd < 128; hd += 2) {
+                const half2* q = reinterpret_cast<const half2*>(&q_shared[i][hd]);
+                const half2* k = reinterpret_cast<const half2*>(&k_shared[j][hd]);
+                sum += __half2float(q->x) * __half2float(k->x) + __half2float(q->y) * __half2float(k->y);
+            }
+            s_shared[i][j] = sum;
+#if defined(MY_OPS_DEBUG)
+            if (s_out != nullptr) {
+                int idx4  = (((blockIdx.x * LOOP_KV) + tile_id) * ROWS + i) * KV_TOKEN_TILE + j;
+                s_out[idx4] = sum;
+            }
+#endif
+        }
+        __syncthreads();
+
+        int w_id = threadIdx.y;
+        int l_id = threadIdx.x;
+        int row_start_w = w_id * ROWS_PER_WARP;
+        int row_end_w = min(row_start_w + ROWS_PER_WARP, ROWS);
+
+        for (int r = row_start_w; r < row_end_w; ++r) {
+            float s = s_shared[r][l_id];
+            float row_max = warp_reduce_xor_max(s);
+            float exp_val = expf(s - row_max);
+            float row_sum = warp_reduce_xor_sum(exp_val);
+#if defined(MY_OPS_DEBUG)
+            if (exp_val_out != nullptr) {
+                int idx4 = (((blockIdx.x * LOOP_KV) + tile_id) * ROWS + r) * 32 + l_id;
+                exp_val_out[idx4] = exp_val;
+            }
+#endif
+            float scale_new = 0.0f;
+            if (l_id == 0) {
+                const float l_old = l[r];
+                const float m_new = fmaxf(m[r], row_max);
+                const float scale_old = expf(m[r] - m_new);
+                scale_new = expf(row_max - m_new);
+                const float l_new = l_old * scale_old + row_sum * scale_new;
+                stream_num_scale[r] = l_old * scale_old;
+                stream_l_new[r] = l_new;
+                m[r] = m_new;
+                l[r] = l_new;
+#if defined(MY_OPS_DEBUG)
+                if (row_sum_out != nullptr && scale_old_out != nullptr && scale_new_out != nullptr) {
+                    int idx3 = ((blockIdx.x * LOOP_KV) + tile_id) * ROWS + r;
+                    row_sum_out[idx3] = row_sum;
+                    scale_old_out[idx3] = scale_old;
+                    scale_new_out[idx3] = scale_new;
+                }
+#endif
+            }
+            scale_new = __shfl_sync(0xFFFFFFFFu, scale_new, 0);
+            s_shared[r][l_id] = exp_val * scale_new;
+        }
+        __syncthreads();
+
+        for (int token_id = 0; token_id < KV_TOKEN_TILE; token_id += 2) {
+            int col_warp_id = warp_row_id + token_id;
+            const half* row_base = V + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
+                                   kv_head_block_offset * 256 * HEAD_DIM;
+            const half2* row_h2 = reinterpret_cast<const half2*>(row_base);
+            half2 data = row_h2[s_col0_id / 2];
+            *reinterpret_cast<half2*>(&v_shared[col_warp_id][s_col0_id]) = data;
+        }
+        __syncthreads();
+
+        for (int dst_row = 0; dst_row < ROWS; ++dst_row) {
+            int col = block_tid;
+            float sum_pv = 0.0f;
+#pragma unroll
+            for (int k = 0; k < 32; ++k) {
+                float v = __half2float(v_shared[k][col]);
+                sum_pv += s_shared[dst_row][k] * v;
+            }
+            const float l_new_r = stream_l_new[dst_row];
+            dst_shared[dst_row][col] =
+                (stream_num_scale[dst_row] * dst_shared[dst_row][col] + sum_pv) / l_new_r;
+        }
+        __syncthreads();
+    }
+
+#if defined(MY_OPS_DEBUG)
+    if (m_out != nullptr && l_out != nullptr) {
+        for (int i = threadIdx.y * blockDim.x + threadIdx.x; i < ROWS; i += blockDim.x * blockDim.y) {
+            m_out[blockIdx.x * ROWS + i] = m[i];
+            l_out[blockIdx.x * ROWS + i] = l[i];
+        }
+        __syncthreads();
+    }
+#endif
+
+    if (block_tid < HEAD_DIM) {
+        for (int r = 0; r < ROWS; ++r) {
             const int qhead_local  = r / TOKENS_PER_Q;
             const int token_id     = r % TOKENS_PER_Q;
             const int qhead_global = blockIdx.x * QHEAD_PER_BLOCK + qhead_local;
@@ -562,7 +759,8 @@ extern "C" void flash_attention(
     CUDA_CHECK(cudaMemcpyAsync(d_v,   v_host,  kv_elems * sizeof(half_t), cudaMemcpyHostToDevice, stream));
 
     dim3 threads(32, 4, 1);  // 32 * 4 = 128 threads / block
-    dim3 blocks(8, 1, 1);    // 8 blocks -> 8 * 2 = 16 Q heads（QHEAD_PER_BLOCK=2）
+    // dim3 blocks(8, 1, 1);    // 8 blocks -> 每个block还有两个q head
+    dim3 blocks(16, 1, 1);    // 16 blocks -> khead vhead 需要从global中读两回
 
 #if defined(MY_OPS_DEBUG)
     std::printf(
@@ -571,12 +769,12 @@ extern "C" void flash_attention(
         blocks.x, blocks.y, blocks.z);
     std::fflush(stdout);
     // debug 构建下，flash_attention 本身只做 dst 计算，debug 参数保持空
-    flash_attn_tile_streaming_kernel<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale,
+    flash_attn_tile_streaming_16block_kernel<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale,
                                                      nullptr, nullptr, nullptr,
                                                      nullptr, nullptr, nullptr,
                                                      nullptr);
 #else
-    flash_attn_tile_streaming_kernel<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale);
+    flash_attn_tile_streaming_16block_kernel<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale);
 #endif
     LAUNCH_CHECK();
 
@@ -661,7 +859,7 @@ extern "C" void flash_attention_debug(
         "Kernel launch config: block=(%u,%u,%u), grid=(%u,%u,%u)\n",
         threads.x, threads.y, threads.z,
         blocks.x, blocks.y, blocks.z);
-    flash_attn_tile_online_kernel<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale,
+        flash_attn_tile_streaming_kernel<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale,
                                                      d_m, d_l, d_s,
                                                      d_row_sum, d_scale_old, d_scale_new,
                                                      d_exp_val);
