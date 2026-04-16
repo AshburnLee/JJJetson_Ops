@@ -16,25 +16,27 @@ conda env create --file environment.yml
 # 执行正确性检测
 ./run_tests.sh
 
-# 测试单个op
+# 测试单个 fa kernel（共用参考实现见 tests/fa_test_common.py）
 export PYTHONPATH="${PWD}/python:${PYTHONPATH}"
-# 如果需要python端的debug信息：
-export DEBUG_MY_OPS=1
-python ./tests/test_flash_attention.py
+export DEBUG_MY_OPS=1   # 可选：test_fa_one_pass 会跑 launch_fa_debug_ml debug用
+python ./tests/test_fa_two_pass.py
+python ./tests/test_fa_one_pass.py
+python ./tests/test_fa_one_pass_parallel.py
+python ./tests/test_fa_tc.py
 
 # kernel 基本性能, （ncu需要 sudo 权限）
 export PYTHONPATH="$PWD/python"
 export PROFILE_KERNEL_FROM_PYTHON=1
-sudo -E env PYTHONPATH="$PYTHONPATH" $(which ncu) --section SpeedOfLight $(which python) tests/test_flash_attention.py
+sudo -E env PYTHONPATH="$PYTHONPATH" $(which ncu) --section SpeedOfLight $(which python) tests/test_fa_one_pass_parallel.py
 
 sudo -E env PYTHONPATH="$PYTHONPATH" $(which ncu) \
   --target-processes all \
   --kernel-name-base demangled \
-  -k "regex:flash_attn" \
+  -k "regex:fa_kernel" \
   --section SpeedOfLight --section Occupancy --section MemoryWorkloadAnalysis \
   --section SchedulerStats --section WarpStateStats \
   --metrics dram__bytes_read.sum,dram__bytes_write.sum,l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_ld.sum,l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_st.sum \
-  $(which python) tests/test_flash_attention.py > log
+  $(which python) tests/test_fa_one_pass_parallel.py > log
 ~~~
 
 可用环境变量：

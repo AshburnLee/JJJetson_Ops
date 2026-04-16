@@ -5,7 +5,7 @@
 # - 关键逻辑:
 #   * include_directories 引入 Python3 与公共 include/
 #   * set_python_module_props 统一去掉 lib 前缀, 并把 .so 输出到顶层定义的 python/ 目录
-#   * 对每个算子 (gated_unary/rope/q8_1/flash_attention/cpy_*/top_k_moe/roll) 建立 MODULE target,
+#   * 对每个算子 (gated_unary/rope/q8_1/fa/cpy_*/top_k_moe/roll) 建立 MODULE target,
 #     链接到各自的 CUDA OBJECT target 与 pybind11/Python/CUDA 运行库
 #
 include_directories(
@@ -62,19 +62,35 @@ target_link_libraries(q8_1_me PRIVATE
 
 set_python_module_props(q8_1_me)
 
-add_library(flash_attention_me MODULE
-  flash_attention_binding.cpp
-  $<TARGET_OBJECTS:flash_attention_cuda>
+add_library(fa_me MODULE
+  fa_binding.cpp
+  $<TARGET_OBJECTS:fa_two_pass_cuda>
+  $<TARGET_OBJECTS:fa_one_pass_cuda>
+  $<TARGET_OBJECTS:fa_one_pass_parallel_cuda>
 )
 
-target_link_libraries(flash_attention_me PRIVATE
+target_link_libraries(fa_me PRIVATE
   pybind11::module
   ${Python3_LIBRARIES}
   cuda
   cudart
 )
 
-set_python_module_props(flash_attention_me)
+set_python_module_props(fa_me)
+
+add_library(fa_tc_me MODULE
+  fa_tc_binding.cpp
+  $<TARGET_OBJECTS:fa_one_pass_parallel_tc_cuda>
+)
+
+target_link_libraries(fa_tc_me PRIVATE
+  pybind11::module
+  ${Python3_LIBRARIES}
+  cuda
+  cudart
+)
+
+set_python_module_props(fa_tc_me)
 
 add_library(cpy_continue_me MODULE
   cpy_continue_binding.cpp
@@ -135,7 +151,7 @@ set_python_module_props(roll_me)
 # Debug 构建时：对所有 *_me 模块统一开启可选调试/可观测性代码路径
 if(CMAKE_BUILD_TYPE MATCHES "Debug")
   foreach(t gated_unary_me
-            rope_me q8_1_me flash_attention_me
+            rope_me q8_1_me fa_me fa_tc_me
             cpy_continue_me cpy_transpose_me
             top_k_moe_me
             roll_me)

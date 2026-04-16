@@ -23,6 +23,15 @@ find_package(pybind11 REQUIRED)
 
 enable_language(CUDA)
 
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES 87)
+endif()
+
+# 显示 GPU 信息的工具
+add_executable(show_device_info tools/show_device_info.cu)
+target_include_directories(show_device_info PRIVATE "${CMAKE_SOURCE_DIR}/include")
+set_property(TARGET show_device_info PROPERTY CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+
 # 统一 Python 扩展输出目录
 set(MY_OPS_PYTHON_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/python")
 file(MAKE_DIRECTORY "${MY_OPS_PYTHON_OUTPUT_DIR}")

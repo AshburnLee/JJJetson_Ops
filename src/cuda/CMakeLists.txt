@@ -4,7 +4,7 @@
 # - 用途: 只负责把 CUDA 源代码编译成目标文件, 由 bindings 层的 MODULE 目标复用
 # - 关键逻辑:
 #   * 统一设置 CUDA 标准、架构、-fPIC
-#   * 为每个算子 (gated_unary/rope/q8_1/flash_attention/...) 建立 OBJECT target
+#   * 为每个算子 (gated_unary/rope/q8_1/fa_*.cu/...) 建立 OBJECT target
 #   * 在 foreach 中为所有 CUDA target 打开 POSITION_INDEPENDENT_CODE 并加入 include 目录
 #
 set(CMAKE_CUDA_STANDARD 17)
@@ -25,8 +25,20 @@ add_library(q8_1_cuda OBJECT
   q8_1.cu
 )
 
-add_library(flash_attention_cuda OBJECT
-  flash_attention.cu
+add_library(fa_two_pass_cuda OBJECT
+  fa_two_pass.cu
+)
+
+add_library(fa_one_pass_cuda OBJECT
+  fa_one_pass.cu
+)
+
+add_library(fa_one_pass_parallel_cuda OBJECT
+  fa_one_pass_parallel.cu
+)
+
+add_library(fa_one_pass_parallel_tc_cuda OBJECT
+  fa_one_pass_parallel_tc.cu
 )
 
 add_library(cpy_continue_cuda OBJECT
@@ -47,7 +59,10 @@ add_library(roll_cuda OBJECT
 
 foreach(t gated_unary_cuda 
           rope_cuda q8_1_cuda
-          flash_attention_cuda
+          fa_two_pass_cuda
+          fa_one_pass_cuda
+          fa_one_pass_parallel_cuda
+          fa_one_pass_parallel_tc_cuda
           cpy_continue_cuda
           cpy_transpose_cuda
           top_k_moe_cuda

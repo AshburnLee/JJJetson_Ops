@@ -107,10 +107,6 @@ def test_w_padding():
     """
     使用 PyTorch 构造一个带 padding 的非连续张量（合法 stride），
     再通过 numpy 的 strides 传给 cpy_continue，验证能正确拷贝到连续 dst。
-
-    调试打印：与 test_flash_attention 一样，先用变量收好「是否 debug」，再 if。
-    此处用环境变量；若日后在绑定里导出 debug API，可改成
-    debug_mode = hasattr(cpy_continue_me, "某函数")。
     """
     debug_mode = os.environ.get("DEBUG_MY_OPS", "") == "1"
 

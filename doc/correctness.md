@@ -3,7 +3,7 @@
 
 |op name| status |
 |:---|:---|
-|flash_attention  |done|
+|fa               |done|
 |RoPE             |done|
 |q8_1             |done|
 |top_k_moe        |done|
@@ -12,7 +12,7 @@
 |cpy_continue     |done|
 |gated_unary      |done|
 
-# flash_attention 正确性
+# fa 正确性
 
 结论：m 和 s 计算正确，l 计算不对，说明和ref相比的softmax(Q*K) 计算是正确的。
 
