@@ -170,24 +170,32 @@ inline __host__ void fprint_device_hw_info(FILE* out, const DeviceHwInfo& h) {
     std::fprintf(out, "[DeviceHwInfo] mem_bus_width_bits: %d\n", h.mem_bus_width_bits);
     std::fprintf(out, "[DeviceHwInfo] total_global_mem_gbytes: %.6f\n",
                  static_cast<double>(h.total_global_mem_bytes) / 1e9);
-    std::fprintf(out, "[DeviceHwInfo] total_const_mem_bytes: %llu\n",
-                 static_cast<unsigned long long>(h.total_const_mem_bytes));
+    // 千字节：按 1024 字节 = 1 KiB（与 CUDA 内存规格习惯一致）
+    std::fprintf(out, "[DeviceHwInfo] total_const_mem_kibytes: %.6f\n",
+                 static_cast<double>(h.total_const_mem_bytes) / 1024.0);
     std::fprintf(out, "[DeviceHwInfo] l2_cache_bytes: %d\n", h.l2_cache_bytes);
     std::fprintf(out, "[DeviceHwInfo] global_l1_cache_supported: %d\n", h.global_l1_cache_supported);
     std::fprintf(out, "[DeviceHwInfo] local_l1_cache_supported: %d\n", h.local_l1_cache_supported);
     std::fprintf(out, "[DeviceHwInfo] l1_data_cache_size_per_sm_bytes: N/A\n");
     std::fprintf(out,
                  "[DeviceHwInfo] l1_note: driver does not report L1-only size; L1 may share a unified SM "
-                 "partition with shared memory (see shared_mem_per_multiprocessor_bytes).\n");
-    std::fprintf(out, "[DeviceHwInfo] shared_mem_per_block_bytes: %llu\n",
-                 static_cast<unsigned long long>(h.shared_mem_per_block_bytes));
-    std::fprintf(out, "[DeviceHwInfo] shared_mem_per_multiprocessor_bytes: %llu\n",
-                 static_cast<unsigned long long>(h.shared_mem_per_multiprocessor_bytes));
+                 "partition with shared memory (see shared_mem_per_multiprocessor_kibytes).\n");
+    std::fprintf(out, "[DeviceHwInfo] shared_mem_per_block_kibytes: %.6f\n",
+                 static_cast<double>(h.shared_mem_per_block_bytes) / 1024.0);
+    std::fprintf(out, "[DeviceHwInfo] shared_mem_per_multiprocessor_kibytes: %.6f\n",
+                 static_cast<double>(h.shared_mem_per_multiprocessor_bytes) / 1024.0);
     std::fprintf(out, "[DeviceHwInfo] regs_per_block: %d\n", h.regs_per_block);
     std::fprintf(out, "[DeviceHwInfo] regs_per_multiprocessor: %d\n", h.regs_per_multiprocessor);
     std::fprintf(out, "[DeviceHwInfo] warp_size: %d\n", h.warp_size);
-    std::fprintf(out, "[DeviceHwInfo] max_threads_per_block: %d\n", h.max_threads_per_block);
-    std::fprintf(out, "[DeviceHwInfo] max_threads_per_multiprocessor: %d\n", h.max_threads_per_multiprocessor);
+    {
+        const int ws = h.warp_size > 0 ? h.warp_size : 1;
+        const int warps_per_block_max = h.max_threads_per_block / ws;
+        const int warps_per_sm_max = h.max_threads_per_multiprocessor / ws;
+        std::fprintf(out, "[DeviceHwInfo] max_threads_per_block: %d (%d warps)\n", h.max_threads_per_block,
+                     warps_per_block_max);
+        std::fprintf(out, "[DeviceHwInfo] max_threads_per_multiprocessor: %d (%d warps)\n",
+                     h.max_threads_per_multiprocessor, warps_per_sm_max);
+    }
     std::fprintf(out, "[DeviceHwInfo] fp32_cores_per_sm (table): %d\n", h.fp32_cores_per_sm);
     std::fprintf(out, "[DeviceHwInfo] peak_fp32_tflops_theoretical: %.6f\n",
                  static_cast<double>(h.peak_fp32_tflops_theoretical));
