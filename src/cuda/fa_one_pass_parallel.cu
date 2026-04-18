@@ -100,6 +100,7 @@ __global__ void fa_kernel_one_pass_parallel(
                 const half2* k = reinterpret_cast<const half2*>(&k_shared[j][hd]);
                 sum += __half2float(q->x) * __half2float(k->x) + __half2float(q->y) * __half2float(k->y);
             }
+            // 把 Q tile 和 K tile 的并行点积结果 写入 s_shared 中
             s_shared[i][j] = sum;
 #if defined(MY_OPS_DEBUG)
             if (s_out != nullptr) {
@@ -214,6 +215,8 @@ extern "C" void fa_one_pass_parallel(
                 const uint16_t* v_host,
                 float* dst_host,
                 float scale) {
+    // q: (head_dim, n_token, n_qhead)    = (128,13,16)
+    // kv: (head_dim, n_token, n_kv_head) = (128,256,8)
 
     using half_t = half;
     constexpr int HEAD_DIM       = 128;

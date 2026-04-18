@@ -29,6 +29,7 @@ __global__ void fa_kernel_one_pass_parallel_tc(
     constexpr int WMMA_N = 16;
     constexpr int WMMA_K = 16;
 
+    // 13×128 half
     __shared__ half q_shared[ROWS][HEAD_DIM];
     int tid_blockwise = threadIdx.x + blockDim.x * threadIdx.y;
     int warp_id = tid_blockwise / 32;
@@ -39,6 +40,7 @@ __global__ void fa_kernel_one_pass_parallel_tc(
     int row_start = half_head * 64;
     int s_col0_id = lane_id * 2 + row_start;
 
+    // load Q tile
 #pragma unroll
     for (int token_id = 0; token_id < TOKENS_PER_Q; token_id++) {
         if (warp_id < 2) {
@@ -50,6 +52,7 @@ __global__ void fa_kernel_one_pass_parallel_tc(
     }
     __syncthreads();
 
+    // 32×130 half
     __shared__ half k_shared[KV_TOKEN_TILE][HEAD_DIM + 2];
     __shared__ half v_shared[KV_TOKEN_TILE][HEAD_DIM + 2];
     __shared__ float s_shared[ROWS][KV_TOKEN_TILE];
@@ -59,8 +62,9 @@ __global__ void fa_kernel_one_pass_parallel_tc(
     __shared__ float stream_num_scale[ROWS];
     __shared__ float stream_l_new[ROWS];
 
-    // WMMA 辅助缓冲：Q 行数 13 需垫到 16；K^T 为 128×32 供 matrix_b col_major 连续列访问。
+    // 16×128 half
     __shared__ alignas(16) half q_pad[WMMA_M][HEAD_DIM];
+    // 128×32 half
     __shared__ alignas(16) half kt[HEAD_DIM][KV_TOKEN_TILE];
 
     const int kv_head_block_offset = blockIdx.x / 2;
@@ -86,6 +90,7 @@ __global__ void fa_kernel_one_pass_parallel_tc(
     __syncthreads();
 
     for (int tile_id = 0; tile_id < LOOP_KV; tile_id++) {
+        // load k tile
         for (int token_id = 0; token_id < KV_TOKEN_TILE; token_id += 2) {
             int col_warp_id = warp_row_id + token_id;
             const half* row_base = K + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
@@ -113,7 +118,7 @@ __global__ void fa_kernel_one_pass_parallel_tc(
          * Tensor Core（WMMA m16n16k16）用于 S = Q_pad @ K^T 的 K=128 维缩并。
          * 瓶颈：CUDA Core 路径对每个 (q 行, k 列) 要做 128 次半精度乘加，指令数与延迟高；
          *       TC 在单条 MMA 内完成 16×16×16 的乘加阵列，显著提高算力上限、减轻指令与发射压力。
-         * 划分：warp0 负责 S 的列 0..15，warp1 负责列 16..31；warp2/3 不参与 GEMM，后续参与 softmax。
+         * 划分：只有前两个 warp 在 TC 上做计算。后续步骤由所有 warp 完成
          */
         if (warp_id == 0 || warp_id == 1) {
             fragment<accumulator, WMMA_M, WMMA_N, WMMA_K, float> c_frag;
@@ -122,15 +127,17 @@ __global__ void fa_kernel_one_pass_parallel_tc(
 
             for (int k_step = 0; k_step < HEAD_DIM / WMMA_K; ++k_step) {
                 fragment<matrix_a, WMMA_M, WMMA_N, WMMA_K, half, row_major> a_frag;
-                // kt[k][n] 为 C 行主序，K 维沿行连续，故 matrix_b 用 row_major，ldb=32。
                 fragment<matrix_b, WMMA_M, WMMA_N, WMMA_K, half, row_major> b_frag;
                 load_matrix_sync(a_frag, &q_pad[0][k_step * WMMA_K], HEAD_DIM);
                 load_matrix_sync(b_frag, &kt[k_step * WMMA_K][n_col0], KV_TOKEN_TILE);
+                // 在 warp 内同步执行 MMA:c_frag += a_frag * b_frag
                 mma_sync(c_frag, a_frag, b_frag, c_frag);
             }
+            // 两个 warp 分别计算各自的 WMMA，然后将结果写到各自的位置上:s_tc_st[0][n_col0]
             store_matrix_sync(&s_tc_st[0][n_col0], c_frag, KV_TOKEN_TILE, mem_row_major);
         }
         __syncthreads();
+        //将 TC 计算结果写到 S shared 中
         for (int t = block_tid; t < ROWS * KV_TOKEN_TILE; t += blockDim.x * blockDim.y) {
             int sr = t / KV_TOKEN_TILE;
             int sc = t % KV_TOKEN_TILE;
@@ -216,11 +223,13 @@ __global__ void fa_kernel_one_pass_parallel_tc(
 }
 
 extern "C" void fa_one_pass_parallel_tc(
-    const uint16_t* q_host,
-    const uint16_t* k_host,
-    const uint16_t* v_host,
-    float* dst_host,
-    float scale) {
+                        const uint16_t* q_host,
+                        const uint16_t* k_host,
+                        const uint16_t* v_host,
+                        float* dst_host,
+                        float scale) {
+    // q: (head_dim, n_token, n_qhead)    = (128,13,16)
+    // kv: (head_dim, n_token, n_kv_head) = (128,256,8)
 
     using half_t = half;
     constexpr int HEAD_DIM = 128;

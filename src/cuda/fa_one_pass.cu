@@ -211,6 +211,8 @@ extern "C" void fa_one_pass(
                 const uint16_t* v_host,
                 float* dst_host,
                 float scale) {
+    // q: (head_dim, n_token, n_qhead)    = (128,13,16)
+    // kv: (head_dim, n_token, n_kv_head) = (128,256,8)
 
     using half_t = half;
     constexpr int HEAD_DIM       = 128;

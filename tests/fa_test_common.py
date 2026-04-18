@@ -147,7 +147,8 @@ def assert_dst_close(
     ok = np.allclose(dst, dst_ref, rtol=rtol, atol=atol)
     print(f"[{name}] max abs diff dst vs ref: {diff}, allclose: {ok}")
     if not ok:
-        print(f"[{name}] dst[:,0,0,0]:\n", dst[:, 0, 0, 0])
+        print(f"[{name}] dst_ref[:, 0, 0, 0]:\n", dst_ref[:, 0, 0, 0])
+        print(f"[{name}] dst[:, 0, 0, 0]:\n", dst[:, 0, 0, 0])
         raise SystemExit(1)
 
 

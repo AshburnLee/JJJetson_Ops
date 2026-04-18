@@ -231,12 +231,17 @@ __global__ void fa_kernel_two_pass(
     (void)scale;
 }
 
+// grid.x = 8，一个 block 对应一个 KV head；这个 block 里同时算 两个 Q head
+// 因此在 GQA 下：同一 KV tile 对每个 KV head 来说, 只加载一次，
+// 不会因为两个 Q head 再各读一遍同一块 K/V。所以这里没有对 KVHead 重复的 global 读。
 extern "C" void fa_two_pass(
                 const uint16_t* q_host,
                 const uint16_t* k_host,
                 const uint16_t* v_host,
                 float* dst_host,
                 float scale) {
+    // q: (head_dim, n_token, n_qhead)    = (128,13,16)
+    // kv: (head_dim, n_token, n_kv_head) = (128,256,8)
 
     using half_t = half;
     constexpr int HEAD_DIM       = 128;

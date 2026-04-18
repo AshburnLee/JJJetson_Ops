@@ -81,6 +81,8 @@ set_python_module_props(fa_me)
 add_library(fa_tc_me MODULE
   fa_tc_binding.cpp
   $<TARGET_OBJECTS:fa_one_pass_parallel_tc_cuda>
+  $<TARGET_OBJECTS:fa_one_pass_parallel_tc_true_cuda>
+  $<TARGET_OBJECTS:fa_one_pass_parallel_tc_true_64_cuda>
 )
 
 target_link_libraries(fa_tc_me PRIVATE
