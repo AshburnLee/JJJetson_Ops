@@ -5,14 +5,7 @@
 #include "cuda_fp16.h"
 #include "cuda_utils.cuh"
 
-// fa_one_pass_parallel_tc_true_64
-//
-// 与 fa_one_pass_parallel_tc_true 相同算法路径（双 Q-head、half QK/S、WMMA P·V），但 KV_TOKEN_TILE=64：
-// - LOOP_KV=4，单 CTA 内 WMMA QK 输出 32×64，需 8 个 warp（2×4 个 16×16 子块）。
-// - Softmax 在 64 列上：每 lane 处理 (c, c+32)，warp 内 XOR 规约。
-// - 静态 shared 约 >48KB，host 侧 cudaFuncGetAttributes + cudaDevAttrMaxSharedMemoryPerBlockOptin +
-//   cudaFuncSetAttribute(MaxDynamicSharedMemorySize, static−48KB)（见 CUDA 文档：静态超过默认时需声明超出部分）。
-
+// deprecated
 /*
     ----------------------- ----------- ------------
     SM Frequency                    Mhz       305.92

@@ -9,7 +9,7 @@
 // - gridDim.x = 8：每 KV head 一个 CTA，一次处理 GQA 一对 Q head（26 行 Q pad→32），QK 用 4 warp 铺满 32×32 WMMA。
 // - QK：WMMA 累加器为 half；S 存 half，softmax 在 FP32 上算后再写回 half。
 // - P·V：WMMA（P 为 half，V 为 half，累加 FP32）；与 fa_ref（全 FP32 路径）相比可出现约 0.06 量级 max diff。
-// - V_LD = HEAD_DIM，保证 WMMA B 加载 16B 对齐。
+// - kv_shared 行步长 V_STRIDE（HEAD_DIM+8 half）兼顾 WMMA 16B 对齐与减轻 shared bank 冲突。
 //
 // 若需与参考实现 strict 对齐，请改用 fa_one_pass_parallel_tc.cu 的 FP32 QK + CUDA Core PV 路径。
 
@@ -21,15 +21,19 @@ constexpr int Q_HEADS = 16;
 constexpr int KV_TOKENS = 256;
 constexpr int KV_HEADS = 8;
 constexpr int KV_TOKEN_TILE = 32;
-constexpr int LOOP_KV = KV_TOKENS / KV_TOKEN_TILE;
+constexpr int LOOP_KV = KV_TOKENS / KV_TOKEN_TILE; // 8
 
 constexpr int ROWS_TWO_HEADS = TOKENS_PER_Q * 2;
 constexpr int WMMA_M = 16;
 constexpr int WMMA_N = 16;
 constexpr int WMMA_K = 16;
 constexpr int WMMA_ROWS = 32;
-constexpr int V_LD = HEAD_DIM;
-constexpr int N_TILES = HEAD_DIM / WMMA_N;
+constexpr int N_TILES = HEAD_DIM / WMMA_N; // 8
+// padding shared 步长，减轻bank conflict
+// leading dim（half 个数）须为 8 的倍数以满足 WMMA 16B 行基地址对齐
+constexpr int Q_STRIDE = HEAD_DIM + 8;
+constexpr int KV_STRIDE = KV_TOKEN_TILE + 8;
+constexpr int V_STRIDE = HEAD_DIM + 8;
 
 }  // namespace
 
@@ -44,18 +48,24 @@ __global__ void __launch_bounds__(256, 4) fa_kernel_one_pass_parallel_tc_true(
     const int block_threads = blockDim.x * blockDim.y;
     const int tid = threadIdx.x + blockDim.x * threadIdx.y;
     const int warp_id = tid / 32;
-    const int num_warps = block_threads / 32;
-
-    __shared__ alignas(16) half Qsh[WMMA_ROWS][HEAD_DIM];
-    __shared__ half kv_shared[KV_TOKEN_TILE][V_LD];
-    __shared__ alignas(16) half s_scores[WMMA_ROWS][KV_TOKEN_TILE];
+    const int num_warps = block_threads / 32; // 8
+    
+    // q tile （26+6）x（128+8）
+    __shared__ alignas(16) half q_shared[WMMA_ROWS][Q_STRIDE];
+    // k tile 和 v tile 共享一块shared 32x(128+8)
+    __shared__ alignas(16) half kv_shared[KV_TOKEN_TILE][V_STRIDE];
+    // QK 输出 S, softmax 后变为 P, 32x(32+8)
+    __shared__ alignas(16) half s_scores[WMMA_ROWS][KV_STRIDE];
+    // 输出累加, 最后写 global, 26x128
     __shared__ alignas(16) float dst_acc[ROWS_TWO_HEADS][HEAD_DIM];
     __shared__ float stream_num_scale[ROWS_TWO_HEADS];
     __shared__ float m[ROWS_TWO_HEADS];
     __shared__ float l[ROWS_TWO_HEADS];
 
     __shared__ union {
-        alignas(16) half kt[HEAD_DIM][KV_TOKEN_TILE];
+        // K的转置：行=HEAD_DIM，列=32（仅 tile 内）,128x(32+8)
+        alignas(16) half kt[HEAD_DIM][KV_STRIDE];
+        // PV 的 WMMA 输出块
         alignas(16) float pv_acc[WMMA_ROWS][HEAD_DIM];
     } u_kt_pv;
 
@@ -68,24 +78,27 @@ __global__ void __launch_bounds__(256, 4) fa_kernel_one_pass_parallel_tc_true(
     const size_t kv_plane_elems = static_cast<size_t>(KV_TOKENS) * HEAD_DIM;
 
     constexpr int Q_HALF2_ONE = TOKENS_PER_Q * (HEAD_DIM / 2);
-
+    // load Q 到 Q Tile 中
+    // 把Q head 1 load到shared中
     for (int i = tid; i < Q_HALF2_ONE; i += block_threads) {
         const int row = i / (HEAD_DIM / 2);
         const int j2 = i % (HEAD_DIM / 2);
         const half2* src = reinterpret_cast<const half2*>(q0_base + row * HEAD_DIM);
-        reinterpret_cast<half2*>(&Qsh[row][0])[j2] = src[j2];
+        reinterpret_cast<half2*>(&q_shared[row][0])[j2] = src[j2];
     }
+    // 把Q head2 load到shared中
     for (int i = tid; i < Q_HALF2_ONE; i += block_threads) {
         const int row = i / (HEAD_DIM / 2);
         const int j2 = i % (HEAD_DIM / 2);
         const int dr = row + TOKENS_PER_Q;
         const half2* src = reinterpret_cast<const half2*>(q1_base + row * HEAD_DIM);
-        reinterpret_cast<half2*>(&Qsh[dr][0])[j2] = src[j2];
+        reinterpret_cast<half2*>(&q_shared[dr][0])[j2] = src[j2];
     }
+    // padding 的部分填数值 0
     for (int t = tid; t < (WMMA_ROWS - ROWS_TWO_HEADS) * HEAD_DIM; t += block_threads) {
         const int r = ROWS_TWO_HEADS + t / HEAD_DIM;
         const int c = t % HEAD_DIM;
-        Qsh[r][c] = half(0);
+        q_shared[r][c] = half(0);
     }
     __syncthreads();
 
@@ -110,7 +123,7 @@ __global__ void __launch_bounds__(256, 4) fa_kernel_one_pass_parallel_tc_true(
 
     for (int tile_id = 0; tile_id < LOOP_KV; ++tile_id) {
         const half* k_tile_base = k_head + static_cast<size_t>(tile_id * KV_TOKEN_TILE) * HEAD_DIM;
-
+        // load K 到 K Tile 中
         for (int i = tid; i < K_VEC; i += block_threads) {
             const int row = i / (HEAD_DIM / 2);
             const int j2 = i % (HEAD_DIM / 2);
@@ -118,8 +131,9 @@ __global__ void __launch_bounds__(256, 4) fa_kernel_one_pass_parallel_tc_true(
                 reinterpret_cast<const half2*>(k_tile_base + row * HEAD_DIM);
             reinterpret_cast<half2*>(&kv_shared[row][0])[j2] = src_h2[j2];
         }
-        __syncthreads();
-
+        __syncthreads();    
+        // 将 K tile 做个转置,
+        // TODO: 通过索引计算和 fragment 的定义，去掉这部分转置
         for (int t = tid; t < HEAD_DIM * KV_TOKEN_TILE; t += block_threads) {
             const int h = t / KV_TOKEN_TILE;
             const int j = t % KV_TOKEN_TILE;
@@ -127,25 +141,41 @@ __global__ void __launch_bounds__(256, 4) fa_kernel_one_pass_parallel_tc_true(
         }
         __syncthreads();
 
+        // WMMA #1：S = Q * K^T，输出 32×32 half，warp 0,1,2,3 参与（2×2 个 16×16 象限)
+        /*  s_scores:
+        *             列 0..15     列 16..31
+        *           +-------------+-------------+
+        *   行 0..15|   warp 0    |   warp 1    |
+        *           +-------------+-------------+
+        *  行 16..31|   warp 2    |   warp 3    |
+        *           +-------------+-------------+
+        */
         if (warp_id < 4) {
-            const int warp_m = warp_id / 2;
-            const int warp_n = warp_id % 2;
-            const int row0 = warp_m * WMMA_M;
-            const int col0 = warp_n * WMMA_N;
+            // 本 warp 负责 S 上哪个 16×16 角：行块 warp_m、列块 warp_n
+            const int warp_m = warp_id / 2;  // 0,1,0,1
+            const int warp_n = warp_id % 2;  // 0,0,1,1
+            const int row0 = warp_m * WMMA_M;  // Q 行起点 0 或 16:   0,16,0,16
+            const int col0 = warp_n * WMMA_N;  // K^T 列起点 0 或 16: 0,0,16,16
 
+            // c_frag：half 累加器，存当前象限的 S 子块 16×16
             fragment<accumulator, WMMA_M, WMMA_N, WMMA_K, half> c_frag;
             fill_fragment(c_frag, half(0));
-            for (int k_step = 0; k_step < HEAD_DIM / WMMA_K; ++k_step) {
+            // 沿 HEAD_DIM 分 8 段，每段 K=16，做一次 m16n16k16，
+            // 顺序执行8次，8次结果要累加
+            for (int k_step = 0; k_step < HEAD_DIM / WMMA_K/*128/16=8*/; ++k_step) {
+                // a_frag：Q 子块，来自 q_sh；b_frag：K^T 子块，来自 kt
                 fragment<matrix_a, WMMA_M, WMMA_N, WMMA_K, half, row_major> a_frag;
                 fragment<matrix_b, WMMA_M, WMMA_N, WMMA_K, half, row_major> b_frag;
-                load_matrix_sync(a_frag, &Qsh[row0][k_step * WMMA_K], HEAD_DIM);
-                load_matrix_sync(b_frag, &u_kt_pv.kt[k_step * WMMA_K][col0], KV_TOKEN_TILE);
+                load_matrix_sync(a_frag, &q_shared[row0][k_step * WMMA_K], Q_STRIDE);
+                load_matrix_sync(b_frag, &u_kt_pv.kt[k_step * WMMA_K][col0], KV_STRIDE);
                 mma_sync(c_frag, a_frag, b_frag, c_frag);
             }
-            store_matrix_sync(&s_scores[row0][col0], c_frag, KV_TOKEN_TILE, mem_row_major);
+            // c_frag 既是输入累加器，也是输出，每次计算结果都在上一次结果上继续累加
+            store_matrix_sync(&s_scores[row0][col0], c_frag, KV_STRIDE, mem_row_major);
         }
         __syncthreads();
 
+        // 计算softmax
         const int w_soft = threadIdx.y;
         const int l_id = threadIdx.x;
         const int row_start_w = w_soft * rows_per_warp;
@@ -170,10 +200,12 @@ __global__ void __launch_bounds__(256, 4) fa_kernel_one_pass_parallel_tc_true(
             }
             scale_new = __shfl_sync(0xFFFFFFFFu, scale_new, 0);
             const float upd = exp_val * scale_new;
+            // softmax 结果 写入 s_scores (复用)
             s_scores[r][l_id] = __float2half_rn(upd);
         }
         __syncthreads();
 
+        // load V 到 V tile 中（K 和 V 共享同一个 tile）
         const half* v_tile_base = v_head + static_cast<size_t>(tile_id * KV_TOKEN_TILE) * HEAD_DIM;
         for (int i = tid; i < K_VEC; i += block_threads) {
             const int row = i / (HEAD_DIM / 2);
@@ -184,21 +216,36 @@ __global__ void __launch_bounds__(256, 4) fa_kernel_one_pass_parallel_tc_true(
         }
         __syncthreads();
 
-        for (int n_tile = warp_id; n_tile < N_TILES; n_tile += num_warps) {
-            for (int m_tile = 0; m_tile < WMMA_ROWS / WMMA_M; ++m_tile) {
-                const int row0 = m_tile * WMMA_M;
+        // WMMA #2：O_tile = PV，累加到 pv_acc（逻辑 32×128 FP32）。P=s_scores（32×32），V=kv_shared（32×128）
+        /*
+         *            0..15    16..31   32..47  ...  112..127
+         *         +--------+--------+--------+ ... +--------+
+         * 行 0..15| warp0  | warp1  | warp2  | ... | warp7  |  : m_tile=0，P 的上半
+         *         +--------+--------+--------+ ... +--------+
+         *行 16..31| warp0  | warp1  | warp2  | ... | warp7  |  : m_tile=1，P 的下半
+         *         +--------+--------+--------+ ... +--------+
+         *
+         *  内层 k_step=0,1：沿 KV token 维 32 = 2×16 顺序累加（每 (m_tile,n_tile) 共 2 次 mma，非并行）
+         */
+        for (int n_tile = warp_id; n_tile < N_TILES/*=8*/; n_tile += num_warps/*=8*/) {
+            // 本 warp：n_tile 等于 warp_id
+            for (int m_tile = 0; m_tile < WMMA_ROWS / WMMA_M/*=32/16=2*/; ++m_tile) {
+                const int row0 = m_tile * WMMA_M;  // s_scores 行起点: 0,16
+
+                // acc：FP32 累加器，当前 (m_tile,n_tile) 对应输出子块 16×16
                 fragment<accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc;
                 fill_fragment(acc, 0.0f);
-                for (int k_step = 0; k_step < KV_TOKEN_TILE / WMMA_K; ++k_step) {
+                // 沿 KV token 32 分 2 段，每段 K=16，顺序 2 次 mma_sync，结果累加进 acc
+                for (int k_step = 0; k_step < KV_TOKEN_TILE / WMMA_K/*32/16=2*/; ++k_step) {
+                    // a_frag：P 子块，来自 s_scores；b_frag：V 子块，来自 kv_shared
                     fragment<matrix_a, WMMA_M, WMMA_N, WMMA_K, half, row_major> a_frag;
                     fragment<matrix_b, WMMA_M, WMMA_N, WMMA_K, half, row_major> b_frag;
-                    load_matrix_sync(a_frag, &s_scores[row0][k_step * WMMA_K], KV_TOKEN_TILE);
-                    load_matrix_sync(
-                        b_frag, &kv_shared[k_step * WMMA_K][n_tile * WMMA_N], V_LD);
+                    load_matrix_sync(a_frag, &s_scores[row0][k_step * WMMA_K], KV_STRIDE);
+                    load_matrix_sync(b_frag, &kv_shared[k_step * WMMA_K][n_tile * WMMA_N], V_STRIDE);
                     mma_sync(acc, a_frag, b_frag, acc);
                 }
-                store_matrix_sync(
-                    &u_kt_pv.pv_acc[row0][n_tile * WMMA_N], acc, HEAD_DIM, mem_row_major);
+                // 该 16×16 子块写入 pv_acc
+                store_matrix_sync(&u_kt_pv.pv_acc[row0][n_tile * WMMA_N], acc, HEAD_DIM, mem_row_major);
             }
         }
         __syncthreads();
@@ -208,8 +255,7 @@ __global__ void __launch_bounds__(256, 4) fa_kernel_one_pass_parallel_tc_true(
             const int r = t / HEAD_DIM;
             const int c = t % HEAD_DIM;
             const float l_new_r = l[r];
-            dst_acc[r][c] =
-                (stream_num_scale[r] * dst_acc[r][c] + u_kt_pv.pv_acc[r][c]) / l_new_r;
+            dst_acc[r][c] = (stream_num_scale[r] * dst_acc[r][c] + u_kt_pv.pv_acc[r][c]) / l_new_r;
         }
         __syncthreads();
     }
@@ -236,11 +282,14 @@ __global__ void __launch_bounds__(256, 4) fa_kernel_one_pass_parallel_tc_true(
 }
 
 extern "C" void fa_one_pass_parallel_tc_true(
-    const uint16_t* q_host,
-    const uint16_t* k_host,
-    const uint16_t* v_host,
-    float* dst_host,
-    float scale) {
+                            const uint16_t* q_host,
+                            const uint16_t* k_host,
+                            const uint16_t* v_host,
+                            float* dst_host,
+                            float scale) {
+    // q: (head_dim, n_token, n_qhead)    = (128,13,16)
+    // kv: (head_dim, n_token, n_kv_head) = (128,256,8)
+
     using half_t = half;
 
     const size_t q_elems = static_cast<size_t>(HEAD_DIM) * TOKENS_PER_Q * Q_HEADS;
@@ -263,6 +312,30 @@ extern "C" void fa_one_pass_parallel_tc_true(
     CUDA_CHECK(cudaMemcpyAsync(d_q, q_host, q_elems * sizeof(half_t), cudaMemcpyHostToDevice, stream));
     CUDA_CHECK(cudaMemcpyAsync(d_k, k_host, kv_elems * sizeof(half_t), cudaMemcpyHostToDevice, stream));
     CUDA_CHECK(cudaMemcpyAsync(d_v, v_host, kv_elems * sizeof(half_t), cudaMemcpyHostToDevice, stream));
+
+    cudaFuncAttributes attr{};
+    CUDA_CHECK(cudaFuncGetAttributes(&attr, (const void*)fa_kernel_one_pass_parallel_tc_true));
+    const size_t static_shmem = static_cast<size_t>(attr.sharedSizeBytes);
+    constexpr int kDefaultShmemPerBlock = 48 * 1024;
+
+    int max_optin = 0;
+    CUDA_CHECK(cudaDeviceGetAttribute(&max_optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, 0));
+
+    if (static_shmem > static_cast<size_t>(kDefaultShmemPerBlock)) {
+        const int excess = static_cast<int>(static_shmem - static_cast<size_t>(kDefaultShmemPerBlock));
+        if (excess > 0) {
+            if (max_optin < static_cast<int>(static_shmem)) {
+                std::fprintf(stderr,
+                             "[fa_one_pass_parallel_tc_true] static shared %zu B exceeds "
+                             "cudaDevAttrMaxSharedMemoryPerBlockOptin=%d; launch may fail.\n",
+                             static_shmem, max_optin);
+            }
+            CUDA_CHECK(cudaFuncSetAttribute(
+                (void*)fa_kernel_one_pass_parallel_tc_true,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                excess));
+        }
+    }
 
     dim3 threads(32, 8, 1);
     dim3 blocks(KV_HEADS, 1, 1);  // (8,1,1) KV head只被读一次
