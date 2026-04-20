@@ -4,14 +4,7 @@
 #include "cuda_fp16.h"
 #include "cuda_utils.cuh"
 
-// fa_one_pass_parallel_tc_true — 双 Q-head 合并 + QK half 累加器 + half S（streaming softmax 后复用为 P）
-//
-// - gridDim.x = 8：每 KV head 一个 CTA，一次处理 GQA 一对 Q head（26 行 Q pad→32），QK 用 4 warp 铺满 32×32 WMMA。
-// - QK：WMMA 累加器为 half；S 存 half，softmax 在 FP32 上算后再写回 half。
-// - P·V：WMMA（P 为 half，V 为 half，累加 FP32）；与 fa_ref（全 FP32 路径）相比可出现约 0.06 量级 max diff。
-// - kv_shared 行步长 V_STRIDE（HEAD_DIM+8 half）兼顾 WMMA 16B 对齐与减轻 shared bank 冲突。
-//
-// 若需与参考实现 strict 对齐，请改用 fa_one_pass_parallel_tc.cu 的 FP32 QK + CUDA Core PV 路径。
+// 使用 Tensor core计算两段 mma
 
 namespace {
 
