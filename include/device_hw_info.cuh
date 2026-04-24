@@ -51,6 +51,52 @@ inline __host__ int device_fp32_cuda_cores_per_sm(int cc_major, int cc_minor) {
     }
 }
 
+// Jetson / Ampere-系列：每 SM 4 个 warp 调度器，每调度器常驻 warp 数上限 12
+// 故 max warps/SM = 4×12 = 48，即 max threads/SM = 48×32 = 1536。这是架构常数，不是 cudaDeviceProp
+inline __host__ int device_warp_schedulers_per_sm(int cc_major, int cc_minor) {
+    const int cc = cc_major * 10 + cc_minor;
+    switch (cc) {
+        case 75:
+        case 80:
+        case 86:
+        case 87:
+        case 89:
+        case 90:
+        case 100:
+        case 101:
+        case 120:
+            return 4;
+        default:
+            return 0;
+    }
+}
+
+// 每 warp scheduler 上的 warp 数上限（Turing=8，Ampere+ 为 12）
+inline __host__ int device_max_resident_warps_per_warp_scheduler(int cc_major, int cc_minor) {
+    const int cc = cc_major * 10 + cc_minor;
+    switch (cc) {
+        case 75:
+            return 8;
+        case 80:
+        case 86:
+        case 87:
+        case 89:
+        case 90:
+        case 100:
+        case 101:
+        case 120:
+            return 12;
+        default:
+            return 0;
+    }
+}
+
+// 每 SM 每周期 可发出的指令条数理论上界
+inline __host__ int device_max_instructions_issued_per_cycle_per_sm(int cc_major, int cc_minor) {
+    const int sched = device_warp_schedulers_per_sm(cc_major, cc_minor);
+    return sched > 0 ? sched : 0;
+}
+
 struct DeviceHwInfo {
     char name[256];
     int device_id{-1};
@@ -77,6 +123,12 @@ struct DeviceHwInfo {
     int warp_size{0};
     int max_threads_per_block{0};
     int max_threads_per_multiprocessor{0};
+
+    int warp_schedulers_per_sm{0};
+    int max_resident_warps_per_warp_scheduler{0};
+    int max_warps_per_multiprocessor_from_prop{0};
+    // 4 调度器×每周期 1 条/调度器 的大概上界。真实 IPC 需 profile
+    int max_instructions_issued_per_cycle_per_sm_theoretical{0};
 };
 
 // 可由 host 填入后按值拷贝到 kernel 使用的轻量结构
@@ -133,6 +185,16 @@ inline __host__ DeviceHwInfo query_device_hw_info(int device_id = 0) {
     h.warp_size = prop.warpSize;
     h.max_threads_per_block = prop.maxThreadsPerBlock;
     h.max_threads_per_multiprocessor = prop.maxThreadsPerMultiProcessor;
+
+    {
+        const int ws = h.warp_size > 0 ? h.warp_size : 32;
+        h.max_warps_per_multiprocessor_from_prop = h.max_threads_per_multiprocessor / ws;
+    }
+    h.warp_schedulers_per_sm = device_warp_schedulers_per_sm(h.cc_major, h.cc_minor);
+    h.max_resident_warps_per_warp_scheduler = device_max_resident_warps_per_warp_scheduler(
+        h.cc_major, h.cc_minor);
+    h.max_instructions_issued_per_cycle_per_sm_theoretical =
+        device_max_instructions_issued_per_cycle_per_sm(h.cc_major, h.cc_minor);
 
     h.fp32_cores_per_sm = device_fp32_cuda_cores_per_sm(h.cc_major, h.cc_minor);
 
@@ -196,6 +258,17 @@ inline __host__ void fprint_device_hw_info(FILE* out, const DeviceHwInfo& h) {
         std::fprintf(out, "[DeviceHwInfo] max_threads_per_multiprocessor: %d (%d warps)\n",
                      h.max_threads_per_multiprocessor, warps_per_sm_max);
     }
+    std::fprintf(out, "[DeviceHwInfo] max_warps_per_multiprocessor (prop/threads): %d\n",
+                 h.max_warps_per_multiprocessor_from_prop);
+    std::fprintf(out, "[DeviceHwInfo] warp_schedulers_per_sm (uarch table, CC 8.x/9.x/10.x/12.x=4 when known): %d\n",
+                 h.warp_schedulers_per_sm);
+    std::fprintf(out,
+                 "[DeviceHwInfo] max_resident_warps_per_warp_scheduler (uarch, Ampere-family=12; 4*12=48): %d\n",
+                 h.max_resident_warps_per_warp_scheduler);
+    std::fprintf(out,
+                 "[DeviceHwInfo] max_instructions_issued_per_cycle_per_SM_theoretical (==schedulers, "
+                 "rough upper bound, not from cuda API): %d\n",
+                 h.max_instructions_issued_per_cycle_per_sm_theoretical);
     std::fprintf(out, "[DeviceHwInfo] fp32_cores_per_sm (table): %d\n", h.fp32_cores_per_sm);
     std::fprintf(out, "[DeviceHwInfo] peak_fp32_tflops_theoretical: %.6f\n",
                  static_cast<double>(h.peak_fp32_tflops_theoretical));
