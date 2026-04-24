@@ -22,7 +22,7 @@ constexpr int WMMA_N = 16;
 constexpr int WMMA_K = 16;
 constexpr int WMMA_ROWS = 32;
 constexpr int N_TILES = HEAD_DIM / WMMA_N; // 8
-// padding shared 步长，减轻bank conflict
+// padding shared 步长，减轻 Wmma load/store 的列方向 stride 对 TMMA/对齐的要求；另见下 s_scores_f。
 // leading dim（half 个数）须为 8 的倍数以满足 WMMA 16B 行基地址对齐
 constexpr int Q_STRIDE = HEAD_DIM + 8;
 constexpr int KV_STRIDE = KV_TOKEN_TILE + 8;
@@ -55,12 +55,8 @@ __global__ void __launch_bounds__(256, 4) fa_kernel_one_pass_parallel_tc_true(
     __shared__ float m[ROWS_TWO_HEADS];
     __shared__ float l[ROWS_TWO_HEADS];
 
-    __shared__ union {
-        // K的转置：行=HEAD_DIM，列=32（仅 tile 内）,128x(32+8)
-        alignas(16) half kt[HEAD_DIM][KV_STRIDE];
-        // PV 的 WMMA 输出块
-        alignas(16) float pv_acc[WMMA_ROWS][HEAD_DIM];
-    } u_kt_pv;
+    // softmax@V 的结果
+    __shared__ alignas(16) float pv_acc[WMMA_ROWS][HEAD_DIM];
 
     const int kv_h = blockIdx.x;
     const int q0 = kv_h * 2;
@@ -124,17 +120,10 @@ __global__ void __launch_bounds__(256, 4) fa_kernel_one_pass_parallel_tc_true(
                 reinterpret_cast<const half2*>(k_tile_base + row * HEAD_DIM);
             reinterpret_cast<half2*>(&kv_shared[row][0])[j2] = src_h2[j2];
         }
-        __syncthreads();    
-        // 将 K tile 做个转置,
-        // TODO: 通过索引计算和 fragment 的定义，去掉这部分转置
-        for (int t = tid; t < HEAD_DIM * KV_TOKEN_TILE; t += block_threads) {
-            const int h = t / KV_TOKEN_TILE;
-            const int j = t % KV_TOKEN_TILE;
-            u_kt_pv.kt[h][j] = kv_shared[j][h];
-        }
         __syncthreads();
 
-        // WMMA #1：S = Q * K^T，输出 32×32 half，warp 0,1,2,3 参与（2×2 个 16×16 象限)
+        // WMMA 第一段：S = Q * K^T。K 在 kv_shared 为row-major[seq][d]；B 用 col_major 从同一缓冲加载，
+        // 避免了转置。输出 32×32 half，warp 0..3 负责 2×2 个 16×16 象限
         /*  s_scores:
         *             列 0..15     列 16..31
         *           +-------------+-------------+
@@ -154,13 +143,12 @@ __global__ void __launch_bounds__(256, 4) fa_kernel_one_pass_parallel_tc_true(
             fragment<accumulator, WMMA_M, WMMA_N, WMMA_K, half> c_frag;
             fill_fragment(c_frag, half(0));
             // 沿 HEAD_DIM 分 8 段，每段 K=16，做一次 m16n16k16，
-            // 顺序执行8次，8次结果要累加
+            // 顺序执行8次，后8次结果acc
             for (int k_step = 0; k_step < HEAD_DIM / WMMA_K/*128/16=8*/; ++k_step) {
-                // a_frag：Q 子块，来自 q_sh；b_frag：K^T 子块，来自 kt
                 fragment<matrix_a, WMMA_M, WMMA_N, WMMA_K, half, row_major> a_frag;
-                fragment<matrix_b, WMMA_M, WMMA_N, WMMA_K, half, row_major> b_frag;
+                fragment<matrix_b, WMMA_M, WMMA_N, WMMA_K, half, col_major> b_frag;
                 load_matrix_sync(a_frag, &q_shared[row0][k_step * WMMA_K], Q_STRIDE);
-                load_matrix_sync(b_frag, &u_kt_pv.kt[k_step * WMMA_K][col0], KV_STRIDE);
+                load_matrix_sync(b_frag, &kv_shared[col0][k_step * WMMA_K], V_STRIDE);
                 mma_sync(c_frag, a_frag, b_frag, c_frag);
             }
             // c_frag 既是输入累加器，也是输出，每次计算结果都在上一次结果上继续累加
@@ -238,7 +226,7 @@ __global__ void __launch_bounds__(256, 4) fa_kernel_one_pass_parallel_tc_true(
                     mma_sync(acc, a_frag, b_frag, acc);
                 }
                 // 该 16×16 子块写入 pv_acc
-                store_matrix_sync(&u_kt_pv.pv_acc[row0][n_tile * WMMA_N], acc, HEAD_DIM, mem_row_major);
+                store_matrix_sync(&pv_acc[row0][n_tile * WMMA_N], acc, HEAD_DIM, mem_row_major);
             }
         }
         __syncthreads();
@@ -248,7 +236,7 @@ __global__ void __launch_bounds__(256, 4) fa_kernel_one_pass_parallel_tc_true(
             const int r = t / HEAD_DIM;
             const int c = t % HEAD_DIM;
             const float l_new_r = l[r];
-            dst_acc[r][c] = (stream_num_scale[r] * dst_acc[r][c] + u_kt_pv.pv_acc[r][c]) / l_new_r;
+            dst_acc[r][c] = (stream_num_scale[r] * dst_acc[r][c] + pv_acc[r][c]) / l_new_r;
         }
         __syncthreads();
     }

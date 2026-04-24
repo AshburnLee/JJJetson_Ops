@@ -50,7 +50,7 @@
 
 - 异步 stream，便于与其他任务重叠执行。
 
-## 8. top_k_moe
+## 8. moe_top_k
 
 # Perf 记录
 
@@ -59,10 +59,10 @@
 |kernel | gridxblock |shape |duration|
 |---|---|---|---|
 |fa | (8,1,1),(32,4,1) | (128,13,16,1)(128,256,8,1) |  (base)3.39 ms ->  (+bank-conf)1.35 ms -> (+vectorize)1.33 ms -> (+streaming) 863.74 us |
-|fa | (16,1,1),(32,4,1) | (128,13,16,1)(128,256,8,1) |  (warp stall + occupancy) 620.32 us |
+|fa | (16,1,1),(32,4,1) | (128,13,16,1)(128,256,8,1) |  (warp stall + occupancy) 620.32 us -> TC version (339 us) -> bank conf(302 us) | 
 |quantize_q8_1_kernel   | (13,4,1),(128,1,1) | .. | 26.78 us|
 |rope_neox_kernel | (208,1,1),(1,256,1) | .. | 48.54 us|
-|top_k_moe_kernel | (1024,1,1),(32,4,1) | .. | 1.02 ms|
+|moe_top_k_kernel | (1024,1,1),(32,4,1) | .. | 1.02 ms|
 |cpy_transpose    | (8,4,1),(32,8,1) | (256,128,4) | (base)145.73 us -> (bank-conf)52.22 us |
 |cpy_continue| (64,1,1),(416,1,1) | (128,16,13,1) | 105.31 us|
 |roll        | (256,1,1),(2048,1,1) | (2048,256,1,1) | 1.13 ms|
