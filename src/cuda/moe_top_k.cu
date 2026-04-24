@@ -65,7 +65,7 @@ block (32,4,1), grid(256,1,1), kernel 做的事情：
 */
 template <int n_experts, bool with_norm, bool delayed_softmax = false>
 __launch_bounds__ (WARP_SIZE * 4, 1)
-__global__ void top_k_moe_kernel(const float* logits,
+__global__ void moe_top_k_kernel(const float* logits,
                                  float* weights,
                                  int* ids,
                                  const int n_rows,
@@ -211,7 +211,7 @@ __global__ void top_k_moe_kernel(const float* logits,
     }
 }
 
-extern "C" void top_k_moe(const float* logits, 
+extern "C" void moe_top_k(const float* logits, 
                           const int topk, 
                           float* weights, 
                           int* ids, 
@@ -257,43 +257,43 @@ extern "C" void top_k_moe(const float* logits,
 #endif
     switch (n_experts) {
         case 2: 
-            top_k_moe_kernel<2,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
+            moe_top_k_kernel<2,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
             LAUNCH_CHECK();
             break;
         case 4: 
-            top_k_moe_kernel<4,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
+            moe_top_k_kernel<4,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
             LAUNCH_CHECK();
             break;
         case 8: 
-            top_k_moe_kernel<8,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
+            moe_top_k_kernel<8,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
             LAUNCH_CHECK();
             break;
         case 16: 
-            top_k_moe_kernel<16,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
+            moe_top_k_kernel<16,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
             LAUNCH_CHECK();
             break;
         case 32: 
-            top_k_moe_kernel<32,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
+            moe_top_k_kernel<32,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
             LAUNCH_CHECK();
             break;
         case 64: 
-            top_k_moe_kernel<64,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
+            moe_top_k_kernel<64,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
             LAUNCH_CHECK();
             break;
         case 128: 
-            top_k_moe_kernel<128,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
+            moe_top_k_kernel<128,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
             LAUNCH_CHECK();
             break;
         case 256: 
-            top_k_moe_kernel<256,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
+            moe_top_k_kernel<256,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
             LAUNCH_CHECK();
             break;
         case 512: 
-            top_k_moe_kernel<512,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
+            moe_top_k_kernel<512,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
             LAUNCH_CHECK();
             break;
         case 1024: 
-            top_k_moe_kernel<1024,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
+            moe_top_k_kernel<1024,false,true><<<blocks, threads, 0, stream>>>(d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
             LAUNCH_CHECK();
             break;
         default: throw std::runtime_error("unsupported n_experts");

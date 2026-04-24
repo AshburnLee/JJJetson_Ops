@@ -1,8 +1,8 @@
 import torch
 import numpy as np
-import top_k_moe_me
+import moe_top_k_me
 
-def test_top_k_moe():
+def test_moe_top_k():
     torch.manual_seed(24)
     dtype = torch.float32
 
@@ -31,7 +31,7 @@ def test_top_k_moe():
         weights_me = np.zeros((n_tokens, topk), dtype=np.float32)
         ids_me = np.zeros((n_tokens, topk), dtype=np.int32)
         
-        top_k_moe_me.top_k_moe(
+        moe_top_k_me.moe_top_k(
             logits=logits_me,
             topk=topk,
             weights=weights_me,
@@ -64,7 +64,7 @@ def debug():
     weights_np = np.zeros((4096, 2), dtype=np.float32)
     ids_np     = np.zeros((4096, 2), dtype=np.int32)
 
-    top_k_moe_me.top_k_moe(
+    moe_top_k_me.moe_top_k(
         logits=logits_np,
         topk=2,
         weights=weights_np,
@@ -78,5 +78,5 @@ def debug():
 
 if __name__ == "__main__":
     # debug()
-    test_top_k_moe()
+    test_moe_top_k()
     

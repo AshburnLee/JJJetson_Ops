@@ -1,19 +1,19 @@
-// q8_1_binding.cpp
+// moe_top_k_binding.cpp
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>  // std::vector<int>
 
 namespace py = pybind11;
 
-extern "C" void top_k_moe(const float* logits, 
+extern "C" void moe_top_k(const float* logits, 
                           const int topk, 
                           float* weights, 
                           int* ids, 
                           const std::vector<int>& input_dims);
 
-PYBIND11_MODULE(top_k_moe_me, m) {
-    m.doc() = "Python binding for CUDA top_k_moe";
-    m.def("top_k_moe", [](py::array_t<float> input, 
+PYBIND11_MODULE(moe_top_k_me, m) {
+    m.doc() = "Python binding for CUDA moe_top_k (MoE expert routing top-k)";
+    m.def("moe_top_k", [](py::array_t<float> input, 
                          int topk,
                          py::array_t<float> weights, 
                          py::array_t<int> ids, 
@@ -26,11 +26,11 @@ PYBIND11_MODULE(top_k_moe_me, m) {
         float* output_ptr = static_cast<float*>(weights_buf.ptr);
         int* ids_ptr      = static_cast<int*>(ids_buf.ptr);
 
-        top_k_moe(input_ptr, topk, output_ptr, ids_ptr, input_dims);
+        moe_top_k(input_ptr, topk, output_ptr, ids_ptr, input_dims);
     }, 
     py::arg("logits"), py::arg("topk"),
     py::arg("weights"), py::arg("ids"),
     py::arg("input_dims"),
-    "a fused kernel to get top-k experts"
+    "Fused kernel: top-k expert ids and softmax weights from logits (MoE gate)"
 );
 }
