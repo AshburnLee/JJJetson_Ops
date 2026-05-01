@@ -1,11 +1,6 @@
 #ifndef DEVICE_HW_INFO_CUH_
 #define DEVICE_HW_INFO_CUH_
 
-// 理论值含义：
-// - FP32：按"每 SM 的 FP32 CUDA core 数 × SM 数 × 2（FMA）× 当前报告的 SM 时钟"估算；Tensor Core、
-//   混合指令与真实可持续 FLOPS 不在此公式内。
-// - DRAM：按"2 × memClock × (busWidth/8)"的常见 DDR 有效字节率估算；与 ncu 的实测可能有偏差。
-
 #include <cuda_runtime.h>
 
 #include <cstdio>
@@ -97,6 +92,24 @@ inline __host__ int device_max_instructions_issued_per_cycle_per_sm(int cc_major
     return sched > 0 ? sched : 0;
 }
 
+// NVIDIA Ampere GA102 Architecture Whitepaper Table 6（TU102 / GA100 / GA10x）dense 合计
+// 返回每 SM 每时钟周期 FP16 Tensor Core 路径上的 dense FMA 条数（非 FLOPs）
+inline __host__ int device_tc_fp16_dense_fma_per_sm_per_cycle(int cc_major, int cc_minor) {
+    const int cc = cc_major * 10 + cc_minor;
+    switch (cc) {
+        case 75:
+            return 512;  // Turing TU102，Table 6
+        case 80:
+            return 1024;  // GA100 SM，Table 6
+        case 86:
+        case 87:
+        case 89:
+            return 512;  // GA10x SM（Jetson Orin = 8.7）；Ada 8.9 近似同量级，细分见白皮书
+        default:
+            return 0;
+    }
+}
+
 struct DeviceHwInfo {
     char name[256];
     int device_id{-1};
@@ -106,8 +119,10 @@ struct DeviceHwInfo {
     int sm_clock_khz{0};
     int mem_clock_khz{0};
     int mem_bus_width_bits{0};
-    int fp32_cores_per_sm{0};
+    int fp32_cores_per_sm{0}; // SM 里大约有 128 条并行的 FP32 流水线, 每条流水线每时钟最多 1 次 FP32 FMA
+    int tc_fp16_dense_fma_per_sm_per_cycle{0};  // SM 上 FP16 dense Tensor Core 每时钟能完成的 FMA 次数
     float peak_fp32_tflops_theoretical{0.f};
+    float peak_tc_tfops_theoretical{0.f};
     float peak_dram_gbps_theoretical{0.f};
 
     // 容量 / 并行度（主要来自 cudaDeviceProp；L1 独立容量多数架构下驱动不单独上报）
@@ -197,18 +212,32 @@ inline __host__ DeviceHwInfo query_device_hw_info(int device_id = 0) {
         device_max_instructions_issued_per_cycle_per_sm(h.cc_major, h.cc_minor);
 
     h.fp32_cores_per_sm = device_fp32_cuda_cores_per_sm(h.cc_major, h.cc_minor);
+    h.tc_fp16_dense_fma_per_sm_per_cycle =
+        device_tc_fp16_dense_fma_per_sm_per_cycle(h.cc_major, h.cc_minor);
 
-    // 通用峰值算力：“并行度 × 每周期运算数 × 频率”，Jetson 上 512 x 2 x 频率
-    // 单位 TFLOP/s，每秒万亿（1e12）次浮点数运算
+    // FP32 整卡峰值 TFLOP/s：
+    // sm_count × fp32_cores_per_sm × 2 × clockRate_kHz × 1000 / 1e12（×2：每周期 FMA=2 FLOPs）
+    // Jetson Orin GA10B：4×128×2×1.02e9/1e12 ≈ 1.044 TFLOP/s
     if (h.fp32_cores_per_sm > 0 && h.sm_clock_khz > 0 && h.sm_count > 0) {
         const double sm_hz = static_cast<double>(h.sm_clock_khz) * 1000.0;
         h.peak_fp32_tflops_theoretical = static_cast<float>(
             (static_cast<double>(h.sm_count) * static_cast<double>(h.fp32_cores_per_sm) * 2.0 * sm_hz) / 1e12);
     }
 
-    // DRAM 峰值：字节/s = mem_hz × (busWidth_bits/8) × 2。×2 = DDR 每时钟周期在上升/下降沿各传一次；
-    // busWidth/8 = 并行总线一次并行传输的字节数。mem_clock_khz 来自 cudaDeviceProp::memoryClockRate。
-    // 理论带宽（字节数/s）：2(double data rate) × memClock × (busWidth/8)
+    // FP16 TC dense 整卡峰值（GA102 Table 6 FMA/SM/c ×2）：
+    // sm_count × tc_fma_per_sm_per_cycle × 2 × clockRate_kHz × 1000 / 1e12
+    // Jetson Orin GA10B：4×512×2×1.02e9/1e12 ≈ 4.178 TFLOP/s
+    if (h.tc_fp16_dense_fma_per_sm_per_cycle > 0 && h.sm_clock_khz > 0 && h.sm_count > 0) {
+        const double sm_hz = static_cast<double>(h.sm_clock_khz) * 1000.0;
+        h.peak_tc_tfops_theoretical = static_cast<float>(
+            (static_cast<double>(h.sm_count) *
+             static_cast<double>(h.tc_fp16_dense_fma_per_sm_per_cycle) * 2.0 * sm_hz) /
+            1e12);
+    }
+
+    // DRAM 峰值 GB/s：
+    // memoryClockRate_kHz × 1000 × (memoryBusWidth bits / 8) × 2 / 1e9（×2=DDR）
+    // Jetson Orin GA10B：1020000 × 1000 × (128/8) × 2 / 1e9 = 32.64 GB/s
     if (h.mem_clock_khz > 0 && h.mem_bus_width_bits > 0) {
         const double byte_per_sec = static_cast<double>(h.mem_clock_khz) * 1000.0 *
                                     (static_cast<double>(h.mem_bus_width_bits) / 8.0) * 2.0;
@@ -270,16 +299,46 @@ inline __host__ void fprint_device_hw_info(FILE* out, const DeviceHwInfo& h) {
                  "rough upper bound, not from cuda API): %d\n",
                  h.max_instructions_issued_per_cycle_per_sm_theoretical);
     std::fprintf(out, "[DeviceHwInfo] fp32_cores_per_sm (table): %d\n", h.fp32_cores_per_sm);
+    std::fprintf(out, "[DeviceHwInfo] tc_fp16_dense_fma_per_sm_per_cycle (whitepaper Table 6): %d\n",
+                 h.tc_fp16_dense_fma_per_sm_per_cycle);
+
+    // 数值 = 字节/s / 1e9，单位 GB/s
+    std::fprintf(out, "[DeviceHwInfo] peak_dram_theoretical: %.6f GB/s\n",
+        static_cast<double>(h.peak_dram_gbps_theoretical));
     std::fprintf(out, "[DeviceHwInfo] peak_fp32_tflops_theoretical: %.6f\n",
                  static_cast<double>(h.peak_fp32_tflops_theoretical));
-    // 数值 = 字节/s / 1e9，单位 GB/s（吉字节每秒）；不是 Gbps（吉比特每秒）。
-    std::fprintf(out, "[DeviceHwInfo] peak_dram_theoretical: %.6f GB/s\n",
-                 static_cast<double>(h.peak_dram_gbps_theoretical));
+    std::fprintf(out,
+                 "[DeviceHwInfo] peak_tc_tfops_theoretical: %.6f  (FP16 Tensor dense; each FMA = 2 "
+                 "FLOPs)\n",
+                 static_cast<double>(h.peak_tc_tfops_theoretical));
+
+    if (h.peak_fp32_tflops_theoretical > 0.f && h.peak_dram_gbps_theoretical > 0.f) {
+        const double ridge_fp32 =
+            (static_cast<double>(h.peak_fp32_tflops_theoretical) * 1e12) /
+            (static_cast<double>(h.peak_dram_gbps_theoretical) * 1e9);
+        std::fprintf(out,
+                     "[DeviceHwInfo] roofline_ridge_fp32_cuda_vs_dram_flops_per_byte: %.6f\n",
+                     ridge_fp32);
+    }
+
+    if (h.tc_fp16_dense_fma_per_sm_per_cycle > 0 && h.peak_dram_gbps_theoretical > 0.f) {
+        const double ridge_tc =
+            (static_cast<double>(h.peak_tc_tfops_theoretical) * 1e12) /
+            (static_cast<double>(h.peak_dram_gbps_theoretical) * 1e9);
+        std::fprintf(out,
+                     "[DeviceHwInfo] roofline_ridge_tc_fp16_dense_vs_dram_flops_per_byte: %.6f\n",
+                     ridge_tc);
+    }
 
     if (h.fp32_cores_per_sm == 0) {
         std::fprintf(out,
                      "[DeviceHwInfo] note: fp32_cores_per_sm unknown for this CC; extend "
                      "device_fp32_cuda_cores_per_sm() to compute theoretical FP32 peak.\n");
+    }
+    if (h.tc_fp16_dense_fma_per_sm_per_cycle == 0) {
+        std::fprintf(out,
+                     "[DeviceHwInfo] note: tc_fp16_dense_fma_per_sm_per_cycle unknown for this CC; extend "
+                     "device_tc_fp16_dense_fma_per_sm_per_cycle() for peak_tc_tfops_theoretical.\n");
     }
     std::fflush(out);
 }

@@ -4,6 +4,8 @@
 #include "cuda_fp16.h"
 #include "cuda_utils.cuh"
 
+// deprecated
+
 // 与 fa_kernel_one_pass_parallel 对齐：grid (16,1,1)，block (32,4,1)，HEAD_DIM=128，Q 行数 13，KV tile 32，GQA blockIdx.x/2。
 // 
 // QK 子问题太小，喂不饱 Tensor Core
