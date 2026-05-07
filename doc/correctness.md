@@ -6,7 +6,7 @@
 |fa               |done|
 |RoPE             |done|
 |q8_1             |done|
-|top_k_moe        |done|
+|moe_top_k        |done|
 |roll             |done|
 |cpy_transpose    |done|
 |cpy_continue     |done|
@@ -78,7 +78,7 @@ max abs diff: 3.5762787e-07
 max abs diff: 9.536743e-07
 max abs diff: 0.08268285     <- 错误
 
-已修复！
+原因：不需要旋转的位置中，写入出错。已修复！
 
 
 # 类型对应

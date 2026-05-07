@@ -45,10 +45,6 @@ add_library(fa_one_pass_parallel_tc_true_cuda OBJECT
   fa_one_pass_parallel_tc_true.cu
 )
 
-add_library(fa_one_pass_parallel_tc_true_64_cuda OBJECT
-  fa_one_pass_parallel_tc_true_64.cu
-)
-
 add_library(cpy_continue_cuda OBJECT
   cpy_continue.cu
 )
@@ -57,9 +53,18 @@ add_library(cpy_transpose_cuda OBJECT
   cpy_transpose.cu
 )
 
-add_library(top_k_moe_cuda OBJECT
-  top_k_moe.cu
+add_library(moe_top_k_cuda OBJECT
+  moe_top_k.cu
 )
+
+find_package(CUDAToolkit REQUIRED)
+
+add_library(moe_pipeline_cuda OBJECT
+  moe_dispatch.cu
+  moe_combine.cu
+  moe_swiglu_experts.cu
+)
+target_link_libraries(moe_pipeline_cuda PRIVATE CUDA::cublas)
 
 add_library(roll_cuda OBJECT
   roll.cu
@@ -72,10 +77,10 @@ foreach(t gated_unary_cuda
           fa_one_pass_parallel_cuda
           fa_one_pass_parallel_tc_cuda
           fa_one_pass_parallel_tc_true_cuda
-          fa_one_pass_parallel_tc_true_64_cuda
           cpy_continue_cuda
           cpy_transpose_cuda
-          top_k_moe_cuda
+          moe_top_k_cuda
+          moe_pipeline_cuda
           roll_cuda)
   set_target_properties(${t} PROPERTIES
     POSITION_INDEPENDENT_CODE ON

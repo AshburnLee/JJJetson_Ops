@@ -5,7 +5,7 @@
 # - 关键逻辑:
 #   * include_directories 引入 Python3 与公共 include/
 #   * set_python_module_props 统一去掉 lib 前缀, 并把 .so 输出到顶层定义的 python/ 目录
-#   * 对每个算子 (gated_unary/rope/q8_1/fa/cpy_*/top_k_moe/roll) 建立 MODULE target,
+#   * 对每个算子 (gated_unary/rope/q8_1/fa/cpy_*/moe_top_k/roll) 建立 MODULE target,
 #     链接到各自的 CUDA OBJECT target 与 pybind11/Python/CUDA 运行库
 #
 include_directories(
@@ -82,7 +82,6 @@ add_library(fa_tc_me MODULE
   fa_tc_binding.cpp
   $<TARGET_OBJECTS:fa_one_pass_parallel_tc_cuda>
   $<TARGET_OBJECTS:fa_one_pass_parallel_tc_true_cuda>
-  $<TARGET_OBJECTS:fa_one_pass_parallel_tc_true_64_cuda>
 )
 
 target_link_libraries(fa_tc_me PRIVATE
@@ -122,19 +121,19 @@ target_link_libraries(cpy_transpose_me PRIVATE
 
 set_python_module_props(cpy_transpose_me)
 
-add_library(top_k_moe_me MODULE
-  top_k_moe_binding.cpp
-  $<TARGET_OBJECTS:top_k_moe_cuda>
+add_library(moe_top_k_me MODULE
+  moe_top_k_binding.cpp
+  $<TARGET_OBJECTS:moe_top_k_cuda>
 )
 
-target_link_libraries(top_k_moe_me PRIVATE
+target_link_libraries(moe_top_k_me PRIVATE
   pybind11::module
   ${Python3_LIBRARIES}
   cuda
   cudart
 )
 
-set_python_module_props(top_k_moe_me)
+set_python_module_props(moe_top_k_me)
 
 add_library(roll_me MODULE
   roll_binding.cpp
@@ -155,7 +154,7 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
   foreach(t gated_unary_me
             rope_me q8_1_me fa_me fa_tc_me
             cpy_continue_me cpy_transpose_me
-            top_k_moe_me
+            moe_top_k_me
             roll_me)
     target_compile_definitions(${t} PRIVATE MY_OPS_DEBUG=1)
   endforeach()
