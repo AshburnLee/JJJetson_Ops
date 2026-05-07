@@ -135,6 +135,51 @@ target_link_libraries(moe_top_k_me PRIVATE
 
 set_python_module_props(moe_top_k_me)
 
+add_library(moe_dispatch_me MODULE
+  moe_dispatch_binding.cpp
+  $<TARGET_OBJECTS:moe_dispatch_cuda>
+)
+
+target_link_libraries(moe_dispatch_me PRIVATE
+  pybind11::module
+  ${Python3_LIBRARIES}
+  cuda
+  cudart
+)
+
+set_python_module_props(moe_dispatch_me)
+
+add_library(moe_combine_me MODULE
+  moe_combine_binding.cpp
+  $<TARGET_OBJECTS:moe_combine_cuda>
+)
+
+target_link_libraries(moe_combine_me PRIVATE
+  pybind11::module
+  ${Python3_LIBRARIES}
+  cuda
+  cudart
+)
+
+set_python_module_props(moe_combine_me)
+
+add_library(moe_pipeline_me MODULE
+  moe_swiglu_experts_binding.cpp
+  $<TARGET_OBJECTS:moe_swiglu_experts_cuda>
+  $<TARGET_OBJECTS:moe_dispatch_cuda>
+  $<TARGET_OBJECTS:moe_combine_cuda>
+)
+
+target_link_libraries(moe_pipeline_me PRIVATE
+  pybind11::module
+  ${Python3_LIBRARIES}
+  CUDA::cublas
+  cuda
+  cudart
+)
+
+set_python_module_props(moe_pipeline_me)
+
 add_library(roll_me MODULE
   roll_binding.cpp
   $<TARGET_OBJECTS:roll_cuda>
@@ -155,6 +200,9 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
             rope_me q8_1_me fa_me fa_tc_me
             cpy_continue_me cpy_transpose_me
             moe_top_k_me
+            moe_dispatch_me
+            moe_combine_me
+            moe_pipeline_me
             roll_me)
     target_compile_definitions(${t} PRIVATE MY_OPS_DEBUG=1)
   endforeach()

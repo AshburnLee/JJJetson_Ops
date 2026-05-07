@@ -57,14 +57,18 @@ add_library(moe_top_k_cuda OBJECT
   moe_top_k.cu
 )
 
-find_package(CUDAToolkit REQUIRED)
-
-add_library(moe_pipeline_cuda OBJECT
+add_library(moe_dispatch_cuda OBJECT
   moe_dispatch.cu
+)
+
+add_library(moe_combine_cuda OBJECT
   moe_combine.cu
+)
+
+add_library(moe_swiglu_experts_cuda OBJECT
   moe_swiglu_experts.cu
 )
-target_link_libraries(moe_pipeline_cuda PRIVATE CUDA::cublas)
+target_link_libraries(moe_swiglu_experts_cuda PRIVATE CUDA::cublas)
 
 add_library(roll_cuda OBJECT
   roll.cu
@@ -80,7 +84,9 @@ foreach(t gated_unary_cuda
           cpy_continue_cuda
           cpy_transpose_cuda
           moe_top_k_cuda
-          moe_pipeline_cuda
+          moe_dispatch_cuda
+          moe_combine_cuda
+          moe_swiglu_experts_cuda
           roll_cuda)
   set_target_properties(${t} PROPERTIES
     POSITION_INDEPENDENT_CODE ON

@@ -23,6 +23,10 @@ find_package(pybind11 REQUIRED)
 
 enable_language(CUDA)
 
+# CUDAToolkit 提供了如 CUDA::cublas 这类已导入的目标；绑定模块会链接这些库
+# 这样，所有子目录在依赖 OBJECT 库并进行传递使用前，就能正确找到对应的 CUDA 依赖。
+find_package(CUDAToolkit REQUIRED)
+
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
     set(CMAKE_CUDA_ARCHITECTURES 87)
 endif()

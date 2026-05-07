@@ -9,14 +9,15 @@ static __global__ void moe_combine_kernel(const float* expert_out,
                                           int num_routes, /*num_token * top-k*/
                                           int hidden_size,
                                           int top_k) {
-    const int r = blockIdx.x * blockDim.x + threadIdx.x;
-    if (r >= num_routes) {
+    const int pos = blockIdx.x * blockDim.x + threadIdx.x;
+    if (pos >= num_routes) {
         return;
     }
-    const int t = source_token[r];
-    const int k = source_k[r];
+    // d_expert_out 与 dispatch 输出的 permuted 行对齐, 第 pos 行对应该 slot 的专家输出
+    const int t = source_token[pos];
+    const int k = source_k[pos];
     const float w = route_weights[static_cast<size_t>(t) * top_k + k];
-    const float* src = expert_out + static_cast<size_t>(r) * hidden_size;
+    const float* src = expert_out + static_cast<size_t>(pos) * hidden_size;
     float* dst_base = y + static_cast<size_t>(t) * hidden_size;
     // 每一个 hidden_size 位置，累加不同 pos，使用 atomicAdd 防止不同thread对同一个位置的访存冲突 
     for (int h = 0; h < hidden_size; ++h) {
