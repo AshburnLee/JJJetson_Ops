@@ -61,6 +61,10 @@ add_library(moe_dispatch_cuda OBJECT
   moe_dispatch.cu
 )
 
+add_library(moe_dispatch_sota_cuda OBJECT
+  moe_dispatch_sota.cu
+)
+
 add_library(moe_combine_cuda OBJECT
   moe_combine.cu
 )
@@ -85,6 +89,7 @@ foreach(t gated_unary_cuda
           cpy_transpose_cuda
           moe_top_k_cuda
           moe_dispatch_cuda
+          moe_dispatch_sota_cuda
           moe_combine_cuda
           moe_swiglu_experts_cuda
           roll_cuda)

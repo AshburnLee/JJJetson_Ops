@@ -149,6 +149,20 @@ target_link_libraries(moe_dispatch_me PRIVATE
 
 set_python_module_props(moe_dispatch_me)
 
+add_library(moe_dispatch_sota_me MODULE
+  moe_dispatch_sota_binding.cpp
+  $<TARGET_OBJECTS:moe_dispatch_sota_cuda>
+)
+
+target_link_libraries(moe_dispatch_sota_me PRIVATE
+  pybind11::module
+  ${Python3_LIBRARIES}
+  cuda
+  cudart
+)
+
+set_python_module_props(moe_dispatch_sota_me)
+
 add_library(moe_combine_me MODULE
   moe_combine_binding.cpp
   $<TARGET_OBJECTS:moe_combine_cuda>
@@ -201,6 +215,7 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
             cpy_continue_me cpy_transpose_me
             moe_top_k_me
             moe_dispatch_me
+            moe_dispatch_sota_me
             moe_combine_me
             moe_pipeline_me
             roll_me)
