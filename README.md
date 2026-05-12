@@ -96,3 +96,8 @@ sudo -E env PYTHONPATH="$PYTHONPATH" $(which ncu) \
 - python 端开启制定Kernel的 profile：`PROFILE_KERNEL_FROM_PYTHON=1`
 
 另：资源有限的机器上，`./build_all.sh --debug` 可能会导致机器卡死，只构建制定目标： `cd build && make -j3 xxx_me `
+
+
+# Github Action
+
+GitHub 托管 ubuntu 实例没有 GPU 环境，当前请确保 `run_tests.sh` 在本地通过。
