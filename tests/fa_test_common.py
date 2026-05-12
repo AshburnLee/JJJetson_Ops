@@ -2,10 +2,11 @@
 fa 系列 kernel 测试共用：参考实现、随机输入、数值断言。
 与 fa_me / fa_tc_me 解耦，仅依赖 numpy。
 """
+
 from __future__ import annotations
 
 import os
-from typing import Any, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -40,7 +41,7 @@ def warp_reduce_down_sum_ref(row32: np.ndarray) -> np.float32:
     return np.float32(v[0])
 
 
-def fa_ref(Q: np.ndarray, K: np.ndarray, V: np.ndarray) -> Tuple[Any, ...]:
+def fa_ref(Q: np.ndarray, K: np.ndarray, V: np.ndarray) -> tuple[Any, ...]:
     """
     与 fa kernel 一致的两遍式参考（col-major）。
     返回 (dst, m_all, l_all, S_all, row_sum_all, scale_old_all, scale_new_all, exp_val_all)。
@@ -66,17 +67,21 @@ def fa_ref(Q: np.ndarray, K: np.ndarray, V: np.ndarray) -> Tuple[Any, ...]:
         q0 = kv_head * 2 + 0
         q1 = kv_head * 2 + 1
         m = np.full((26,), -np.inf, dtype=np.float32)
-        l = np.zeros((26,), dtype=np.float32)
+        ell = np.zeros((26,), dtype=np.float32)
 
         for tile_id in range(LOOP_KV):
             t0 = tile_id * KV_TILE
             t1 = t0 + KV_TILE
             if q0 < Q_HEADS:
-                S0 = Q[:, :, q0, 0].astype(np.float32).T @ K[:, t0:t1, kv_head, 0].astype(np.float32)
+                S0 = Q[:, :, q0, 0].astype(np.float32).T @ K[:, t0:t1, kv_head, 0].astype(
+                    np.float32
+                )
             else:
                 S0 = np.full((TOK_Q, KV_TILE), -np.inf, dtype=np.float32)
             if q1 < Q_HEADS:
-                S1 = Q[:, :, q1, 0].astype(np.float32).T @ K[:, t0:t1, kv_head, 0].astype(np.float32)
+                S1 = Q[:, :, q1, 0].astype(np.float32).T @ K[:, t0:t1, kv_head, 0].astype(
+                    np.float32
+                )
             else:
                 S1 = np.full((TOK_Q, KV_TILE), -np.inf, dtype=np.float32)
             S = np.concatenate([S0, S1], axis=0)
@@ -91,11 +96,11 @@ def fa_ref(Q: np.ndarray, K: np.ndarray, V: np.ndarray) -> Tuple[Any, ...]:
             row_sum_all[kv_head, tile_id, :] = row_sum
             scale_old_all[kv_head, tile_id, :] = scale_old
             scale_new_all[kv_head, tile_id, :] = scale_new
-            l = l * scale_old + row_sum * scale_new
+            ell = ell * scale_old + row_sum * scale_new
             m = m_new
 
         m_all[kv_head, :] = m
-        l_all[kv_head, :] = l
+        l_all[kv_head, :] = ell
 
         out0 = np.zeros((TOK_Q, HEAD_DIM), dtype=np.float32)
         out1 = np.zeros((TOK_Q, HEAD_DIM), dtype=np.float32)
@@ -103,12 +108,16 @@ def fa_ref(Q: np.ndarray, K: np.ndarray, V: np.ndarray) -> Tuple[Any, ...]:
             t0 = tile_id * KV_TILE
             t1 = t0 + KV_TILE
             if q0 < Q_HEADS:
-                S0 = Q[:, :, q0, 0].astype(np.float32).T @ K[:, t0:t1, kv_head, 0].astype(np.float32)
-                P0 = np.exp(S0 - m[0:TOK_Q, None]) / l[0:TOK_Q, None]
+                S0 = Q[:, :, q0, 0].astype(np.float32).T @ K[:, t0:t1, kv_head, 0].astype(
+                    np.float32
+                )
+                P0 = np.exp(S0 - m[0:TOK_Q, None]) / ell[0:TOK_Q, None]
                 out0 += P0 @ V[:, t0:t1, kv_head, 0].astype(np.float32).T
             if q1 < Q_HEADS:
-                S1 = Q[:, :, q1, 0].astype(np.float32).T @ K[:, t0:t1, kv_head, 0].astype(np.float32)
-                P1 = np.exp(S1 - m[TOK_Q : 2 * TOK_Q, None]) / l[TOK_Q : 2 * TOK_Q, None]
+                S1 = Q[:, :, q1, 0].astype(np.float32).T @ K[:, t0:t1, kv_head, 0].astype(
+                    np.float32
+                )
+                P1 = np.exp(S1 - m[TOK_Q : 2 * TOK_Q, None]) / ell[TOK_Q : 2 * TOK_Q, None]
                 out1 += P1 @ V[:, t0:t1, kv_head, 0].astype(np.float32).T
         if q0 < Q_HEADS:
             dst[:, :, q0, 0] = out0.T
@@ -123,7 +132,7 @@ def fa_ref_dst_only(Q: np.ndarray, K: np.ndarray, V: np.ndarray) -> np.ndarray:
     return fa_ref(Q, K, V)[0]
 
 
-def random_fa_inputs(seed: int = 24) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def random_fa_inputs(seed: int = 24) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """列主序随机 Q/K/V（与历史 np.random.seed + randn 行为一致）。"""
     np.random.seed(seed)
     Q = np.asfortranarray(np.random.randn(*DST_SHAPE).astype(np.float16))

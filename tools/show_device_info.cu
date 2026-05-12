@@ -3,7 +3,7 @@
 
 #include <cstdlib>
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     int device_id = 0;
     if (argc > 1) {
         device_id = std::atoi(argv[1]);

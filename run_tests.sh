@@ -20,4 +20,3 @@ while IFS= read -r -d '' test_file; do
 done < <(find "${ROOT_DIR}/tests" -maxdepth 2 -name "test_*.py" -print0 | sort -z)
 
 exit "${status}"
-

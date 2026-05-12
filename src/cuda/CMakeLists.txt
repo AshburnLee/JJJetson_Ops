@@ -78,7 +78,7 @@ add_library(roll_cuda OBJECT
   roll.cu
 )
 
-foreach(t gated_unary_cuda 
+foreach(t gated_unary_cuda
           rope_cuda q8_1_cuda
           fa_two_pass_cuda
           fa_one_pass_cuda
@@ -105,4 +105,3 @@ foreach(t gated_unary_cuda
     target_compile_definitions(${t} PRIVATE MY_OPS_DEBUG=1)
   endif()
 endforeach()
-

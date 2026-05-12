@@ -1,5 +1,5 @@
 #include <cuda_runtime.h>
-#include <cstring>       // memcpy
+#include <cstring> // memcpy
 #include <stdio.h>
 #include <vector>
 #include "cuda_utils.cuh"
@@ -15,22 +15,16 @@ static __forceinline__ __device__ int64_t idx_after_roll(const int64_t idx, cons
     return idx;
 }
 
-static __global__ void roll_kernel(const float * __restrict__ src,
-                                 float * __restrict__ dst,
-                                 const int64_t ne0_0,
-                                 const int64_t ne0_1,
-                                 const int64_t ne0_2,
-                                 const int64_t ne0_3,
-                                 const int     shift0,
-                                 const int     shift1,
-                                 const int     shift2,
-                                 const int     shift3) {
+static __global__ void roll_kernel(const float *__restrict__ src, float *__restrict__ dst,
+                                   const int64_t ne0_0, const int64_t ne0_1, const int64_t ne0_2,
+                                   const int64_t ne0_3, const int shift0, const int shift1,
+                                   const int shift2, const int shift3) {
     // 《核心公式》， 使用方式与 cpy_continue 完全相同
-    const int64_t idx       = threadIdx.x + int64_t(blockDim.x) * blockIdx.x; 
-    const int64_t stride0   = 1;
-    const int64_t stride1   = ne0_0;
-    const int64_t stride2   = ne0_0 * ne0_1;
-    const int64_t stride3   = ne0_0 * ne0_1 * ne0_2;
+    const int64_t idx = threadIdx.x + int64_t(blockDim.x) * blockIdx.x;
+    const int64_t stride0 = 1;
+    const int64_t stride1 = ne0_0;
+    const int64_t stride2 = ne0_0 * ne0_1;
+    const int64_t stride3 = ne0_0 * ne0_1 * ne0_2;
     const int64_t n_elements = ne0_0 * ne0_1 * ne0_2 * ne0_3;
 
     if (idx >= n_elements) {
@@ -50,17 +44,14 @@ static __global__ void roll_kernel(const float * __restrict__ src,
     const int64_t d3 = idx_after_roll(i3 - shift3, ne0_3);
 
     // src的读取变化了
-    int64_t src_id =  1 * d0 + stride1 * d1 + stride2 * d2 + stride3 * d3;
-    int64_t sdt_id =  1 * i0 + stride1 * i1 + stride2 * i2 + stride3 * i3;
+    int64_t src_id = 1 * d0 + stride1 * d1 + stride2 * d2 + stride3 * d3;
+    int64_t sdt_id = 1 * i0 + stride1 * i1 + stride2 * i2 + stride3 * i3;
 
     dst[sdt_id] = src[src_id];
 }
 
-extern "C" void roll(
-                float* input, 
-                float* output, 
-                std::vector<int>& input_dims, 
-                std::vector<int>& shifts) {
+extern "C" void roll(float *input, float *output, std::vector<int> &input_dims,
+                     std::vector<int> &shifts) {
     // 直接按 col-major 约定解释 dims：
     // dims = [ne0_0, ne0_1, ne0_2, ne0_3]，其中 ne0_0 是变化最快的维度
     const int64_t ne0_0 = input_dims[0];
@@ -74,7 +65,7 @@ extern "C" void roll(
     const int64_t shift2 = shifts[2];
     const int64_t shift3 = shifts[3];
 
-    const int64_t n_elem  = ne0_0 * ne0_1 * ne0_2 * ne0_3;
+    const int64_t n_elem = ne0_0 * ne0_1 * ne0_2 * ne0_3;
 
     float *d_x = nullptr;
     float *d_y = nullptr;
@@ -90,16 +81,16 @@ extern "C" void roll(
     const int blocks_x = (n_elem + CUDA_ROPE_BLOCK_SIZE - 1) / (CUDA_ROPE_BLOCK_SIZE);
     const dim3 blocks(blocks_x, 1, 1);
 #if defined(MY_OPS_DEBUG)
-    std::printf(
-        "Kernel launch config: block=(%u,%u,%u), grid=(%u,%u,%u)\n",
-        threads.x, threads.y, threads.z,
-        blocks.x, blocks.y, blocks.z);
+    std::printf("Kernel launch config: block=(%u,%u,%u), grid=(%u,%u,%u)\n", threads.x, threads.y,
+                threads.z, blocks.x, blocks.y, blocks.z);
     std::fflush(stdout);
 #endif
-    roll_kernel<<<blocks, threads, 0, stream>>>(d_x, d_y, ne0_0, ne0_1, ne0_2, ne0_3, shift0, shift1, shift2, shift3);
+    roll_kernel<<<blocks, threads, 0, stream>>>(d_x, d_y, ne0_0, ne0_1, ne0_2, ne0_3, shift0,
+                                                shift1, shift2, shift3);
     LAUNCH_CHECK();
 
-    CUDA_CHECK(cudaMemcpyAsync(output, d_y, n_elem * sizeof(float), cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(
+        cudaMemcpyAsync(output, d_y, n_elem * sizeof(float), cudaMemcpyDeviceToHost, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
     CUDA_CHECK(cudaStreamDestroy(stream));
 

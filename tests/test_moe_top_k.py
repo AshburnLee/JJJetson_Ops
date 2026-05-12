@@ -1,16 +1,17 @@
-import torch
-import numpy as np
 import moe_top_k_me
+import numpy as np
+import torch
+
 
 def test_moe_top_k():
     torch.manual_seed(24)
     dtype = torch.float32
 
     cases = [
-        (4,    32,  3),
-        (128,  8,   2),
-        (4096, 512, 2), # baseline
-        (512,  64,  3),
+        (4, 32, 3),
+        (128, 8, 2),
+        (4096, 512, 2),  # baseline
+        (512, 64, 3),
         (1024, 128, 4),
     ]
 
@@ -22,7 +23,7 @@ def test_moe_top_k():
 
         # torch as reference
         topk_logits, topk_indices = torch.topk(logits, topk, dim=-1)
-        
+
         weights_ref = torch.softmax(topk_logits, dim=-1)
         ids_ref = topk_indices.to(torch.int32)
 
@@ -30,15 +31,15 @@ def test_moe_top_k():
         logits_me = logits.cpu().numpy()
         weights_me = np.zeros((n_tokens, topk), dtype=np.float32)
         ids_me = np.zeros((n_tokens, topk), dtype=np.int32)
-        
+
         moe_top_k_me.moe_top_k(
             logits=logits_me,
             topk=topk,
             weights=weights_me,
             ids=ids_me,
-            input_dims=[n_tokens, n_experts]
+            input_dims=[n_tokens, n_experts],
         )
-        
+
         # compare
         weights_me = torch.from_numpy(weights_me)
         ids_me = torch.from_numpy(ids_me)
@@ -46,7 +47,7 @@ def test_moe_top_k():
         rtol = 1e-5
 
         weights_ok = torch.allclose(weights_me, weights_ref, atol=atol, rtol=rtol)
-        ids_ok     = torch.equal(ids_me, ids_ref)
+        ids_ok = torch.equal(ids_me, ids_ref)
 
         print(f"  weights match: {weights_ok}")
         print(f"  ids     match: {ids_ok}")
@@ -62,14 +63,10 @@ def test_moe_top_k():
 def debug():
     logits_np = np.random.randn(4096, 32).astype(np.float32)
     weights_np = np.zeros((4096, 2), dtype=np.float32)
-    ids_np     = np.zeros((4096, 2), dtype=np.int32)
+    ids_np = np.zeros((4096, 2), dtype=np.int32)
 
     moe_top_k_me.moe_top_k(
-        logits=logits_np,
-        topk=2,
-        weights=weights_np,
-        ids=ids_np,
-        input_dims=[4096,32]
+        logits=logits_np, topk=2, weights=weights_np, ids=ids_np, input_dims=[4096, 32]
     )
 
     print(weights_np.shape)
@@ -79,4 +76,3 @@ def debug():
 if __name__ == "__main__":
     # debug()
     test_moe_top_k()
-    

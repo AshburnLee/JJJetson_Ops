@@ -59,7 +59,7 @@
 |kernel | gridxblock |shape |duration|
 |---|---|---|---|
 |fa | (8,1,1),(32,4,1) | (128,13,16,1)(128,256,8,1) |  (base)3.39 ms ->  (+bank-conf)1.35 ms -> (+vectorize)1.33 ms -> (+streaming) 863.74 us -> (warp stall + occupancy) 500.32 us|
-|fa | (16,1,1),(32,4,1) | (128,13,16,1)(128,256,8,1) |  TC version (339 us) -> bank conf(302 us) | 
+|fa | (16,1,1),(32,4,1) | (128,13,16,1)(128,256,8,1) |  TC version (339 us) -> bank conf(302 us) |
 |quantize_q8_1_kernel   | (13,4,1),(128,1,1) | .. | 26.78 us|
 |rope_neox_kernel | (208,1,1),(1,256,1) | .. | 48.54 us|
 |moe_top_k_kernel | (1024,1,1),(32,4,1) | .. | 1.02 ms|

@@ -1,6 +1,7 @@
 import numpy as np
 import q8_1_me
 
+
 def q8_1_ref(input_np: np.ndarray):
     """
     输入:
@@ -17,18 +18,19 @@ def q8_1_ref(input_np: np.ndarray):
     assert input_np.dtype == np.float32
     x = np.asfortranarray(input_np)
 
-    ne0, ne1, ne2, ne3 = x.shape      # 2048, 13, 1, 1
+    ne0, ne1, ne2, ne3 = x.shape  # 2048, 13, 1, 1
     blocks_y = 4
-    vals_per_block = 128
+    # vals_per_block = 128
+
     vals_per_scale = 32
     qs_ref = np.zeros((ne1 * 16, 128), dtype=np.int8)
-    d_ref  = np.zeros((ne1 * 16, 4),   dtype=np.float32)
-    sum_ref= np.zeros((ne1 * 16, 4),   dtype=np.float32)
-    for j in range(ne1):          # blockIdx.x
-        for by in range(blocks_y):   # blockIdx.y
-            for warp in range(4):    # warp = threadIdx.x // 32
-                group = 4 * by + warp           # 0..15
-                block_id = group * ne1 + j      # 与 id_block 一致
+    d_ref = np.zeros((ne1 * 16, 4), dtype=np.float32)
+    sum_ref = np.zeros((ne1 * 16, 4), dtype=np.float32)
+    for j in range(ne1):  # blockIdx.x
+        for by in range(blocks_y):  # blockIdx.y
+            for warp in range(4):  # warp = threadIdx.x // 32
+                group = 4 * by + warp  # 0..15
+                block_id = group * ne1 + j  # 与 id_block 一致
                 start = group * 128
                 end = min(start + 128, ne0)
                 vals = np.zeros(128, dtype=np.float32)
@@ -82,9 +84,9 @@ def test_all():
     # 4. 解析
     qs_int8, scale_fp32, sum_fp32 = q8_1_me.parse(q_output, n_blocks)
 
-    print("qs_int8 shape:", qs_int8.shape)       # (208, 128)
-    print("scale_fp32 shape:", scale_fp32.shape) # (208, 4)
-    print("sum_fp32 shape:", sum_fp32.shape)     # (208, 4)
+    print("qs_int8 shape:", qs_int8.shape)  # (208, 128)
+    print("scale_fp32 shape:", scale_fp32.shape)  # (208, 4)
+    print("sum_fp32 shape:", sum_fp32.shape)  # (208, 4)
     print("qs_int8 dtype:", qs_int8.dtype)
     print("scale_fp32 dtype:", scale_fp32.dtype)
     print("sum_fp32 dtype:", sum_fp32.dtype)
@@ -116,11 +118,10 @@ def test_all():
 
     assert np.all(qs_int8 == qs_ref)
     assert np.allclose(scale_fp32, scale_ref, atol=1e-5)
-    assert np.allclose(sum_fp32,   sum_ref,   atol=1e-2)
+    assert np.allclose(sum_fp32, sum_ref, atol=1e-2)
 
     print("Passed.")
 
 
 if __name__ == "__main__":
     test_all()
-

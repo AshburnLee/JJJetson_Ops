@@ -16,4 +16,3 @@ cmake -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" ..
 make -j"$(( $(nproc) - 2 ))"
 
 echo "Done building. Python extensions are in: ${ROOT_DIR}/python"
-

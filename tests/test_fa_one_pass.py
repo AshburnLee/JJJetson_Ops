@@ -1,12 +1,16 @@
 """测试 fa_kernel_one_pass（单遍 8-block streaming）。"""
-import numpy as np
+
 import fa_me
+import numpy as np
+
 import fa_test_common as fc
 
 
 def test_fa_one_pass():
     Q, K, V = fc.random_fa_inputs(24)
-    dst_ref, m_ref, l_ref, S_ref, row_sum_ref, scale_old_ref, scale_new_ref, exp_val_ref = fc.fa_ref(Q, K, V)
+    dst_ref, m_ref, l_ref, S_ref, row_sum_ref, scale_old_ref, scale_new_ref, exp_val_ref = (
+        fc.fa_ref(Q, K, V)
+    )
     dst = fc.run_launcher(fa_me.launch_fa_one_pass, Q, K, V, 1.0)
     fc.assert_dst_close("one_pass", dst, dst_ref)
 
@@ -20,9 +24,17 @@ def test_fa_one_pass():
         scale_new_out = np.zeros((8, 8, 26), dtype=np.float32)
         exp_val_out = np.zeros((8, 8, 26, 32), dtype=np.float32)
         fa_me.launch_fa_debug_ml(
-            Q, K, V, dst_dbg, 1.0,
-            m_out, l_out, S_out,
-            row_sum_out, scale_old_out, scale_new_out,
+            Q,
+            K,
+            V,
+            dst_dbg,
+            1.0,
+            m_out,
+            l_out,
+            S_out,
+            row_sum_out,
+            scale_old_out,
+            scale_new_out,
             exp_val_out,
         )
         print("max abs diff m (debug):", np.max(np.abs(m_out - m_ref)))

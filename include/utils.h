@@ -8,14 +8,13 @@
 #include <random>
 
 enum data_type {
-    DT_F32  = 0,  // float32
-    DT_BF16 = 1,  // bfloat16
-    DT_F16  = 2,  // half
-    DT_I32  = 3,  // int32
+    DT_F32 = 0,  // float32
+    DT_BF16 = 1, // bfloat16
+    DT_F16 = 2,  // half
+    DT_I32 = 3,  // int32
 };
 
-template<typename T>
-void InitInputData(T* addr, int numl) {
+template <typename T> void InitInputData(T *addr, int numl) {
     if (numl <= 0) {
         throw std::invalid_argument("numl must be positive");
     }
@@ -30,8 +29,7 @@ void InitInputData(T* addr, int numl) {
     return;
 }
 
-template <typename T>
-void ShowSamples(T* ptr) {
+template <typename T> void ShowSamples(T *ptr) {
     std::cout << ptr[0] << " ";
     std::cout << ptr[1] << " ";
     std::cout << ptr[2] << " ";
@@ -41,4 +39,4 @@ void ShowSamples(T* ptr) {
     std::cout << ptr[6] << "\n";
 }
 
-#endif 
+#endif

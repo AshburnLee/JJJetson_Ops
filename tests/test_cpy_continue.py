@@ -1,7 +1,8 @@
 import os
-import torch
-import numpy as np
+
 import cpy_continue_me
+import numpy as np
+import torch
 
 """
 逻辑：给定一个可能带有 padding（非连续 stride）的 src 张量，
@@ -11,18 +12,18 @@ import cpy_continue_me
 
 # 映射：PyTorch dtype -> NumPy dtype（用于构造 numpy buffer）
 torch_2_numpy = {
-    torch.float32:  np.float32,
-    torch.float16:  np.float16,
+    torch.float32: np.float32,
+    torch.float16: np.float16,
     torch.bfloat16: np.float32,  # bfloat16 通过 float32 中转验证
-    torch.int32:    np.int32,
+    torch.int32: np.int32,
 }
 
 # 映射：PyTorch dtype -> cpy_continue_me.data_type（传给 CUDA kernel）
 torch_2_source = {
-    torch.float32 : cpy_continue_me.data_type.f32,
-    torch.float16 : cpy_continue_me.data_type.f16,
-    torch.bfloat16 : cpy_continue_me.data_type.bf16,
-    torch.int32 : cpy_continue_me.data_type.i32,
+    torch.float32: cpy_continue_me.data_type.f32,
+    torch.float16: cpy_continue_me.data_type.f16,
+    torch.bfloat16: cpy_continue_me.data_type.bf16,
+    torch.int32: cpy_continue_me.data_type.i32,
 }
 
 
@@ -33,7 +34,7 @@ def test_continue():
     - 使用 cpy_continue_me.cpy_con 完成从 src 到 dst_np 的拷贝 和 转换
     - 逐元素比较两者
     """
-    shape = (32,32,32,32)
+    shape = (32, 32, 32, 32)
     cases = [
         (torch.float32, torch.int32),
         (torch.int32, torch.float32),
@@ -81,9 +82,9 @@ def test_continue():
         cpy_continue_me.cpy_con(
             src_np,
             dst_np,
-            list(src_np.shape),   # [ne0_0, ne0_1, ne0_2, ne0_3]
+            list(src_np.shape),  # [ne0_0, ne0_1, ne0_2, ne0_3]
             list(dst_np.shape),
-            src_stride,           # [nb0_0, nb0_1, nb0_2, nb0_3] (bytes)
+            src_stride,  # [nb0_0, nb0_1, nb0_2, nb0_3] (bytes)
             list(dst_np.strides),
             torch_2_source[src_dtype],
             torch_2_source[dst_dtype],
@@ -120,18 +121,18 @@ def test_w_padding():
     #    例如在 dim=2 上扩展为 5，再只用前 3，后 2 作为 padding
     big_shape = (shape[0], shape[1], shape[2] + 2, shape[3])  # (2,2,5,4)
     big = torch.zeros(big_shape, dtype=torch.float32)
-    big[:, :, :shape[2], :] = src_ref
+    big[:, :, : shape[2], :] = src_ref
     # padding：dim2 上多出的 2 层，用 999 标出（stride 会跨过这些槽位）
-    big[:, :, shape[2]:, :] = 999.0
+    big[:, :, shape[2] :, :] = 999.0
 
     # 非连续 view：逻辑 shape 仍为 (2,2,3,4)，但 stride 中隐含 padding
-    src_view = big[:, :, :shape[2], :]  # view, 非 contiguous
+    src_view = big[:, :, : shape[2], :]  # view, 非 contiguous
 
     # 3. ground truth：去掉 padding 后的连续张量
     dst_ref = src_ref.clone()
 
     # 4. 转成 numpy，获取 dims 和 byte stride
-    src_np = src_view.numpy()          # 共享底层内存 + stride（单位：字节）
+    src_np = src_view.numpy()  # 共享底层内存 + stride（单位：字节）
     src_dims = list(src_np.shape)
     src_stride_bytes = list(src_np.strides)
 
@@ -193,7 +194,7 @@ def test_large_scale_padding_to_continue():
         + (ne_src[3] - 1) * nb_src_bytes[3]
         + 4
     )
-    assert(nbytes_src == 128 * 16 * 13 * 4)
+    assert nbytes_src == 128 * 16 * 13 * 4
 
     buf = np.zeros(nbytes_src, dtype=np.uint8)
     src_np = np.ndarray(shape=ne_src, dtype=np.float32, buffer=buf, strides=nb_src_bytes)
@@ -228,4 +229,3 @@ if __name__ == "__main__":
         test_continue()
         test_w_padding()
     test_large_scale_padding_to_continue()
-    

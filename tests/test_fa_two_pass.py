@@ -1,5 +1,7 @@
 """测试 fa_kernel_two_pass（两遍 KV）。"""
+
 import fa_me
+
 import fa_test_common as fc
 
 

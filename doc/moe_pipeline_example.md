@@ -121,7 +121,7 @@ Combine
 
 `cublasSgemm` gate & `cublasSgemm` up（按 expert，`X=d_perm[start:start+n]`）
 
-- `g = x * WG[e]^T`  
+- `g = x * WG[e]^T`
 - `u = x * WU[e]^T`
 
 e = 0,1,2
@@ -264,7 +264,7 @@ W 与连续与否无关：每个专家 e 各自一块 `WG[e]`、`WU[e]`，形状
 
 3个权值各用一整块连续显存按 e 排布；用指针 + e * (一块里的元素个数) 指到对应专家。
 
-就该case，WG/WU 总长度 3 x I x H = 3x2x4 = 24，专家 e 的起点：`WG + e * (I*H)`，该块在逻辑上是 WG[e]，形状是 IxH（2x4）。 
+就该case，WG/WU 总长度 3 x I x H = 3x2x4 = 24，专家 e 的起点：`WG + e * (I*H)`，该块在逻辑上是 WG[e]，形状是 IxH（2x4）。
 
 WD 一样的, 共有 3 x H x I = 3x4x2 = 24 个元素，专家 e：WD + e * (H*I)，WD[e] 为 HxI（4x2）
 
@@ -274,5 +274,3 @@ WD 一样的, 共有 3 x H x I = 3x4x2 = 24 个元素，专家 e：WD + e * (H*I
 ## WG WU WD 3个矩阵，是如何得到的
 
 模型自带的可学习参数。
-
-

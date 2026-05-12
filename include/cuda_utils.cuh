@@ -4,24 +4,24 @@
 #include <cuda_runtime.h>
 #include <iostream>
 
-#define CUDA_CHECK(call)                                                  \
-    do {                                                                  \
-        cudaError_t error = call;                                         \
-        if (error != cudaSuccess) {                                       \
-            fprintf(stderr, "CUDA error at %s:%d - %s\n",                 \
-                    __FILE__, __LINE__, cudaGetErrorString(error));       \
-            exit(EXIT_FAILURE);                                           \
-        }                                                                 \
+#define CUDA_CHECK(call)                                                                           \
+    do {                                                                                           \
+        cudaError_t error = call;                                                                  \
+        if (error != cudaSuccess) {                                                                \
+            fprintf(stderr, "CUDA error at %s:%d - %s\n", __FILE__, __LINE__,                      \
+                    cudaGetErrorString(error));                                                    \
+            exit(EXIT_FAILURE);                                                                    \
+        }                                                                                          \
     } while (0)
 
-#define LAUNCH_CHECK()                                                    \
-    do {                                                                  \
-        cudaError_t error = cudaGetLastError();                           \
-        if (error != cudaSuccess) {                                       \
-            fprintf(stderr, "Kernel launch failed at %s:%d - %s\n",       \
-                    __FILE__, __LINE__, cudaGetErrorString(error));       \
-            exit(EXIT_FAILURE);                                           \
-        }                                                                 \
+#define LAUNCH_CHECK()                                                                             \
+    do {                                                                                           \
+        cudaError_t error = cudaGetLastError();                                                    \
+        if (error != cudaSuccess) {                                                                \
+            fprintf(stderr, "Kernel launch failed at %s:%d - %s\n", __FILE__, __LINE__,            \
+                    cudaGetErrorString(error));                                                    \
+            exit(EXIT_FAILURE);                                                                    \
+        }                                                                                          \
     } while (0)
 
 // 使用 shuffle 指令在单个 warp 内做 reduce max / sum。
@@ -63,4 +63,4 @@ static __device__ __forceinline__ float warp_reduce_xor_sum(float x) {
     return x;
 }
 
-#endif  // CUDA_UTILS_H_
+#endif // CUDA_UTILS_H_

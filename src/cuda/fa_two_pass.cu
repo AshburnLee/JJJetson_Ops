@@ -4,22 +4,16 @@
 #include "cuda_utils.cuh"
 
 // Tensor 列主序。两遍 KV：先扫 K 更新全局 m/l，再扫 K+V 写输出。
-__global__ void fa_kernel_two_pass(
-                const half* __restrict__ Q,
-                const half* __restrict__ K,
-                const half* __restrict__ V,
-                float* __restrict__ dst,
-                const float scale
+__global__ void
+fa_kernel_two_pass(const half *__restrict__ Q, const half *__restrict__ K,
+                   const half *__restrict__ V, float *__restrict__ dst, const float scale
 #if defined(MY_OPS_DEBUG)
-                , float* __restrict__ m_out,
-                float* __restrict__ l_out,
-                float* __restrict__ s_out,
-                float* __restrict__ row_sum_out,
-                float* __restrict__ scale_old_out,
-                float* __restrict__ scale_new_out,
-                float* __restrict__ exp_val_out
+                   ,
+                   float *__restrict__ m_out, float *__restrict__ l_out, float *__restrict__ s_out,
+                   float *__restrict__ row_sum_out, float *__restrict__ scale_old_out,
+                   float *__restrict__ scale_new_out, float *__restrict__ exp_val_out
 #endif
-                ) {
+) {
     constexpr int HEAD_DIM = 128;
     constexpr int TOKENS_PER_Q = 13;
     constexpr int QHEAD_PER_BLOCK = 2;
@@ -32,24 +26,24 @@ __global__ void fa_kernel_two_pass(
     int lane_id = tid_blockwise % 32;
     int qhead_block_offset = blockIdx.x * QHEAD_PER_BLOCK;
     int qheadid_in_block = warp_id / 2;
-    int half_head        = warp_id % 2;
-    int row_start        = half_head * 64;
+    int half_head = warp_id % 2;
+    int row_start = half_head * 64;
     int qhead_id_global = qhead_block_offset + qheadid_in_block;
-    const half* qhead_elem_start = Q + qhead_id_global * 13 * 128;
+    const half *qhead_elem_start = Q + qhead_id_global * 13 * 128;
     int s_col0_id = lane_id * 2 + row_start;
 
 #pragma unroll
     for (int token_id = 0; token_id < TOKENS_PER_Q; token_id++) {
-        const half2* row_h2 =
-            reinterpret_cast<const half2*>(qhead_elem_start + token_id * HEAD_DIM);
+        const half2 *row_h2 =
+            reinterpret_cast<const half2 *>(qhead_elem_start + token_id * HEAD_DIM);
         half2 data = row_h2[s_col0_id / 2];
         int s_row_id = qheadid_in_block * TOKENS_PER_Q + token_id;
-        *reinterpret_cast<half2*>(&q_shared[s_row_id][s_col0_id]) = data;
+        *reinterpret_cast<half2 *>(&q_shared[s_row_id][s_col0_id]) = data;
     }
     __syncthreads();
 
-    __shared__ half k_shared[KV_TOKEN_TILE][HEAD_DIM+2];
-    __shared__ half v_shared[KV_TOKEN_TILE][HEAD_DIM+2];
+    __shared__ half k_shared[KV_TOKEN_TILE][HEAD_DIM + 2];
+    __shared__ half v_shared[KV_TOKEN_TILE][HEAD_DIM + 2];
     __shared__ float s_shared[TOKENS_PER_Q * QHEAD_PER_BLOCK][KV_TOKEN_TILE];
     __shared__ float dst_shared[TOKENS_PER_Q * QHEAD_PER_BLOCK][HEAD_DIM];
     int kv_head_block_offset = blockIdx.x;
@@ -75,34 +69,37 @@ __global__ void fa_kernel_two_pass(
     }
     __syncthreads();
 
-    for(int tile_id = 0; tile_id < LOOP_KV; tile_id++) {
-        for(int token_id = 0; token_id < KV_TOKEN_TILE; token_id += 2) {
+    for (int tile_id = 0; tile_id < LOOP_KV; tile_id++) {
+        for (int token_id = 0; token_id < KV_TOKEN_TILE; token_id += 2) {
             int col_warp_id = warp_row_id + token_id;
-            const half* row_base = K + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
+            const half *row_base = K + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
                                    kv_head_block_offset * 256 * HEAD_DIM;
-            const half2* row_h2 = reinterpret_cast<const half2*>(row_base);
+            const half2 *row_h2 = reinterpret_cast<const half2 *>(row_base);
             half2 data = row_h2[s_col0_id / 2];
-            *reinterpret_cast<half2*>(&k_shared[col_warp_id][s_col0_id]) = data;
+            *reinterpret_cast<half2 *>(&k_shared[col_warp_id][s_col0_id]) = data;
         }
         __syncthreads();
 
         const int tid2 = threadIdx.y * blockDim.x + threadIdx.x;
-        for (int idx = tid2; idx < 13*2*32; idx += 128) {
+        for (int idx = tid2; idx < 13 * 2 * 32; idx += 128) {
             int i = idx / 32;
             int j = idx % 32;
             float sum = 0.0f;
 #pragma unroll
             for (int hd = 0; hd < 128; hd += 2) {
-                const half2* q = reinterpret_cast<const half2*>(&q_shared[i][hd]);
-                const half2* k = reinterpret_cast<const half2*>(&k_shared[j][hd]);
-                sum += __half2float(q->x) * __half2float(k->x) + __half2float(q->y) * __half2float(k->y);
+                const half2 *q = reinterpret_cast<const half2 *>(&q_shared[i][hd]);
+                const half2 *k = reinterpret_cast<const half2 *>(&k_shared[j][hd]);
+                sum += __half2float(q->x) * __half2float(k->x) +
+                       __half2float(q->y) * __half2float(k->y);
             }
             s_shared[i][j] = sum;
 #if defined(MY_OPS_DEBUG)
             if (s_out != nullptr) {
                 int block = blockIdx.x;
-                int tile  = tile_id;
-                int idx4  = (((block * LOOP_KV) + tile) * (TOKENS_PER_Q * QHEAD_PER_BLOCK) + i) * KV_TOKEN_TILE + j;
+                int tile = tile_id;
+                int idx4 = (((block * LOOP_KV) + tile) * (TOKENS_PER_Q * QHEAD_PER_BLOCK) + i) *
+                               KV_TOKEN_TILE +
+                           j;
                 s_out[idx4] = sum;
             }
 #endif
@@ -134,7 +131,8 @@ __global__ void fa_kernel_two_pass(
                 m[r] = m_new;
 
 #if defined(MY_OPS_DEBUG)
-                if (row_sum_out != nullptr && scale_old_out != nullptr && scale_new_out != nullptr) {
+                if (row_sum_out != nullptr && scale_old_out != nullptr &&
+                    scale_new_out != nullptr) {
                     int idx3 = ((blockIdx.x * LOOP_KV) + tile_id) * 26 + r;
                     row_sum_out[idx3] = row_sum;
                     scale_old_out[idx3] = scale_old;
@@ -156,27 +154,28 @@ __global__ void fa_kernel_two_pass(
     }
 #endif
 
-    for(int tile_id = 0; tile_id < LOOP_KV; tile_id++) {
-        for(int token_id = 0; token_id < KV_TOKEN_TILE; token_id += 2) {
+    for (int tile_id = 0; tile_id < LOOP_KV; tile_id++) {
+        for (int token_id = 0; token_id < KV_TOKEN_TILE; token_id += 2) {
             int col_warp_id = warp_row_id + token_id;
-            const half* row_base = K + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
+            const half *row_base = K + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
                                    kv_head_block_offset * 256 * HEAD_DIM;
-            const half2* row_h2 = reinterpret_cast<const half2*>(row_base);
+            const half2 *row_h2 = reinterpret_cast<const half2 *>(row_base);
             half2 data = row_h2[s_col0_id / 2];
-            *reinterpret_cast<half2*>(&k_shared[col_warp_id][s_col0_id]) = data;
+            *reinterpret_cast<half2 *>(&k_shared[col_warp_id][s_col0_id]) = data;
         }
         __syncthreads();
 
         const int tid = threadIdx.y * blockDim.x + threadIdx.x;
-        for (int idx = tid; idx < 13*2*32; idx += 128) {
+        for (int idx = tid; idx < 13 * 2 * 32; idx += 128) {
             int i = idx / 32;
             int j = idx % 32;
             float sum = 0.0f;
 #pragma unroll
             for (int hd = 0; hd < 128; hd += 2) {
-                const half2* q = reinterpret_cast<const half2*>(&q_shared[i][hd]);
-                const half2* k = reinterpret_cast<const half2*>(&k_shared[j][hd]);
-                sum += __half2float(q->x) * __half2float(k->x) + __half2float(q->y) * __half2float(k->y);
+                const half2 *q = reinterpret_cast<const half2 *>(&q_shared[i][hd]);
+                const half2 *k = reinterpret_cast<const half2 *>(&k_shared[j][hd]);
+                sum += __half2float(q->x) * __half2float(k->x) +
+                       __half2float(q->y) * __half2float(k->y);
             }
             s_shared[i][j] = sum;
         }
@@ -191,18 +190,18 @@ __global__ void fa_kernel_two_pass(
         }
         __syncthreads();
 
-        for(int token_id = 0; token_id < KV_TOKEN_TILE; token_id += 2) {
+        for (int token_id = 0; token_id < KV_TOKEN_TILE; token_id += 2) {
             int col_warp_id = warp_row_id + token_id;
-            const half* row_base = V + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
+            const half *row_base = V + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
                                    kv_head_block_offset * 256 * HEAD_DIM;
-            const half2* row_h2 = reinterpret_cast<const half2*>(row_base);
+            const half2 *row_h2 = reinterpret_cast<const half2 *>(row_base);
             half2 data = row_h2[s_col0_id / 2];
-            *reinterpret_cast<half2*>(&v_shared[col_warp_id][s_col0_id]) = data;
+            *reinterpret_cast<half2 *>(&v_shared[col_warp_id][s_col0_id]) = data;
         }
         __syncthreads();
 
         // warp stall
-        for (int dst_row = 0; dst_row < TOKENS_PER_Q * QHEAD_PER_BLOCK; ++dst_row ) {
+        for (int dst_row = 0; dst_row < TOKENS_PER_Q * QHEAD_PER_BLOCK; ++dst_row) {
             int col = block_tid;
             float sum = 0.0f;
 #pragma unroll
@@ -217,12 +216,13 @@ __global__ void fa_kernel_two_pass(
 
     if (block_tid < HEAD_DIM) {
         for (int r = 0; r < TOKENS_PER_Q * QHEAD_PER_BLOCK; ++r) {
-            const int qhead_local  = r / TOKENS_PER_Q;
-            const int token_id     = r % TOKENS_PER_Q;
+            const int qhead_local = r / TOKENS_PER_Q;
+            const int token_id = r % TOKENS_PER_Q;
             const int qhead_global = blockIdx.x * QHEAD_PER_BLOCK + qhead_local;
             if (qhead_global < 16) {
                 const int hd = block_tid;
-                const int dst_id = hd + HEAD_DIM * token_id + HEAD_DIM * TOKENS_PER_Q * qhead_global;
+                const int dst_id =
+                    hd + HEAD_DIM * token_id + HEAD_DIM * TOKENS_PER_Q * qhead_global;
                 dst[dst_id] = dst_shared[r][hd];
             }
         }
@@ -234,61 +234,60 @@ __global__ void fa_kernel_two_pass(
 // grid.x = 8，一个 block 对应一个 KV head；这个 block 里同时算 两个 Q head
 // 因此在 GQA 下：同一 KV tile 对每个 KV head 来说, 只加载一次，
 // 不会因为两个 Q head 再各读一遍同一块 K/V。所以这里没有对 KVHead 重复的 global 读。
-extern "C" void fa_two_pass(
-                const uint16_t* q_host,
-                const uint16_t* k_host,
-                const uint16_t* v_host,
-                float* dst_host,
-                float scale) {
+extern "C" void fa_two_pass(const uint16_t *q_host, const uint16_t *k_host, const uint16_t *v_host,
+                            float *dst_host, float scale) {
     // q: (head_dim, n_token, n_qhead)    = (128,13,16)
     // kv: (head_dim, n_token, n_kv_head) = (128,256,8)
 
     using half_t = half;
-    constexpr int HEAD_DIM       = 128;
-    constexpr int TOKENS_PER_Q   = 13;
-    constexpr int Q_HEADS        = 16;
-    constexpr int KV_TOKENS      = 256;
-    constexpr int KV_HEADS       = 8;
+    constexpr int HEAD_DIM = 128;
+    constexpr int TOKENS_PER_Q = 13;
+    constexpr int Q_HEADS = 16;
+    constexpr int KV_TOKENS = 256;
+    constexpr int KV_HEADS = 8;
 
-    const size_t q_elems   = static_cast<size_t>(HEAD_DIM) * TOKENS_PER_Q * Q_HEADS;
-    const size_t kv_elems  = static_cast<size_t>(HEAD_DIM) * KV_TOKENS * KV_HEADS;
+    const size_t q_elems = static_cast<size_t>(HEAD_DIM) * TOKENS_PER_Q * Q_HEADS;
+    const size_t kv_elems = static_cast<size_t>(HEAD_DIM) * KV_TOKENS * KV_HEADS;
     const size_t dst_elems = q_elems;
 
-    half_t* d_q   = nullptr;
-    half_t* d_k   = nullptr;
-    half_t* d_v   = nullptr;
-    float*  d_dst = nullptr;
+    half_t *d_q = nullptr;
+    half_t *d_k = nullptr;
+    half_t *d_v = nullptr;
+    float *d_dst = nullptr;
 
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
-    CUDA_CHECK(cudaMallocAsync(&d_q,   q_elems  * sizeof(half_t), stream));
-    CUDA_CHECK(cudaMallocAsync(&d_k,   kv_elems * sizeof(half_t), stream));
-    CUDA_CHECK(cudaMallocAsync(&d_v,   kv_elems * sizeof(half_t), stream));
+    CUDA_CHECK(cudaMallocAsync(&d_q, q_elems * sizeof(half_t), stream));
+    CUDA_CHECK(cudaMallocAsync(&d_k, kv_elems * sizeof(half_t), stream));
+    CUDA_CHECK(cudaMallocAsync(&d_v, kv_elems * sizeof(half_t), stream));
     CUDA_CHECK(cudaMallocAsync(&d_dst, dst_elems * sizeof(float), stream));
 
-    CUDA_CHECK(cudaMemcpyAsync(d_q,   q_host,  q_elems  * sizeof(half_t), cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(d_k,   k_host,  kv_elems * sizeof(half_t), cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(d_v,   v_host,  kv_elems * sizeof(half_t), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(
+        cudaMemcpyAsync(d_q, q_host, q_elems * sizeof(half_t), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(
+        cudaMemcpyAsync(d_k, k_host, kv_elems * sizeof(half_t), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(
+        cudaMemcpyAsync(d_v, v_host, kv_elems * sizeof(half_t), cudaMemcpyHostToDevice, stream));
 
     dim3 threads(32, 4, 1);
     dim3 blocks(8, 1, 1);
 
 #if defined(MY_OPS_DEBUG)
     fa_kernel_two_pass<<<blocks, threads, 0, stream>>>(
-        d_q, d_k, d_v, d_dst, scale,
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+        d_q, d_k, d_v, d_dst, scale, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
 #else
     fa_kernel_two_pass<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale);
 #endif
     LAUNCH_CHECK();
 
-    CUDA_CHECK(cudaMemcpyAsync(dst_host, d_dst, dst_elems * sizeof(float), cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaMemcpyAsync(dst_host, d_dst, dst_elems * sizeof(float), cudaMemcpyDeviceToHost,
+                               stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
     CUDA_CHECK(cudaStreamDestroy(stream));
 
-    CUDA_CHECK(cudaFreeAsync(d_q,   nullptr));
-    CUDA_CHECK(cudaFreeAsync(d_k,   nullptr));
-    CUDA_CHECK(cudaFreeAsync(d_v,   nullptr));
+    CUDA_CHECK(cudaFreeAsync(d_q, nullptr));
+    CUDA_CHECK(cudaFreeAsync(d_k, nullptr));
+    CUDA_CHECK(cudaFreeAsync(d_v, nullptr));
     CUDA_CHECK(cudaFreeAsync(d_dst, nullptr));
 }

@@ -1,17 +1,15 @@
-import numpy as np
-import os
-import sys
-
 import moe_combine_me
+import numpy as np
 
 
 def combine_ref(
-            expert_out: np.ndarray,
-            source_token: np.ndarray,
-            source_k: np.ndarray,
-            route_weights: np.ndarray,
-            num_tokens: int,
-            top_k: int) -> np.ndarray:
+    expert_out: np.ndarray,
+    source_token: np.ndarray,
+    source_k: np.ndarray,
+    route_weights: np.ndarray,
+    num_tokens: int,
+    top_k: int,
+) -> np.ndarray:
     num_routes, hidden_size = expert_out.shape
     y = np.zeros((num_tokens, hidden_size), dtype=np.float32)
     for r in range(num_routes):
@@ -41,9 +39,7 @@ def test_moe_combine():
         route_weights = np.abs(rng.standard_normal((num_tokens, top_k))).astype(dtype)
 
         y = np.zeros((num_tokens, hidden_size), dtype=dtype)
-        y_ref = combine_ref(
-            expert_out, source_token, source_k, route_weights, num_tokens, top_k
-        )
+        y_ref = combine_ref(expert_out, source_token, source_k, route_weights, num_tokens, top_k)
 
         moe_combine_me.moe_combine(
             expert_out=expert_out,
@@ -56,14 +52,18 @@ def test_moe_combine():
         )
 
         # 打印 pos, src_t, x 和 y & y_ref 的对应数值，数table展示
-        print(f"\n{'pos':>4}  {'src_t':>5}  {'src_k':>5}  {'expert_out':>12}  {'route_weight':>13}  {'y':>12}  {'y_ref':>12}")
+        print(
+            f"\n{'pos':>4}  {'src_t':>5}  {'src_k':>5}  {'expert_out':>12}  {'route_weight':>13}  {'y':>12}  {'y_ref':>12}"
+        )
         for t in range(num_tokens):
             for k in range(top_k):
                 pos = t * top_k + k
-                eo = np.array2string(expert_out[pos], precision=3, separator=', ')
-                y_row = np.array2string(y[t], precision=3, separator=', ')
-                y_ref_row = np.array2string(y_ref[t], precision=3, separator=', ')
-                print(f"{pos:4d}  {source_token[pos]:5d}  {source_k[pos]:5d}  {eo:>12}  {route_weights[t,k]:13.6f}  {y_row:>12}  {y_ref_row:>12}")
+                eo = np.array2string(expert_out[pos], precision=3, separator=", ")
+                y_row = np.array2string(y[t], precision=3, separator=", ")
+                y_ref_row = np.array2string(y_ref[t], precision=3, separator=", ")
+                print(
+                    f"{pos:4d}  {source_token[pos]:5d}  {source_k[pos]:5d}  {eo:>12}  {route_weights[t, k]:13.6f}  {y_row:>12}  {y_ref_row:>12}"
+                )
 
         assert np.allclose(y, y_ref, rtol=1e-5, atol=1e-4)
 

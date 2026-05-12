@@ -1,9 +1,6 @@
-import os
-import sys
-
-import numpy as np
 import moe_dispatch_me
 import moe_pipeline_me
+import numpy as np
 
 
 def silu_f(x: np.ndarray) -> np.ndarray:
@@ -12,13 +9,13 @@ def silu_f(x: np.ndarray) -> np.ndarray:
 
 
 def combine_ref(
-                expert_out: np.ndarray,
-                source_token: np.ndarray,
-                source_k: np.ndarray,
-                route_weights: np.ndarray,
-                num_tokens: int,
-                top_k: int,
-            ) -> np.ndarray:
+    expert_out: np.ndarray,
+    source_token: np.ndarray,
+    source_k: np.ndarray,
+    route_weights: np.ndarray,
+    num_tokens: int,
+    top_k: int,
+) -> np.ndarray:
     num_routes, hidden_size = expert_out.shape
     y = np.zeros((num_tokens, hidden_size), dtype=np.float64)
     for pos in range(num_routes):
@@ -41,7 +38,7 @@ def swiglu_experts_ref(
     """
     num_routes, hidden_size = permuted_x.shape
     num_experts = expert_offsets.shape[0] - 1
-    intermediate_size = w_gate.shape[1]
+    # intermediate_size = w_gate.shape[1]
 
     expert_out = np.empty((num_routes, hidden_size), dtype=np.float32)
 
@@ -82,7 +79,7 @@ def pipeline_ref_from_gpu_dispatch(
     source_token = np.empty(num_routes, dtype=np.int32)
     source_k = np.empty(num_routes, dtype=np.int32)
     expert_offsets = np.empty(num_experts + 1, dtype=np.int32)
-    # 复用了本repo的 Dispatch， 前提是 moe_dispatch_me 已经通过 correnctness 测试 
+    # 复用了本repo的 Dispatch， 前提是 moe_dispatch_me 已经通过 correnctness 测试
     moe_dispatch_me.moe_dispatch(
         x=x,
         expert_ids=expert_ids,

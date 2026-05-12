@@ -6,14 +6,9 @@
 
 namespace py = pybind11;
 
-extern "C" void moe_combine(const float* expert_out_host,
-                            const int* source_token_host,
-                            const int* source_k_host,
-                            const float* route_weights_host,
-                            float* y_host,
-                            int num_routes,
-                            int hidden_size,
-                            int num_tokens,
+extern "C" void moe_combine(const float *expert_out_host, const int *source_token_host,
+                            const int *source_k_host, const float *route_weights_host,
+                            float *y_host, int num_routes, int hidden_size, int num_tokens,
                             int top_k);
 
 PYBIND11_MODULE(moe_combine_me, m) {
@@ -24,9 +19,7 @@ PYBIND11_MODULE(moe_combine_me, m) {
            py::array_t<int, py::array::c_style | py::array::forcecast> source_token,
            py::array_t<int, py::array::c_style | py::array::forcecast> source_k,
            py::array_t<float, py::array::c_style | py::array::forcecast> route_weights,
-           py::array_t<float, py::array::c_style> y,
-           int num_tokens,
-           int top_k) {
+           py::array_t<float, py::array::c_style> y, int num_tokens, int top_k) {
             auto be = expert_out.request();
             auto bst = source_token.request();
             auto bsk = source_k.request();
@@ -57,22 +50,17 @@ PYBIND11_MODULE(moe_combine_me, m) {
                 throw std::invalid_argument(oss.str());
             }
 
-            float* eo_ptr = static_cast<float*>(be.ptr);
-            int* st_ptr = static_cast<int*>(bst.ptr);
-            int* sk_ptr = static_cast<int*>(bsk.ptr);
-            float* rw_ptr = static_cast<float*>(brw.ptr);
-            float* y_ptr = static_cast<float*>(by.ptr);
+            float *eo_ptr = static_cast<float *>(be.ptr);
+            int *st_ptr = static_cast<int *>(bst.ptr);
+            int *sk_ptr = static_cast<int *>(bsk.ptr);
+            float *rw_ptr = static_cast<float *>(brw.ptr);
+            float *y_ptr = static_cast<float *>(by.ptr);
 
             moe_combine(eo_ptr, st_ptr, sk_ptr, rw_ptr, y_ptr, num_routes, hidden_size, num_tokens,
                         top_k);
         },
-        py::arg("expert_out"),
-        py::arg("source_token"),
-        py::arg("source_k"),
-        py::arg("route_weights"),
-        py::arg("y"),
-        py::arg("num_tokens"),
-        py::arg("top_k"),
+        py::arg("expert_out"), py::arg("source_token"), py::arg("source_k"),
+        py::arg("route_weights"), py::arg("y"), py::arg("num_tokens"), py::arg("top_k"),
         "Accumulate y[t,h] += route_weights[t,k] * expert_out[slot,h]; slot aligns with dispatch "
         "permuted row index (same indexing as source_token/source_k buffers). Initial y copied "
         "to device before kernel; combine adds on top.");

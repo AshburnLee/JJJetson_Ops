@@ -6,26 +6,17 @@
 
 namespace py = pybind11;
 
-extern "C" void moe_dispatch(const float* x_host,
-                             const int* expert_ids_host,
-                             int num_tokens,
-                             int top_k,
-                             int hidden_size,
-                             int num_experts,
-                             float* permuted_x_host,
-                             int* source_token_host,
-                             int* source_k_host,
-                             int* expert_offsets_host);
+extern "C" void moe_dispatch(const float *x_host, const int *expert_ids_host, int num_tokens,
+                             int top_k, int hidden_size, int num_experts, float *permuted_x_host,
+                             int *source_token_host, int *source_k_host, int *expert_offsets_host);
 
 PYBIND11_MODULE(moe_dispatch_me, m) {
     m.doc() = "Python binding for CUDA MoE dispatch (scatter by expert, host I/O)";
     m.def(
         "moe_dispatch",
         [](py::array_t<float, py::array::c_style | py::array::forcecast> x,
-           py::array_t<int, py::array::c_style | py::array::forcecast> expert_ids,
-           int top_k,
-           int num_experts,
-           py::array_t<float, py::array::c_style> permuted_x,
+           py::array_t<int, py::array::c_style | py::array::forcecast> expert_ids, int top_k,
+           int num_experts, py::array_t<float, py::array::c_style> permuted_x,
            py::array_t<int, py::array::c_style> source_token,
            py::array_t<int, py::array::c_style> source_k,
            py::array_t<int, py::array::c_style> expert_offsets) {
@@ -46,8 +37,7 @@ PYBIND11_MODULE(moe_dispatch_me, m) {
             if (bid.ndim != 1 || bid.shape[0] != num_routes) {
                 throw std::invalid_argument("expert_ids must be 1-D of length num_tokens * top_k");
             }
-            if (bperm.ndim != 2 || bperm.shape[0] != num_routes ||
-                bperm.shape[1] != hidden_size) {
+            if (bperm.ndim != 2 || bperm.shape[0] != num_routes || bperm.shape[1] != hidden_size) {
                 std::ostringstream oss;
                 oss << "permuted_x must be shape (" << num_routes << ", " << hidden_size << ")";
                 throw std::invalid_argument(oss.str());
@@ -62,23 +52,18 @@ PYBIND11_MODULE(moe_dispatch_me, m) {
                 throw std::invalid_argument("expert_offsets must be 1-D length num_experts + 1");
             }
 
-            float* x_ptr = static_cast<float*>(bx.ptr);
-            int* ids_ptr = static_cast<int*>(bid.ptr);
-            float* perm_ptr = static_cast<float*>(bperm.ptr);
-            int* st_ptr = static_cast<int*>(bst.ptr);
-            int* sk_ptr = static_cast<int*>(bsk.ptr);
-            int* off_ptr = static_cast<int*>(boff.ptr);
+            float *x_ptr = static_cast<float *>(bx.ptr);
+            int *ids_ptr = static_cast<int *>(bid.ptr);
+            float *perm_ptr = static_cast<float *>(bperm.ptr);
+            int *st_ptr = static_cast<int *>(bst.ptr);
+            int *sk_ptr = static_cast<int *>(bsk.ptr);
+            int *off_ptr = static_cast<int *>(boff.ptr);
 
-            moe_dispatch(x_ptr, ids_ptr, num_tokens, top_k, hidden_size, num_experts, perm_ptr, st_ptr,
-                         sk_ptr, off_ptr);
+            moe_dispatch(x_ptr, ids_ptr, num_tokens, top_k, hidden_size, num_experts, perm_ptr,
+                         st_ptr, sk_ptr, off_ptr);
         },
-        py::arg("x"),
-        py::arg("expert_ids"),
-        py::arg("top_k"),
-        py::arg("num_experts"),
-        py::arg("permuted_x"),
-        py::arg("source_token"),
-        py::arg("source_k"),
+        py::arg("x"), py::arg("expert_ids"), py::arg("top_k"), py::arg("num_experts"),
+        py::arg("permuted_x"), py::arg("source_token"), py::arg("source_k"),
         py::arg("expert_offsets"),
         "Scatter token rows by expert: permuted_x[num_routes,H], source_*[num_routes], "
         "expert_offsets[num_experts+1] (prefix / exclusive scan).");

@@ -6,19 +6,18 @@
 
 // deprecated
 
-// 与 fa_kernel_one_pass_parallel 对齐：grid (16,1,1)，block (32,4,1)，HEAD_DIM=128，Q 行数 13，KV tile 32，GQA blockIdx.x/2。
-// 
+// 与 fa_kernel_one_pass_parallel 对齐：grid (16,1,1)，block (32,4,1)，HEAD_DIM=128，Q 行数 13，KV
+// tile 32，GQA blockIdx.x/2。
+//
 // QK 子问题太小，喂不饱 Tensor Core
 // TC 路径里 只有 2 个 warp 做 WMMA，另外 2 个 warp 在 GEMM 阶段基本在等
 // MMA 条数少、启动与同步开销占比大，峰值算力很难拉起来。
-// 
+//
 // TC 不是免费的，仅仅改用tc 指令，会变慢，要 围绕 TC 重做数据流、并行划分和流水线
-__global__ void fa_kernel_one_pass_parallel_tc(
-    const half* __restrict__ Q,
-    const half* __restrict__ K,
-    const half* __restrict__ V,
-    float* __restrict__ dst,
-    const float scale) {
+__global__ void fa_kernel_one_pass_parallel_tc(const half *__restrict__ Q,
+                                               const half *__restrict__ K,
+                                               const half *__restrict__ V, float *__restrict__ dst,
+                                               const float scale) {
     using namespace nvcuda::wmma;
 
     constexpr int HEAD_DIM = 128;
@@ -37,7 +36,7 @@ __global__ void fa_kernel_one_pass_parallel_tc(
     int warp_id = tid_blockwise / 32;
     int lane_id = tid_blockwise % 32;
 
-    const half* qhead_elem_start = Q + blockIdx.x * TOKENS_PER_Q * HEAD_DIM;
+    const half *qhead_elem_start = Q + blockIdx.x * TOKENS_PER_Q * HEAD_DIM;
     int half_head = warp_id % 2;
     int row_start = half_head * 64;
     int s_col0_id = lane_id * 2 + row_start;
@@ -46,10 +45,10 @@ __global__ void fa_kernel_one_pass_parallel_tc(
 #pragma unroll
     for (int token_id = 0; token_id < TOKENS_PER_Q; token_id++) {
         if (warp_id < 2) {
-            const half2* row_h2 =
-                reinterpret_cast<const half2*>(qhead_elem_start + token_id * HEAD_DIM);
+            const half2 *row_h2 =
+                reinterpret_cast<const half2 *>(qhead_elem_start + token_id * HEAD_DIM);
             half2 data = row_h2[s_col0_id / 2];
-            *reinterpret_cast<half2*>(&q_shared[token_id][s_col0_id]) = data;
+            *reinterpret_cast<half2 *>(&q_shared[token_id][s_col0_id]) = data;
         }
     }
     __syncthreads();
@@ -95,11 +94,11 @@ __global__ void fa_kernel_one_pass_parallel_tc(
         // load k tile
         for (int token_id = 0; token_id < KV_TOKEN_TILE; token_id += 2) {
             int col_warp_id = warp_row_id + token_id;
-            const half* row_base = K + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
+            const half *row_base = K + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
                                    kv_head_block_offset * 256 * HEAD_DIM;
-            const half2* row_h2 = reinterpret_cast<const half2*>(row_base);
+            const half2 *row_h2 = reinterpret_cast<const half2 *>(row_base);
             half2 data = row_h2[s_col0_id / 2];
-            *reinterpret_cast<half2*>(&k_shared[col_warp_id][s_col0_id]) = data;
+            *reinterpret_cast<half2 *>(&k_shared[col_warp_id][s_col0_id]) = data;
         }
         __syncthreads();
 
@@ -139,7 +138,7 @@ __global__ void fa_kernel_one_pass_parallel_tc(
             store_matrix_sync(&s_tc_st[0][n_col0], c_frag, KV_TOKEN_TILE, mem_row_major);
         }
         __syncthreads();
-        //将 TC 计算结果写到 S shared 中
+        // 将 TC 计算结果写到 S shared 中
         for (int t = block_tid; t < ROWS * KV_TOKEN_TILE; t += blockDim.x * blockDim.y) {
             int sr = t / KV_TOKEN_TILE;
             int sc = t % KV_TOKEN_TILE;
@@ -178,11 +177,11 @@ __global__ void fa_kernel_one_pass_parallel_tc(
 
         for (int token_id = 0; token_id < KV_TOKEN_TILE; token_id += 2) {
             int col_warp_id = warp_row_id + token_id;
-            const half* row_base = V + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
+            const half *row_base = V + col_warp_id * HEAD_DIM + tile_id * KV_TOKEN_TILE * HEAD_DIM +
                                    kv_head_block_offset * 256 * HEAD_DIM;
-            const half2* row_h2 = reinterpret_cast<const half2*>(row_base);
+            const half2 *row_h2 = reinterpret_cast<const half2 *>(row_base);
             half2 data = row_h2[s_col0_id / 2];
-            *reinterpret_cast<half2*>(&v_shared[col_warp_id][s_col0_id]) = data;
+            *reinterpret_cast<half2 *>(&v_shared[col_warp_id][s_col0_id]) = data;
         }
         __syncthreads();
 
@@ -215,7 +214,8 @@ __global__ void fa_kernel_one_pass_parallel_tc(
             const int qhead_global = blockIdx.x;
             if (qhead_global < 16) {
                 const int hd = block_tid;
-                const int dst_id = hd + HEAD_DIM * token_id + HEAD_DIM * TOKENS_PER_Q * qhead_global;
+                const int dst_id =
+                    hd + HEAD_DIM * token_id + HEAD_DIM * TOKENS_PER_Q * qhead_global;
                 dst[dst_id] = dst_shared[r][hd];
             }
         }
@@ -224,12 +224,8 @@ __global__ void fa_kernel_one_pass_parallel_tc(
     (void)scale;
 }
 
-extern "C" void fa_one_pass_parallel_tc(
-                        const uint16_t* q_host,
-                        const uint16_t* k_host,
-                        const uint16_t* v_host,
-                        float* dst_host,
-                        float scale) {
+extern "C" void fa_one_pass_parallel_tc(const uint16_t *q_host, const uint16_t *k_host,
+                                        const uint16_t *v_host, float *dst_host, float scale) {
     // q: (head_dim, n_token, n_qhead)    = (128,13,16)
     // kv: (head_dim, n_token, n_kv_head) = (128,256,8)
 
@@ -244,10 +240,10 @@ extern "C" void fa_one_pass_parallel_tc(
     const size_t kv_elems = static_cast<size_t>(HEAD_DIM) * KV_TOKENS * KV_HEADS;
     const size_t dst_elems = q_elems;
 
-    half_t* d_q = nullptr;
-    half_t* d_k = nullptr;
-    half_t* d_v = nullptr;
-    float* d_dst = nullptr;
+    half_t *d_q = nullptr;
+    half_t *d_k = nullptr;
+    half_t *d_v = nullptr;
+    float *d_dst = nullptr;
 
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
@@ -257,9 +253,12 @@ extern "C" void fa_one_pass_parallel_tc(
     CUDA_CHECK(cudaMallocAsync(&d_v, kv_elems * sizeof(half_t), stream));
     CUDA_CHECK(cudaMallocAsync(&d_dst, dst_elems * sizeof(float), stream));
 
-    CUDA_CHECK(cudaMemcpyAsync(d_q, q_host, q_elems * sizeof(half_t), cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(d_k, k_host, kv_elems * sizeof(half_t), cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(d_v, v_host, kv_elems * sizeof(half_t), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(
+        cudaMemcpyAsync(d_q, q_host, q_elems * sizeof(half_t), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(
+        cudaMemcpyAsync(d_k, k_host, kv_elems * sizeof(half_t), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(
+        cudaMemcpyAsync(d_v, v_host, kv_elems * sizeof(half_t), cudaMemcpyHostToDevice, stream));
 
     dim3 threads(32, 4, 1);
     dim3 blocks(16, 1, 1);
@@ -267,7 +266,8 @@ extern "C" void fa_one_pass_parallel_tc(
     fa_kernel_one_pass_parallel_tc<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, scale);
     LAUNCH_CHECK();
 
-    CUDA_CHECK(cudaMemcpyAsync(dst_host, d_dst, dst_elems * sizeof(float), cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaMemcpyAsync(dst_host, d_dst, dst_elems * sizeof(float), cudaMemcpyDeviceToHost,
+                               stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
     CUDA_CHECK(cudaStreamDestroy(stream));
 

@@ -1,8 +1,5 @@
-import numpy as np
-import os
-import sys
-
 import moe_dispatch_me
+import numpy as np
 
 
 def expert_offsets_ref(expert_ids: np.ndarray, num_experts: int) -> np.ndarray:

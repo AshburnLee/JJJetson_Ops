@@ -9,40 +9,40 @@
 inline __host__ int device_fp32_cuda_cores_per_sm(int cc_major, int cc_minor) {
     const int cc = cc_major * 10 + cc_minor;
     switch (cc) {
-        case 30:
-        case 32:
-        case 35:
-        case 37:
-            return 192;
-        case 50:
-        case 52:
-        case 53:
-            return 128;
-        case 60:
-            return 64;
-        case 61:
-        case 62:
-            return 128;
-        case 70:
-            return 64;
-        case 72:
-            return 64;
-        case 75:
-            return 64;
-        case 80:
-            return 64;
-        case 86:
-        case 87:
-        case 89:
-            return 128;
-        case 90:
-            return 128;
-        case 100:
-        case 101:
-        case 120:
-            return 128;
-        default:
-            return 0;
+    case 30:
+    case 32:
+    case 35:
+    case 37:
+        return 192;
+    case 50:
+    case 52:
+    case 53:
+        return 128;
+    case 60:
+        return 64;
+    case 61:
+    case 62:
+        return 128;
+    case 70:
+        return 64;
+    case 72:
+        return 64;
+    case 75:
+        return 64;
+    case 80:
+        return 64;
+    case 86:
+    case 87:
+    case 89:
+        return 128;
+    case 90:
+        return 128;
+    case 100:
+    case 101:
+    case 120:
+        return 128;
+    default:
+        return 0;
     }
 }
 
@@ -51,18 +51,18 @@ inline __host__ int device_fp32_cuda_cores_per_sm(int cc_major, int cc_minor) {
 inline __host__ int device_warp_schedulers_per_sm(int cc_major, int cc_minor) {
     const int cc = cc_major * 10 + cc_minor;
     switch (cc) {
-        case 75:
-        case 80:
-        case 86:
-        case 87:
-        case 89:
-        case 90:
-        case 100:
-        case 101:
-        case 120:
-            return 4;
-        default:
-            return 0;
+    case 75:
+    case 80:
+    case 86:
+    case 87:
+    case 89:
+    case 90:
+    case 100:
+    case 101:
+    case 120:
+        return 4;
+    default:
+        return 0;
     }
 }
 
@@ -70,19 +70,19 @@ inline __host__ int device_warp_schedulers_per_sm(int cc_major, int cc_minor) {
 inline __host__ int device_max_resident_warps_per_warp_scheduler(int cc_major, int cc_minor) {
     const int cc = cc_major * 10 + cc_minor;
     switch (cc) {
-        case 75:
-            return 8;
-        case 80:
-        case 86:
-        case 87:
-        case 89:
-        case 90:
-        case 100:
-        case 101:
-        case 120:
-            return 12;
-        default:
-            return 0;
+    case 75:
+        return 8;
+    case 80:
+    case 86:
+    case 87:
+    case 89:
+    case 90:
+    case 100:
+    case 101:
+    case 120:
+        return 12;
+    default:
+        return 0;
     }
 }
 
@@ -97,16 +97,16 @@ inline __host__ int device_max_instructions_issued_per_cycle_per_sm(int cc_major
 inline __host__ int device_tc_fp16_dense_fma_per_sm_per_cycle(int cc_major, int cc_minor) {
     const int cc = cc_major * 10 + cc_minor;
     switch (cc) {
-        case 75:
-            return 512;  // Turing TU102，Table 6
-        case 80:
-            return 1024;  // GA100 SM，Table 6
-        case 86:
-        case 87:
-        case 89:
-            return 512;  // GA10x SM（Jetson Orin = 8.7）；Ada 8.9 近似同量级，细分见白皮书
-        default:
-            return 0;
+    case 75:
+        return 512; // Turing TU102，Table 6
+    case 80:
+        return 1024; // GA100 SM，Table 6
+    case 86:
+    case 87:
+    case 89:
+        return 512; // GA10x SM（Jetson Orin = 8.7）；Ada 8.9 近似同量级，细分见白皮书
+    default:
+        return 0;
     }
 }
 
@@ -119,8 +119,10 @@ struct DeviceHwInfo {
     int sm_clock_khz{0};
     int mem_clock_khz{0};
     int mem_bus_width_bits{0};
-    int fp32_cores_per_sm{0}; // SM 里大约有 128 条并行的 FP32 流水线, 每条流水线每时钟最多 1 次 FP32 FMA
-    int tc_fp16_dense_fma_per_sm_per_cycle{0};  // SM 上 FP16 dense Tensor Core 每时钟能完成的 FMA 次数
+    int fp32_cores_per_sm{
+        0}; // SM 里大约有 128 条并行的 FP32 流水线, 每条流水线每时钟最多 1 次 FP32 FMA
+    int tc_fp16_dense_fma_per_sm_per_cycle{
+        0}; // SM 上 FP16 dense Tensor Core 每时钟能完成的 FMA 次数
     float peak_fp32_tflops_theoretical{0.f};
     float peak_tc_tfops_theoretical{0.f};
     float peak_dram_gbps_theoretical{0.f};
@@ -155,12 +157,9 @@ struct DeviceRooflineParams {
     int cc_minor{0};
 };
 
-inline __host__ DeviceRooflineParams to_device_roofline_params(const DeviceHwInfo& h) {
-    return DeviceRooflineParams{h.peak_fp32_tflops_theoretical,
-                                h.peak_dram_gbps_theoretical,
-                                h.sm_count,
-                                h.cc_major,
-                                h.cc_minor};
+inline __host__ DeviceRooflineParams to_device_roofline_params(const DeviceHwInfo &h) {
+    return DeviceRooflineParams{h.peak_fp32_tflops_theoretical, h.peak_dram_gbps_theoretical,
+                                h.sm_count, h.cc_major, h.cc_minor};
 }
 
 inline __host__ DeviceHwInfo query_device_hw_info(int device_id = 0) {
@@ -170,7 +169,8 @@ inline __host__ DeviceHwInfo query_device_hw_info(int device_id = 0) {
     cudaDeviceProp prop{};
     const cudaError_t err = cudaGetDeviceProperties(&prop, device_id);
     if (err != cudaSuccess) {
-        std::snprintf(h.name, sizeof(h.name), "(cudaGetDeviceProperties: %s)", cudaGetErrorString(err));
+        std::snprintf(h.name, sizeof(h.name), "(cudaGetDeviceProperties: %s)",
+                      cudaGetErrorString(err));
         return h;
     }
 
@@ -206,8 +206,8 @@ inline __host__ DeviceHwInfo query_device_hw_info(int device_id = 0) {
         h.max_warps_per_multiprocessor_from_prop = h.max_threads_per_multiprocessor / ws;
     }
     h.warp_schedulers_per_sm = device_warp_schedulers_per_sm(h.cc_major, h.cc_minor);
-    h.max_resident_warps_per_warp_scheduler = device_max_resident_warps_per_warp_scheduler(
-        h.cc_major, h.cc_minor);
+    h.max_resident_warps_per_warp_scheduler =
+        device_max_resident_warps_per_warp_scheduler(h.cc_major, h.cc_minor);
     h.max_instructions_issued_per_cycle_per_sm_theoretical =
         device_max_instructions_issued_per_cycle_per_sm(h.cc_major, h.cc_minor);
 
@@ -220,8 +220,10 @@ inline __host__ DeviceHwInfo query_device_hw_info(int device_id = 0) {
     // Jetson Orin GA10B：4×128×2×1.02e9/1e12 ≈ 1.044 TFLOP/s
     if (h.fp32_cores_per_sm > 0 && h.sm_clock_khz > 0 && h.sm_count > 0) {
         const double sm_hz = static_cast<double>(h.sm_clock_khz) * 1000.0;
-        h.peak_fp32_tflops_theoretical = static_cast<float>(
-            (static_cast<double>(h.sm_count) * static_cast<double>(h.fp32_cores_per_sm) * 2.0 * sm_hz) / 1e12);
+        h.peak_fp32_tflops_theoretical =
+            static_cast<float>((static_cast<double>(h.sm_count) *
+                                static_cast<double>(h.fp32_cores_per_sm) * 2.0 * sm_hz) /
+                               1e12);
     }
 
     // FP16 TC dense 整卡峰值（GA102 Table 6 FMA/SM/c ×2）：
@@ -247,7 +249,7 @@ inline __host__ DeviceHwInfo query_device_hw_info(int device_id = 0) {
     return h;
 }
 
-inline __host__ void fprint_device_hw_info(FILE* out, const DeviceHwInfo& h) {
+inline __host__ void fprint_device_hw_info(FILE *out, const DeviceHwInfo &h) {
     if (!out) {
         return;
     }
@@ -256,8 +258,10 @@ inline __host__ void fprint_device_hw_info(FILE* out, const DeviceHwInfo& h) {
     std::fprintf(out, "[DeviceHwInfo] name: %s\n", h.name);
     std::fprintf(out, "[DeviceHwInfo] compute_capability: %d.%d\n", h.cc_major, h.cc_minor);
     std::fprintf(out, "[DeviceHwInfo] sm_count: %d\n", h.sm_count);
-    std::fprintf(out, "[DeviceHwInfo] sm_clock_ghz: %.6f\n", static_cast<double>(h.sm_clock_khz) / 1e6);
-    std::fprintf(out, "[DeviceHwInfo] mem_clock_ghz: %.6f\n", static_cast<double>(h.mem_clock_khz) / 1e6);
+    std::fprintf(out, "[DeviceHwInfo] sm_clock_ghz: %.6f\n",
+                 static_cast<double>(h.sm_clock_khz) / 1e6);
+    std::fprintf(out, "[DeviceHwInfo] mem_clock_ghz: %.6f\n",
+                 static_cast<double>(h.mem_clock_khz) / 1e6);
     std::fprintf(out, "[DeviceHwInfo] mem_bus_width_bits: %d\n", h.mem_bus_width_bits);
     std::fprintf(out, "[DeviceHwInfo] total_global_mem_gbytes: %.6f\n",
                  static_cast<double>(h.total_global_mem_bytes) / 1e9);
@@ -265,12 +269,14 @@ inline __host__ void fprint_device_hw_info(FILE* out, const DeviceHwInfo& h) {
     std::fprintf(out, "[DeviceHwInfo] total_const_mem_kibytes: %.6f\n",
                  static_cast<double>(h.total_const_mem_bytes) / 1024.0);
     std::fprintf(out, "[DeviceHwInfo] l2_cache_bytes: %d\n", h.l2_cache_bytes);
-    std::fprintf(out, "[DeviceHwInfo] global_l1_cache_supported: %d\n", h.global_l1_cache_supported);
+    std::fprintf(out, "[DeviceHwInfo] global_l1_cache_supported: %d\n",
+                 h.global_l1_cache_supported);
     std::fprintf(out, "[DeviceHwInfo] local_l1_cache_supported: %d\n", h.local_l1_cache_supported);
     std::fprintf(out, "[DeviceHwInfo] l1_data_cache_size_per_sm_bytes: N/A\n");
-    std::fprintf(out,
-                 "[DeviceHwInfo] l1_note: driver does not report L1-only size; L1 may share a unified SM "
-                 "partition with shared memory (see shared_mem_per_multiprocessor_kibytes).\n");
+    std::fprintf(
+        out,
+        "[DeviceHwInfo] l1_note: driver does not report L1-only size; L1 may share a unified SM "
+        "partition with shared memory (see shared_mem_per_multiprocessor_kibytes).\n");
     std::fprintf(out, "[DeviceHwInfo] shared_mem_per_block_kibytes: %.6f\n",
                  static_cast<double>(h.shared_mem_per_block_bytes) / 1024.0);
     std::fprintf(out, "[DeviceHwInfo] shared_mem_per_multiprocessor_kibytes: %.6f\n",
@@ -282,29 +288,34 @@ inline __host__ void fprint_device_hw_info(FILE* out, const DeviceHwInfo& h) {
         const int ws = h.warp_size > 0 ? h.warp_size : 1;
         const int warps_per_block_max = h.max_threads_per_block / ws;
         const int warps_per_sm_max = h.max_threads_per_multiprocessor / ws;
-        std::fprintf(out, "[DeviceHwInfo] max_threads_per_block: %d (%d warps)\n", h.max_threads_per_block,
-                     warps_per_block_max);
+        std::fprintf(out, "[DeviceHwInfo] max_threads_per_block: %d (%d warps)\n",
+                     h.max_threads_per_block, warps_per_block_max);
         std::fprintf(out, "[DeviceHwInfo] max_threads_per_multiprocessor: %d (%d warps)\n",
                      h.max_threads_per_multiprocessor, warps_per_sm_max);
     }
     std::fprintf(out, "[DeviceHwInfo] max_warps_per_multiprocessor (prop/threads): %d\n",
                  h.max_warps_per_multiprocessor_from_prop);
-    std::fprintf(out, "[DeviceHwInfo] warp_schedulers_per_sm (uarch table, CC 8.x/9.x/10.x/12.x=4 when known): %d\n",
+    std::fprintf(out,
+                 "[DeviceHwInfo] warp_schedulers_per_sm (uarch table, CC 8.x/9.x/10.x/12.x=4 when "
+                 "known): %d\n",
                  h.warp_schedulers_per_sm);
     std::fprintf(out,
-                 "[DeviceHwInfo] max_resident_warps_per_warp_scheduler (uarch, Ampere-family=12; 4*12=48): %d\n",
+                 "[DeviceHwInfo] max_resident_warps_per_warp_scheduler (uarch, Ampere-family=12; "
+                 "4*12=48): %d\n",
                  h.max_resident_warps_per_warp_scheduler);
-    std::fprintf(out,
-                 "[DeviceHwInfo] max_instructions_issued_per_cycle_per_SM_theoretical (==schedulers, "
-                 "rough upper bound, not from cuda API): %d\n",
-                 h.max_instructions_issued_per_cycle_per_sm_theoretical);
+    std::fprintf(
+        out,
+        "[DeviceHwInfo] max_instructions_issued_per_cycle_per_SM_theoretical (==schedulers, "
+        "rough upper bound, not from cuda API): %d\n",
+        h.max_instructions_issued_per_cycle_per_sm_theoretical);
     std::fprintf(out, "[DeviceHwInfo] fp32_cores_per_sm (table): %d\n", h.fp32_cores_per_sm);
-    std::fprintf(out, "[DeviceHwInfo] tc_fp16_dense_fma_per_sm_per_cycle (whitepaper Table 6): %d\n",
+    std::fprintf(out,
+                 "[DeviceHwInfo] tc_fp16_dense_fma_per_sm_per_cycle (whitepaper Table 6): %d\n",
                  h.tc_fp16_dense_fma_per_sm_per_cycle);
 
     // 数值 = 字节/s / 1e9，单位 GB/s
     std::fprintf(out, "[DeviceHwInfo] peak_dram_theoretical: %.6f GB/s\n",
-        static_cast<double>(h.peak_dram_gbps_theoretical));
+                 static_cast<double>(h.peak_dram_gbps_theoretical));
     std::fprintf(out, "[DeviceHwInfo] peak_fp32_tflops_theoretical: %.6f\n",
                  static_cast<double>(h.peak_fp32_tflops_theoretical));
     std::fprintf(out,
@@ -313,34 +324,31 @@ inline __host__ void fprint_device_hw_info(FILE* out, const DeviceHwInfo& h) {
                  static_cast<double>(h.peak_tc_tfops_theoretical));
 
     if (h.peak_fp32_tflops_theoretical > 0.f && h.peak_dram_gbps_theoretical > 0.f) {
-        const double ridge_fp32 =
-            (static_cast<double>(h.peak_fp32_tflops_theoretical) * 1e12) /
-            (static_cast<double>(h.peak_dram_gbps_theoretical) * 1e9);
-        std::fprintf(out,
-                     "[DeviceHwInfo] roofline_ridge_fp32_cuda_vs_dram_flops_per_byte: %.6f\n",
+        const double ridge_fp32 = (static_cast<double>(h.peak_fp32_tflops_theoretical) * 1e12) /
+                                  (static_cast<double>(h.peak_dram_gbps_theoretical) * 1e9);
+        std::fprintf(out, "[DeviceHwInfo] roofline_ridge_fp32_cuda_vs_dram_flops_per_byte: %.6f\n",
                      ridge_fp32);
     }
 
     if (h.tc_fp16_dense_fma_per_sm_per_cycle > 0 && h.peak_dram_gbps_theoretical > 0.f) {
-        const double ridge_tc =
-            (static_cast<double>(h.peak_tc_tfops_theoretical) * 1e12) /
-            (static_cast<double>(h.peak_dram_gbps_theoretical) * 1e9);
+        const double ridge_tc = (static_cast<double>(h.peak_tc_tfops_theoretical) * 1e12) /
+                                (static_cast<double>(h.peak_dram_gbps_theoretical) * 1e9);
         std::fprintf(out,
                      "[DeviceHwInfo] roofline_ridge_tc_fp16_dense_vs_dram_flops_per_byte: %.6f\n",
                      ridge_tc);
     }
 
     if (h.fp32_cores_per_sm == 0) {
-        std::fprintf(out,
-                     "[DeviceHwInfo] note: fp32_cores_per_sm unknown for this CC; extend "
-                     "device_fp32_cuda_cores_per_sm() to compute theoretical FP32 peak.\n");
+        std::fprintf(out, "[DeviceHwInfo] note: fp32_cores_per_sm unknown for this CC; extend "
+                          "device_fp32_cuda_cores_per_sm() to compute theoretical FP32 peak.\n");
     }
     if (h.tc_fp16_dense_fma_per_sm_per_cycle == 0) {
-        std::fprintf(out,
-                     "[DeviceHwInfo] note: tc_fp16_dense_fma_per_sm_per_cycle unknown for this CC; extend "
-                     "device_tc_fp16_dense_fma_per_sm_per_cycle() for peak_tc_tfops_theoretical.\n");
+        std::fprintf(
+            out,
+            "[DeviceHwInfo] note: tc_fp16_dense_fma_per_sm_per_cycle unknown for this CC; extend "
+            "device_tc_fp16_dense_fma_per_sm_per_cycle() for peak_tc_tfops_theoretical.\n");
     }
     std::fflush(out);
 }
 
-#endif  // DEVICE_HW_INFO_CUH_
+#endif // DEVICE_HW_INFO_CUH_

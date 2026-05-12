@@ -4,6 +4,8 @@ import torch
 """
 逐元素比较任意维度的 NumPy 数组和 Torch 张量
 """
+
+
 def compare_np_torch(np_arr: np.ndarray, torch_tensor: torch.Tensor, atol=1e-6, rtol=1e-5):
     """
     逐元素比较任意维度的 NumPy 数组和 Torch 张量。

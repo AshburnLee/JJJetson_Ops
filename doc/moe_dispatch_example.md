@@ -2,11 +2,11 @@
 
 ## 常量 case
 
-`num_tokens` = 5  
-`hidden_size` = 4  
-`num_experts` = 3  
-`top_k` = 2  
-`num_routes` = `num_tokens` × `top_k` = 10  
+`num_tokens` = 5
+`hidden_size` = 4
+`num_experts` = 3
+`top_k` = 2
+`num_routes` = `num_tokens` × `top_k` = 10
 scatter（本走读假定）：按 `r = 0…9` 顺序处理，与串行等价 `atomicAdd` 的结果一致。
 
 
@@ -111,7 +111,7 @@ expert_ids （ `e`）:  1 2 2 0 1 2 1 2 2 0
 | 2 | 5 | 5 | 10 |
 
 | `offsets[3]` | `offsets` |
-|-------------:|---------- | 
+|-------------:|---------- |
 | 10           | `[0, 2, 5, 10]` |
 
 ## 5′ `offsets` ↔ 行区间

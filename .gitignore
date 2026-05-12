@@ -3,3 +3,4 @@ playground/
 profiling/
 python/
 .ruff_cache/
+.vscode/
