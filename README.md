@@ -1,15 +1,66 @@
+# JJJetson_Ops
 
-# 1. Build & run tests
+面向 Jetson Orin，把 推理场景下经过业界验证的 SOTA 推理算子落成端侧、AI 边缘计算性能优异的 CUDA 实现；正确性依托 可对拍的参考与小例，持续用测试补强覆盖。
+
+
+## 0. 真实推理场景下 Op 的性能对比
+
+[WIP]
+
+## 1. Prerequisites
+### GPU 规格
+
+| 项 | 值 |
+|:---|:---|
+| 设备名 | Orin |
+| 计算能力 | 8.7 |
+| SM 数量 | 4 |
+| SM 频率（报告值） | 1.02 GHz |
+| 显存频率（报告值） | 1.02 GHz |
+| 显存位宽 | 128 bit |
+| 总显存 | 3.52 GiB |
+| L2 Cache | 2 MiB |
+| 每 block 共享内存上限 | 48 KiB |
+| 每 SM 共享内存容量 | 164 KiB |
+| 每 block 最大线程数 | 1024（32 warps） |
+| 每 SM 最大驻留线程数 | 1536（48 warps） |
+| Warp 宽度 | 32 |
+| 理论峰值 DRAM 带宽（估算） | 30.4 GiB/s |
+| 理论峰值 FP32（估算） | 1.04 TFLOP/s |
+| 理论峰值 FP16 Tensor Core dense（估算） | 4.18 TFLOP/s |
+
+
+### 软件版本
+
+| 项 | 值 |
+|:---|:---|
+| 操作系统 | 5.15.148-tegra aarch64 GNU/Linux |
+| CMake | 3.22.1 |
+| GNU Make | 4.3 |
+| nvcc | release 12.6, V12.6.68 |
+| CUB | 随 CUDA |
+| cuBLAS | 随 CUDA |
+| pybind11 | 2.13.6 |
+| GCC 编译器 | GCC 11.4.0 |
+| C++ / CUDA 标准 | C++17；CUDA C++17 |
+| Python | 3.12.10 |
+| Conda | 25.3.0 |
+| NumPy | 2.1.2 |
+| PyTorch | 2.6.0+cu126 |
+
+
+
+## 2. Build & run tests
 
 ~~~sh
+# 创建 conda 环境（首次）
+conda env create --file environment.yml
 conda activate cuda-ops
+
 # 构建所有 op，默认是 release，
 ./build_all.sh
 # debug mode：
 ./build_all.sh --debug
-
-# 复制conda 环境
-conda env create --file environment.yml
 ~~~
 
 ~~~sh
@@ -45,36 +96,3 @@ sudo -E env PYTHONPATH="$PYTHONPATH" $(which ncu) \
 - python 端开启制定Kernel的 profile：`PROFILE_KERNEL_FROM_PYTHON=1`
 
 另：资源有限的机器上，`./build_all.sh --debug` 可能会导致机器卡死，只构建制定目标： `cd build && make -j3 xxx_me `
-
----
-
-# 2. CUDA Backend OPs
-
-改项目目标：围绕 LLM 推理阶段常见算子，逐步实现可落地的 CUDA backend，并实现打磨每个算子的实现细节、正确性验证方式与优化。
-
-## 项目目的
-
-- 实现 LLM 推理中会用到的核心 OP（如 copy/transpose/attention/quantization/rope/moe gating 等），后端统一使用 CUDA。
-
-- 逐步把当前分散的 OP 实现为可复用、可组合的 CUDA backend 算子部分。
-
-
-## 当前内容
-
-1. 确保各个 OP 的正确性  
-   - 为每个 OP 构造 Python 测试/参考实现（ref），与 CUDA 输出逐项对齐。  
-
-2. 记录 CUDA 实现中的优化点，作为优化 baseline
-   - 对每个 OP 记录关键性能设计（并行映射、访存模式、warp/shared 使用、向量化、融合等）。
-   - 形成“实现 + 解释 + 可复盘”的文档，便于后续调优和对比。
-
-3. 持续迭代完善  
-   - 新增 OP 时同步补测试与文档。  
-   - 对已有 OP 持续补齐边界处理、类型支持和性能 profiling 结果。
-
-
-## TODO
-
-- 添加更多 LLM 推理相关 OP，扩展 dtype、shape 与布局覆盖范围。
-- 补充当前实现中的缺口（正确性、接口一致性、性能基线、异常处理等）。
-- 逐步把各 OP 串联为一个可用的 CUDA backend（可测试、可维护、可集成）。
