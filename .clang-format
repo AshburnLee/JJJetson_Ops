@@ -1,0 +1,11 @@
+# Align with existing C++/CUDA style (4-space indent, moderate line length).
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+SortIncludes: false
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortBlocksOnASingleLine: Empty
+DerivePointerAlignment: false
+PointerAlignment: Right

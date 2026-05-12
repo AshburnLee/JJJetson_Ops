@@ -2,3 +2,4 @@ build/
 playground/
 profiling/
 python/
+.ruff_cache/

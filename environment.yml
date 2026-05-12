@@ -5,3 +5,6 @@ dependencies:
   - python=3.12.10
   - pybind11
   - pip
+  - pip:
+      - ruff>=0.8.0
+      - pre-commit>=3.0.0
