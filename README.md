@@ -96,10 +96,3 @@ sudo -E env PYTHONPATH="$PYTHONPATH" $(which ncu) \
 - python 端开启制定Kernel的 profile：`PROFILE_KERNEL_FROM_PYTHON=1`
 
 另：资源有限的机器上，`./build_all.sh --debug` 可能会导致机器卡死，只构建制定目标： `cd build && make -j3 xxx_me `
-
-## 3. 代码格式（本地与 GitHub Actions）
-
-用于**改源文件排版/风格**的是同一套配置：根目录 `.pre-commit-config.yaml`（`clang-format`、`ruff`/`ruff-format`、空白与 YAML 等）。
-
-- 本地：`pre-commit install` 后随 `git commit` 运行；或 `pre-commit run --all-files`；也可 `./scripts/format_code.sh` 批量落盘。
-- GitHub Actions：`.github/workflows/pre-commit.yml` 里会跑同样的 `pre-commit`。**CI 在 runner 上若改动了文件，作业会判失败**（需要你本地修好再 push），**不会**自动把格式化结果推回仓库。若需要自动提 PR 修正，可改用 [pre-commit.ci](https://pre-commit.ci) 等服务。
