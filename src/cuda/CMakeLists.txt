@@ -45,6 +45,10 @@ add_library(fa_one_pass_parallel_tc_true_cuda OBJECT
   fa_one_pass_parallel_tc_true.cu
 )
 
+add_library(fa_double_buffer_cuda OBJECT
+  fa_double_buffer.cu
+)
+
 add_library(cpy_continue_cuda OBJECT
   cpy_continue.cu
 )
@@ -85,6 +89,7 @@ foreach(t gated_unary_cuda
           fa_one_pass_parallel_cuda
           fa_one_pass_parallel_tc_cuda
           fa_one_pass_parallel_tc_true_cuda
+          fa_double_buffer_cuda
           cpy_continue_cuda
           cpy_transpose_cuda
           moe_top_k_cuda
