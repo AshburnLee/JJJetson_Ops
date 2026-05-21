@@ -1,4 +1,7 @@
-// 使用双缓存，softmax 与当前 tile load V overlap
+// 使用双缓冲：
+// 当前 tile 的 V cp.async 与 QK WMMA 异步，隐藏 load V
+// 下一 tile 的 K prefetch 与 softmax 异步，隐藏 load K
+// 两次 wait 后做 WMMA PV
 
 #include <cuda_runtime.h>
 #include <mma.h>
@@ -183,6 +186,16 @@ __global__ void __launch_bounds__(256, 4)
 #endif
         __syncthreads();
 
+        const half *v_tile_base = v_head + static_cast<size_t>(tile_id * KV_TOKEN_TILE) * HEAD_DIM;
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
+        // load V，与 QK WMMA 异步
+        db_begin_copy_kv_tile(v_double_buf[cb], v_tile_base, tid, block_threads);
+#endif
+
+#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ < 800
+        db_sync_copy_kv_tile(v_double_buf[cb], v_tile_base, tid, block_threads);
+#endif
+
         // WMMA QK
         if (warp_id < 4) {
             const int warp_m = warp_id / 2;
@@ -203,12 +216,16 @@ __global__ void __launch_bounds__(256, 4)
         }
         __syncthreads();
 
-        const half *v_tile_base = v_head + static_cast<size_t>(tile_id * KV_TOKEN_TILE) * HEAD_DIM;
-        db_begin_copy_kv_tile(v_double_buf[cb], v_tile_base, tid, block_threads);
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
+        // 下一 tile 的 K 预取，写入 k_double_buf[cb^1]，与 softmax 重叠
+        if (tile_id + 1 < LOOP_KV) {
+            const int nb = cb ^ 1;
+            const half *k_next =
+                k_head + static_cast<size_t>((tile_id + 1) * KV_TOKEN_TILE) * HEAD_DIM;
+            db_begin_copy_kv_tile(k_double_buf[nb], k_next, tid, block_threads);
+        }
+#endif
 
-        // softmax 与上一句 V 的 cp.async 重叠，直到 wait 0 结束
-        // softmax 在跑的时候，V 的 global -> shared 异步搬运在其他 PATH 进行，经典的 overlap
-        // DB的收益主要来自这里 的overlap
         const int w_soft = threadIdx.y;
         const int l_id = threadIdx.x;
         const int row_start_w = w_soft * rows_per_warp;
@@ -235,9 +252,9 @@ __global__ void __launch_bounds__(256, 4)
             const float upd = exp_val * scale_new;
             s_scores[r][l_id] = __float2half_rn(upd);
         }
-
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
-        db_cp_async_wait<0>(); // load V 和softmax overlap 结束
+        // load V 和 WMMA QK；load K(t+1) 和 softmax，两次 commit 后一次 wait
+        db_cp_async_wait<0>();
 #endif
         __syncthreads();
 
@@ -267,16 +284,6 @@ __global__ void __launch_bounds__(256, 4)
             const int c = t % HEAD_DIM;
             const float l_new_r = l[r];
             dst_acc[r][c] = (stream_num_scale[r] * dst_acc[r][c] + pv_acc[r][c]) / l_new_r;
-        }
-        __syncthreads();
-
-        // 预取下一个 tile 的 K 到另一侧缓冲，与上一轮已完成的计算交叠发生在下一轮 wait
-        // 如何还有下一轮循环，那么pingpong 预取另一侧buffer，overlap 直到下一次 loop 开头的 wait 0
-        if (tile_id + 1 < LOOP_KV) {
-            const int nb = cb ^ 1;
-            const half *k_next =
-                k_head + static_cast<size_t>((tile_id + 1) * KV_TOKEN_TILE) * HEAD_DIM;
-            db_begin_copy_kv_tile(k_double_buf[nb], k_next, tid, block_threads);
         }
         __syncthreads();
     }
@@ -347,7 +354,7 @@ extern "C" void fa_one_pass_parallel_double_buffer(const uint16_t *q_host, const
         if (excess > 0) {
             if (max_optin < static_cast<int>(static_shmem)) {
                 std::fprintf(stderr,
-                             "[fa_one_pass_parallel_tc_double_buffer] static shared %zu B exceeds "
+                             "[fa_one_pass_parallel_double_buffer] static shared %zu B exceeds "
                              "cudaDevAttrMaxSharedMemoryPerBlockOptin=%d; launch may fail.\n",
                              static_shmem, max_optin);
             }
