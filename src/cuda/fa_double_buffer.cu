@@ -25,6 +25,7 @@ constexpr int N_TILES = HEAD_DIM / WMMA_N;
 constexpr int Q_STRIDE = HEAD_DIM + 8;
 constexpr int KV_STRIDE = KV_TOKEN_TILE + 8;
 constexpr int V_STRIDE = HEAD_DIM + 8;
+constexpr int ACC_STRIDE = HEAD_DIM + 8;
 
 constexpr int KV_TILE_NUM_HALF = KV_TOKEN_TILE * HEAD_DIM;
 
@@ -113,11 +114,11 @@ __global__ void __launch_bounds__(256, 4)
     __shared__ alignas(16) half k_double_buf[2][KV_TOKEN_TILE][V_STRIDE];
     __shared__ alignas(16) half v_double_buf[2][KV_TOKEN_TILE][V_STRIDE];
     __shared__ alignas(16) half s_scores[WMMA_ROWS][KV_STRIDE];
-    __shared__ alignas(16) float dst_acc[ROWS_TWO_HEADS][HEAD_DIM];
+    __shared__ alignas(16) float dst_acc[ROWS_TWO_HEADS][ACC_STRIDE];
     __shared__ float stream_num_scale[ROWS_TWO_HEADS];
     __shared__ float m[ROWS_TWO_HEADS];
     __shared__ float l[ROWS_TWO_HEADS];
-    __shared__ alignas(16) float pv_acc[WMMA_ROWS][HEAD_DIM];
+    __shared__ alignas(16) float pv_acc[WMMA_ROWS][ACC_STRIDE];
 
     const int kv_h = blockIdx.x;
     const int q0 = kv_h * 2;
@@ -255,7 +256,7 @@ __global__ void __launch_bounds__(256, 4)
                     load_matrix_sync(b_frag, &v_active[k_step * WMMA_K][n_tile * WMMA_N], V_STRIDE);
                     mma_sync(acc, a_frag, b_frag, acc);
                 }
-                store_matrix_sync(&pv_acc[row0][n_tile * WMMA_N], acc, HEAD_DIM, mem_row_major);
+                store_matrix_sync(&pv_acc[row0][n_tile * WMMA_N], acc, ACC_STRIDE, mem_row_major);
             }
         }
         __syncthreads();
