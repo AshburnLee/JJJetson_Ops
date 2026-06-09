@@ -25,6 +25,10 @@ add_library(q8_1_cuda OBJECT
   q8_1.cu
 )
 
+add_library(mm_q4_0_q8_1_cuda OBJECT
+  mm_q4_0_q8_1.cu
+)
+
 add_library(fa_two_pass_cuda OBJECT
   fa_two_pass.cu
 )
@@ -83,7 +87,7 @@ add_library(roll_cuda OBJECT
 )
 
 foreach(t gated_unary_cuda
-          rope_cuda q8_1_cuda
+          rope_cuda q8_1_cuda mm_q4_0_q8_1_cuda
           fa_two_pass_cuda
           fa_one_pass_cuda
           fa_one_pass_parallel_cuda
