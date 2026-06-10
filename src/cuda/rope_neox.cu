@@ -118,13 +118,11 @@ extern "C" void rope(float *input, int *pos, float *output, std::vector<int> &in
     const rope_corr_dims corr_dims = {24.f, 41.f};
     const float attn_factor = 1.f;
 
-    // 配置的考量：做 rope的只有 head_dim 其他维度，n-heads & n_seq 都是需要并行的不猜与rope的。
+    // 配置的考量：做 rope的只有 head_dim 其他维度，n-heads & n_seq 都是需要并行的
     // 故，block 只有y方向有，grid只有x方向有，这样执行器铺成一个长方形
     // 正好 head_dim 是变化最快的，所以其他维度自然并行
     // block (1,256,1)：每个 (head,token) 上仅 id_fast 在 [0, n_dims/2) 做旋转；[n_dims/2, n_dims)
     // 为空转；≥n_dims 为拷贝
-    //
-    // threadIdx.y 是连续的，warp 中的thread id 是连续的吗？
     const dim3 threads(1, CUDA_ROPE_BLOCK_SIZE, 1); // (1,256,1)
     const int n_blocks_x = (ne0_0 + 2 * CUDA_ROPE_BLOCK_SIZE - 1) / (2 * CUDA_ROPE_BLOCK_SIZE);
     const dim3 blocks(nr, n_blocks_x, 1); // (208,1,1)

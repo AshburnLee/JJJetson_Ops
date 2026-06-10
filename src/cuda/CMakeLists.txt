@@ -21,6 +21,10 @@ add_library(rope_cuda OBJECT
   rope_neox.cu
 )
 
+add_library(rope_search_table_cuda OBJECT
+  rope_neox_search_table.cu
+)
+
 add_library(q8_1_cuda OBJECT
   q8_1.cu
 )
@@ -87,7 +91,7 @@ add_library(roll_cuda OBJECT
 )
 
 foreach(t gated_unary_cuda
-          rope_cuda q8_1_cuda mm_q4_0_q8_1_cuda
+          rope_cuda rope_search_table_cuda q8_1_cuda mm_q4_0_q8_1_cuda
           fa_two_pass_cuda
           fa_one_pass_cuda
           fa_one_pass_parallel_cuda

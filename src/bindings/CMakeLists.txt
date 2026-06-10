@@ -48,6 +48,20 @@ target_link_libraries(rope_me PRIVATE
 
 set_python_module_props(rope_me)
 
+add_library(rope_search_table_me MODULE
+  rope_neox_search_table_binding.cpp
+  $<TARGET_OBJECTS:rope_search_table_cuda>
+)
+
+target_link_libraries(rope_search_table_me PRIVATE
+  pybind11::module
+  ${Python3_LIBRARIES}
+  cuda
+  cudart
+)
+
+set_python_module_props(rope_search_table_me)
+
 add_library(q8_1_me MODULE
   q8_1_binding.cpp
   $<TARGET_OBJECTS:q8_1_cuda>
@@ -227,7 +241,7 @@ set_python_module_props(roll_me)
 # Debug 构建时：对所有 *_me 模块统一开启可选调试/可观测性代码路径
 if(CMAKE_BUILD_TYPE MATCHES "Debug")
   foreach(t gated_unary_me
-            rope_me q8_1_me mm_q4_0_q8_1_me fa_me fa_tc_me
+            rope_me rope_search_table_me q8_1_me mm_q4_0_q8_1_me fa_me fa_tc_me
             cpy_continue_me cpy_transpose_me
             moe_top_k_me
             moe_dispatch_me
