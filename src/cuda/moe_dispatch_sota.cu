@@ -107,6 +107,7 @@ extern "C" size_t moe_dispatch_sota_sort_workspace_bytes(int num_tokens, int top
     return static_cast<size_t>(pad_to_multiple_of_16(static_cast<int>(raw)));
 }
 
+// MoE pipline中纯计算
 extern "C" void moe_dispatch_sota_launch_cuda(
     cudaStream_t stream, const float *d_x, const int *d_expert_ids, int num_tokens, int top_k,
     int hidden_size, int num_experts, void *d_sort_workspace, size_t sort_workspace_bytes,
@@ -147,6 +148,7 @@ extern "C" void moe_dispatch_sota_launch_cuda(
     LAUNCH_CHECK();
 }
 
+// 推理场景下禁止使用
 extern "C" void moe_dispatch_sota(const float *x_host, const int *expert_ids_host, int num_tokens,
                                   int top_k, int hidden_size, int num_experts,
                                   float *permuted_x_host, int *source_token_host,

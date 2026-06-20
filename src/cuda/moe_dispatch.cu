@@ -1,8 +1,10 @@
+// deprecated
 #include <cuda_runtime.h>
 #include <cstring>
 
 #include "cuda_utils.cuh"
 
+/// Hotspot: atomic
 static __global__ void moe_dispatch_hist_kernel(const int *expert_ids, int num_routes,
                                                 int num_experts, int *counts) {
     const int r = blockIdx.x * blockDim.x + threadIdx.x;
@@ -35,6 +37,7 @@ static __global__ void moe_dispatch_init_next_kernel(const int *offsets, int num
     }
 }
 
+/// Hotspot: atomic
 static __global__ void moe_dispatch_scatter_kernel(const float *x,        /* in */
                                                    const int *expert_ids, /* in */
                                                    int num_tokens, int top_k, int hidden_size,
@@ -69,6 +72,7 @@ extern "C" void moe_dispatch_launch_cuda(cudaStream_t stream, const float *d_x,
                                          int *d_source_token, int *d_source_k,
                                          int *d_expert_offsets, int *d_counts, int *d_next_slot) {
     const int num_routes = num_tokens * top_k;
+    //
     CUDA_CHECK(
         cudaMemsetAsync(d_counts, 0, static_cast<size_t>(num_experts) * sizeof(int), stream));
 
@@ -78,7 +82,7 @@ extern "C" void moe_dispatch_launch_cuda(cudaStream_t stream, const float *d_x,
                                                                   num_experts, d_counts);
     LAUNCH_CHECK();
 
-    // 1 个thread？
+    /// Hotspot: 1 个thread？
     moe_dispatch_exclusive_prefix_kernel<<<1, 1, 0, stream>>>(d_counts, num_experts,
                                                               d_expert_offsets);
     LAUNCH_CHECK();
