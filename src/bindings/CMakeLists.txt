@@ -256,6 +256,25 @@ target_link_libraries(moe_cuda_graph_cache_me PRIVATE
 
 set_python_module_props(moe_cuda_graph_cache_me)
 
+add_library(moe_runner_me MODULE
+  moe_runner_binding.cpp
+  $<TARGET_OBJECTS:moe_runner_cuda>
+  $<TARGET_OBJECTS:moe_cuda_graph_cache_cuda>
+  $<TARGET_OBJECTS:moe_pipeline_sota_cuda>
+  $<TARGET_OBJECTS:moe_top_k_cuda>
+  $<TARGET_OBJECTS:moe_dispatch_sota_cuda>
+  $<TARGET_OBJECTS:moe_combine_sota_cuda>
+)
+
+target_link_libraries(moe_runner_me PRIVATE
+  pybind11::module
+  ${Python3_LIBRARIES}
+  cuda
+  cudart
+)
+
+set_python_module_props(moe_runner_me)
+
 add_library(moe_pipeline_me MODULE
   moe_pipeline_binding.cpp
   $<TARGET_OBJECTS:moe_pipeline_cuda>
@@ -299,6 +318,7 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
             moe_combine_sota_me
             moe_pipeline_sota_me
             moe_cuda_graph_cache_me
+            moe_runner_me
             moe_pipeline_me
             roll_me)
     target_compile_definitions(${t} PRIVATE MY_OPS_DEBUG=1)

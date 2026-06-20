@@ -93,6 +93,10 @@ add_library(moe_cuda_graph_cache_cuda OBJECT
   moe_cuda_graph_cache.cu
 )
 
+add_library(moe_runner_cuda OBJECT
+  moe_runner.cu
+)
+
 add_library(moe_pipeline_cuda OBJECT
   moe_pipline.cu
 )
@@ -119,6 +123,7 @@ foreach(t gated_unary_cuda
           moe_combine_sota_cuda
           moe_pipeline_sota_cuda
           moe_cuda_graph_cache_cuda
+          moe_runner_cuda
           moe_pipeline_cuda
           roll_cuda)
   set_target_properties(${t} PROPERTIES
