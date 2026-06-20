@@ -1,3 +1,4 @@
+// deprecated
 #include <cuda_runtime.h>
 #include "cuda_utils.cuh"
 

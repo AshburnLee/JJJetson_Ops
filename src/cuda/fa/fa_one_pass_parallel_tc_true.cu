@@ -1,6 +1,7 @@
 #include <cuda_runtime.h>
 #include <mma.h>
 #include <cstdio>
+#include <cstdint>
 #include "cuda_fp16.h"
 #include "cuda_utils.cuh"
 

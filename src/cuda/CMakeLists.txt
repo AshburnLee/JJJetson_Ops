@@ -33,29 +33,8 @@ add_library(mm_q4_0_q8_1_cuda OBJECT
   mm_q4_0_q8_1.cu
 )
 
-add_library(fa_two_pass_cuda OBJECT
-  fa_two_pass.cu
-)
-
-add_library(fa_one_pass_cuda OBJECT
-  fa_one_pass.cu
-)
-
-add_library(fa_one_pass_parallel_cuda OBJECT
-  fa_one_pass_parallel.cu
-)
-
-add_library(fa_one_pass_parallel_tc_cuda OBJECT
-  fa_one_pass_parallel_tc.cu
-)
-
-add_library(fa_one_pass_parallel_tc_true_cuda OBJECT
-  fa_one_pass_parallel_tc_true.cu
-)
-
-add_library(fa_double_buffer_cuda OBJECT
-  fa_double_buffer.cu
-)
+add_subdirectory(fa)
+add_subdirectory(moe)
 
 add_library(cpy_continue_cuda OBJECT
   cpy_continue.cu
@@ -65,66 +44,14 @@ add_library(cpy_transpose_cuda OBJECT
   cpy_transpose.cu
 )
 
-add_library(moe_top_k_cuda OBJECT
-  moe_top_k.cu
-)
-
-add_library(moe_dispatch_cuda OBJECT
-  moe_dispatch.cu
-)
-
-add_library(moe_dispatch_sota_cuda OBJECT
-  moe_dispatch_sota.cu
-)
-
-add_library(moe_combine_cuda OBJECT
-  moe_combine.cu
-)
-
-add_library(moe_combine_sota_cuda OBJECT
-  moe_combine_sota.cu
-)
-
-add_library(moe_pipeline_sota_cuda OBJECT
-  moe_pipeline_sota.cu
-)
-
-add_library(moe_cuda_graph_cache_cuda OBJECT
-  moe_cuda_graph_cache.cu
-)
-
-add_library(moe_runner_cuda OBJECT
-  moe_runner.cu
-)
-
-add_library(moe_pipeline_cuda OBJECT
-  moe_pipline.cu
-)
-target_link_libraries(moe_pipeline_cuda PRIVATE CUDA::cublas)
-
 add_library(roll_cuda OBJECT
   roll.cu
 )
 
 foreach(t gated_unary_cuda
           rope_cuda rope_search_table_cuda q8_1_cuda mm_q4_0_q8_1_cuda
-          fa_two_pass_cuda
-          fa_one_pass_cuda
-          fa_one_pass_parallel_cuda
-          fa_one_pass_parallel_tc_cuda
-          fa_one_pass_parallel_tc_true_cuda
-          fa_double_buffer_cuda
           cpy_continue_cuda
           cpy_transpose_cuda
-          moe_top_k_cuda
-          moe_dispatch_cuda
-          moe_dispatch_sota_cuda
-          moe_combine_cuda
-          moe_combine_sota_cuda
-          moe_pipeline_sota_cuda
-          moe_cuda_graph_cache_cuda
-          moe_runner_cuda
-          moe_pipeline_cuda
           roll_cuda)
   set_target_properties(${t} PROPERTIES
     POSITION_INDEPENDENT_CODE ON

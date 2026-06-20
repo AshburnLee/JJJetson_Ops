@@ -240,7 +240,7 @@ set_python_module_props(moe_pipeline_sota_me)
 
 add_library(moe_cuda_graph_cache_me MODULE
   moe_cuda_graph_cache_binding.cpp
-  $<TARGET_OBJECTS:moe_cuda_graph_cache_cuda>
+  $<TARGET_OBJECTS:moe_engine>
   $<TARGET_OBJECTS:moe_pipeline_sota_cuda>
   $<TARGET_OBJECTS:moe_top_k_cuda>
   $<TARGET_OBJECTS:moe_dispatch_sota_cuda>
@@ -258,8 +258,7 @@ set_python_module_props(moe_cuda_graph_cache_me)
 
 add_library(moe_runner_me MODULE
   moe_runner_binding.cpp
-  $<TARGET_OBJECTS:moe_runner_cuda>
-  $<TARGET_OBJECTS:moe_cuda_graph_cache_cuda>
+  $<TARGET_OBJECTS:moe_engine>
   $<TARGET_OBJECTS:moe_pipeline_sota_cuda>
   $<TARGET_OBJECTS:moe_top_k_cuda>
   $<TARGET_OBJECTS:moe_dispatch_sota_cuda>

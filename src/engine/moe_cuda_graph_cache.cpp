@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <unordered_map>
 
-#include "cuda_utils.cuh"
+#include "cuda_utils.h"
 #include "moe_pipeline_sota.h"
 
 // 一个实例化对象是一个CUDA Graph instance
