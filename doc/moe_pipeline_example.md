@@ -30,7 +30,7 @@ Combine
 
 ---
 
-## 步骤0：`moe_swiglu_experts_forward` 共用输入
+## 步骤0：`moe_pipeline_forward` 共用输入
 
 `route_weights[t,k]` 取 1.0
 

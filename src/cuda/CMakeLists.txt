@@ -81,10 +81,22 @@ add_library(moe_combine_cuda OBJECT
   moe_combine.cu
 )
 
-add_library(moe_swiglu_experts_cuda OBJECT
-  moe_swiglu_experts.cu
+add_library(moe_combine_sota_cuda OBJECT
+  moe_combine_sota.cu
 )
-target_link_libraries(moe_swiglu_experts_cuda PRIVATE CUDA::cublas)
+
+add_library(moe_pipeline_sota_cuda OBJECT
+  moe_pipeline_sota.cu
+)
+
+add_library(moe_cuda_graph_cache_cuda OBJECT
+  moe_cuda_graph_cache.cu
+)
+
+add_library(moe_pipeline_cuda OBJECT
+  moe_pipline.cu
+)
+target_link_libraries(moe_pipeline_cuda PRIVATE CUDA::cublas)
 
 add_library(roll_cuda OBJECT
   roll.cu
@@ -104,7 +116,10 @@ foreach(t gated_unary_cuda
           moe_dispatch_cuda
           moe_dispatch_sota_cuda
           moe_combine_cuda
-          moe_swiglu_experts_cuda
+          moe_combine_sota_cuda
+          moe_pipeline_sota_cuda
+          moe_cuda_graph_cache_cuda
+          moe_pipeline_cuda
           roll_cuda)
   set_target_properties(${t} PROPERTIES
     POSITION_INDEPENDENT_CODE ON

@@ -211,6 +211,76 @@ __launch_bounds__(WARP_SIZE * 4, 1) __global__
     }
 }
 
+// MoE pipline中纯计算层
+extern "C" void moe_top_k_launch_cuda(cudaStream_t stream, const float *d_logits, float *d_weights,
+                                      int *d_ids, int num_tokens, int num_experts, int top_k) {
+    const float clamp_val = 1e-8f;
+    const int rows_per_block = 4;
+    dim3 blocks((num_tokens + rows_per_block - 1) / rows_per_block, 1, 1);
+    dim3 threads(WARP_SIZE, rows_per_block, 1);
+
+    switch (num_experts) {
+    case 2:
+        moe_top_k_kernel<2, false, true><<<blocks, threads, 0, stream>>>(
+            d_logits, d_weights, d_ids, num_tokens, top_k, clamp_val);
+        LAUNCH_CHECK();
+        break;
+    case 3:
+        moe_top_k_kernel<3, false, true><<<blocks, threads, 0, stream>>>(
+            d_logits, d_weights, d_ids, num_tokens, top_k, clamp_val);
+        LAUNCH_CHECK();
+        break;
+    case 4:
+        moe_top_k_kernel<4, false, true><<<blocks, threads, 0, stream>>>(
+            d_logits, d_weights, d_ids, num_tokens, top_k, clamp_val);
+        LAUNCH_CHECK();
+        break;
+    case 8:
+        moe_top_k_kernel<8, false, true><<<blocks, threads, 0, stream>>>(
+            d_logits, d_weights, d_ids, num_tokens, top_k, clamp_val);
+        LAUNCH_CHECK();
+        break;
+    case 16:
+        moe_top_k_kernel<16, false, true><<<blocks, threads, 0, stream>>>(
+            d_logits, d_weights, d_ids, num_tokens, top_k, clamp_val);
+        LAUNCH_CHECK();
+        break;
+    case 32:
+        moe_top_k_kernel<32, false, true><<<blocks, threads, 0, stream>>>(
+            d_logits, d_weights, d_ids, num_tokens, top_k, clamp_val);
+        LAUNCH_CHECK();
+        break;
+    case 64:
+        moe_top_k_kernel<64, false, true><<<blocks, threads, 0, stream>>>(
+            d_logits, d_weights, d_ids, num_tokens, top_k, clamp_val);
+        LAUNCH_CHECK();
+        break;
+    case 128:
+        moe_top_k_kernel<128, false, true><<<blocks, threads, 0, stream>>>(
+            d_logits, d_weights, d_ids, num_tokens, top_k, clamp_val);
+        LAUNCH_CHECK();
+        break;
+    case 256:
+        moe_top_k_kernel<256, false, true><<<blocks, threads, 0, stream>>>(
+            d_logits, d_weights, d_ids, num_tokens, top_k, clamp_val);
+        LAUNCH_CHECK();
+        break;
+    case 512:
+        moe_top_k_kernel<512, false, true><<<blocks, threads, 0, stream>>>(
+            d_logits, d_weights, d_ids, num_tokens, top_k, clamp_val);
+        LAUNCH_CHECK();
+        break;
+    case 1024:
+        moe_top_k_kernel<1024, false, true><<<blocks, threads, 0, stream>>>(
+            d_logits, d_weights, d_ids, num_tokens, top_k, clamp_val);
+        LAUNCH_CHECK();
+        break;
+    default:
+        throw std::runtime_error("unsupported n_experts");
+    }
+}
+
+// 推理场景下禁止使用
 extern "C" void moe_top_k(const float *logits, const int topk, float *weights, int *ids,
                           const std::vector<int> &input_dims) {
     /*
@@ -223,7 +293,6 @@ extern "C" void moe_top_k(const float *logits, const int topk, float *weights, i
     ids:         topk * n_tokens
     */
     // python 传入的是 row-major 的
-    const float clamp_val = 1e-8f;
     const int64_t n_tokens = input_dims[0];
     const int64_t n_experts = input_dims[1];
 
@@ -243,68 +312,7 @@ extern "C" void moe_top_k(const float *logits, const int topk, float *weights, i
     CUDA_CHECK(cudaMemcpyAsync(d_digits, logits, input_size * sizeof(float), cudaMemcpyHostToDevice,
                                stream));
 
-    const int rows_per_block = 4;
-    dim3 blocks((n_tokens + rows_per_block - 1) / rows_per_block, 1, 1);
-    dim3 threads(WARP_SIZE, rows_per_block, 1);
-#if defined(MY_OPS_DEBUG)
-    std::printf("Kernel launch config: block=(%u,%u,%u), grid=(%u,%u,%u)\n", threads.x, threads.y,
-                threads.z, blocks.x, blocks.y, blocks.z);
-    std::fflush(stdout);
-#endif
-    switch (n_experts) {
-    case 2:
-        moe_top_k_kernel<2, false, true><<<blocks, threads, 0, stream>>>(
-            d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
-        LAUNCH_CHECK();
-        break;
-    case 4:
-        moe_top_k_kernel<4, false, true><<<blocks, threads, 0, stream>>>(
-            d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
-        LAUNCH_CHECK();
-        break;
-    case 8:
-        moe_top_k_kernel<8, false, true><<<blocks, threads, 0, stream>>>(
-            d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
-        LAUNCH_CHECK();
-        break;
-    case 16:
-        moe_top_k_kernel<16, false, true><<<blocks, threads, 0, stream>>>(
-            d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
-        LAUNCH_CHECK();
-        break;
-    case 32:
-        moe_top_k_kernel<32, false, true><<<blocks, threads, 0, stream>>>(
-            d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
-        LAUNCH_CHECK();
-        break;
-    case 64:
-        moe_top_k_kernel<64, false, true><<<blocks, threads, 0, stream>>>(
-            d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
-        LAUNCH_CHECK();
-        break;
-    case 128:
-        moe_top_k_kernel<128, false, true><<<blocks, threads, 0, stream>>>(
-            d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
-        LAUNCH_CHECK();
-        break;
-    case 256:
-        moe_top_k_kernel<256, false, true><<<blocks, threads, 0, stream>>>(
-            d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
-        LAUNCH_CHECK();
-        break;
-    case 512:
-        moe_top_k_kernel<512, false, true><<<blocks, threads, 0, stream>>>(
-            d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
-        LAUNCH_CHECK();
-        break;
-    case 1024:
-        moe_top_k_kernel<1024, false, true><<<blocks, threads, 0, stream>>>(
-            d_digits, d_weight, d_ids, (int)n_tokens, topk, clamp_val);
-        LAUNCH_CHECK();
-        break;
-    default:
-        throw std::runtime_error("unsupported n_experts");
-    }
+    moe_top_k_launch_cuda(stream, d_digits, d_weight, d_ids, (int)n_tokens, (int)n_experts, topk);
 
     CUDA_CHECK(cudaMemcpyAsync(weights, d_weight, out_size * sizeof(float), cudaMemcpyDeviceToHost,
                                stream));
