@@ -36,7 +36,7 @@ struct MoECudaGraphCache {
     // shared between all Graph intance
     cudaStream_t stream = nullptr;
     bool owns_stream = false;
-    // batch 大小一旦变，buffer 和 launch 参数就变，必须单独 capture 一张图
+    // num_tokens 大小一旦变，buffer 和 launch 参数就变，必须单独 capture 一张图
     std::unordered_map<int, MoECudaGraphEntry> entries;
 };
 
