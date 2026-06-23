@@ -50,7 +50,7 @@ def test_moe_runner():
             w_down=w_down,
             y=y_prefill,
         )
-        assert not used_graph
+        assert not used_graph  # expect eager mode
         assert np.allclose(y_prefill, y_golden, rtol=1e-4, atol=5e-3)
 
         y_decode = np.zeros((num_tokens, hidden_size), dtype=dtype)
@@ -65,10 +65,11 @@ def test_moe_runner():
             w_down=w_down,
             y=y_decode,
         )
-        assert used_graph
+        assert used_graph  # expect graph mode
         assert moe_runner_me.has_graph(runner, num_tokens)
         assert np.allclose(y_decode, y_golden, rtol=1e-4, atol=5e-3)
 
+        # 显式设置 Eager model
         moe_runner_me.set_dispatch(runner, moe_runner_me.Dispatch.EAGER)
         y_eager = np.zeros((num_tokens, hidden_size), dtype=dtype)
         used_graph = moe_runner_me.forward_host(
@@ -82,9 +83,10 @@ def test_moe_runner():
             w_down=w_down,
             y=y_eager,
         )
-        assert not used_graph
+        assert not used_graph  # eager mode expected
         assert np.allclose(y_eager, y_golden, rtol=1e-4, atol=5e-3)
 
+        # 显式设置 Graph mode
         moe_runner_me.set_dispatch(runner, moe_runner_me.Dispatch.GRAPH)
         y_graph = np.zeros((num_tokens, hidden_size), dtype=dtype)
         used_graph = moe_runner_me.forward_host(
@@ -98,7 +100,7 @@ def test_moe_runner():
             w_down=w_down,
             y=y_graph,
         )
-        assert used_graph
+        assert used_graph  # Graph mode expected
         assert np.allclose(y_graph, y_golden, rtol=1e-4, atol=5e-3)
     finally:
         moe_runner_me.destroy_runner(runner)

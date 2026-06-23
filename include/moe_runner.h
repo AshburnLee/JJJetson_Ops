@@ -33,6 +33,7 @@ typedef struct MoeRunnerForwardCtx {
     float *d_y;
 } MoeRunnerForwardCtx;
 
+// 记录这一次 forward 实际计算路径，可用于python 返回值，测试 runtime 的执行路径
 typedef struct MoeRunnerForwardResult {
     int used_graph;
 } MoeRunnerForwardResult;

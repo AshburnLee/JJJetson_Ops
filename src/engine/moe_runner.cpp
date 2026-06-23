@@ -4,10 +4,10 @@
 #include <unordered_map>
 
 #include "cuda_utils.h"
-#include "moe_cuda_graph_cache.h"
+#include "moe_cuda_graph_instance_container.h"
 #include "moe_pipeline_sota.h"
 
-// MoE 的调度台，由模型决定，含有模型配置 & Graph、Eager 工具
+// MoE 的调度台，由模型决定的模型配置 & Graph、Eager 工具
 struct MoeRunner {
     int hidden_size = 0;
     int intermediate_size = 0;
@@ -18,9 +18,10 @@ struct MoeRunner {
     // 整条 MoE 工作队列
     cudaStream_t stream = nullptr;
     bool owns_stream = false;
-    // 存放多个 Graph instance 容器
-    MoECudaGraphCache *graph_cache = nullptr;
-    // eager model 时用持久的 buffer
+    // 1. Graph mode：按 num_tokens 管理 MoECudaGraphInstance
+    MoECudaGraphInstanceContainer *graph_instance_container = nullptr;
+    // 2. eager model 时用持久的 buffer
+    // 每一个 Batch 大小对应一个buffer
     std::unordered_map<int, MoePipelineSotaBuffers *> eager_buffers;
 };
 
@@ -82,20 +83,21 @@ static void moe_runner_copy_output(cudaStream_t stream, float *d_y, MoePipelineS
     CUDA_CHECK(cudaMemcpyAsync(d_y, buffers->d_y, x_bytes, cudaMemcpyDeviceToDevice, stream));
 }
 
-static int moe_runner_should_use_graph(const MoeRunner *runner, const MoeRunnerForwardCtx *ctx) {
+// 计算路径的选择
+static bool moe_runner_should_use_graph(const MoeRunner *runner, const MoeRunnerForwardCtx *ctx) {
     if (runner == nullptr || ctx == nullptr || !runner->enable_graph ||
-        runner->graph_cache == nullptr) {
-        return 0;
+        runner->graph_instance_container == nullptr) {
+        return false;
     }
 
     switch (runner->dispatch) {
     case MOE_RUNNER_DISPATCH_EAGER:
-        return 0;
+        return false;
     case MOE_RUNNER_DISPATCH_GRAPH:
-        return 1;
+        return true;
     case MOE_RUNNER_DISPATCH_AUTO:
     default:
-        return ctx->is_decode != 0;
+        return ctx->is_decode != 0; // 1 != 0 -> true -> use_graph
     }
 }
 
@@ -103,14 +105,15 @@ static int moe_runner_forward_graph(MoeRunner *runner, const MoeRunnerForwardCtx
                                     cudaStream_t stream) {
     const int num_tokens = ctx->num_tokens;
 
-    if (!moe_cuda_graph_cache_has(runner->graph_cache, num_tokens)) {
-        if (moe_cuda_graph_cache_capture(runner->graph_cache, num_tokens) != 0) {
+    if (!moe_cuda_graph_instance_container_has(runner->graph_instance_container, num_tokens)) {
+        if (moe_cuda_graph_instance_container_capture(runner->graph_instance_container,
+                                                      num_tokens) != 0) {
             return -1;
         }
     }
 
     MoePipelineSotaBuffers *buffers =
-        moe_cuda_graph_cache_buffers_get(runner->graph_cache, num_tokens);
+        moe_cuda_graph_instance_container_buffers_get(runner->graph_instance_container, num_tokens);
     if (buffers == nullptr) {
         return -1;
     }
@@ -118,7 +121,8 @@ static int moe_runner_forward_graph(MoeRunner *runner, const MoeRunnerForwardCtx
     moe_runner_copy_inputs(stream, buffers, ctx, runner->hidden_size, runner->num_experts,
                            runner->intermediate_size);
 
-    if (moe_cuda_graph_cache_replay(runner->graph_cache, num_tokens) != 0) {
+    if (moe_cuda_graph_instance_container_replay(runner->graph_instance_container, num_tokens) !=
+        0) {
         return -1;
     }
 
@@ -159,10 +163,10 @@ extern "C" MoeRunner *moe_runner_create(int hidden_size, int intermediate_size, 
     }
 
     if (runner->enable_graph) {
-        runner->graph_cache =
-            moe_cuda_graph_cache_create(hidden_size, intermediate_size, num_experts, top_k,
-                                        static_cast<void *>(runner->stream));
-        if (runner->graph_cache == nullptr) {
+        runner->graph_instance_container =
+            moe_cuda_graph_instance_container_create(hidden_size, intermediate_size, num_experts,
+                                                     top_k, static_cast<void *>(runner->stream));
+        if (runner->graph_instance_container == nullptr) {
             moe_runner_destroy(runner);
             return nullptr;
         }
@@ -181,9 +185,9 @@ extern "C" void moe_runner_destroy(MoeRunner *runner) {
     }
     runner->eager_buffers.clear();
 
-    if (runner->graph_cache != nullptr) {
-        moe_cuda_graph_cache_destroy(runner->graph_cache);
-        runner->graph_cache = nullptr;
+    if (runner->graph_instance_container != nullptr) {
+        moe_cuda_graph_instance_container_destroy(runner->graph_instance_container);
+        runner->graph_instance_container = nullptr;
     }
 
     if (runner->owns_stream && runner->stream != nullptr) {
@@ -207,17 +211,17 @@ extern "C" MoeRunnerDispatch moe_runner_get_dispatch(const MoeRunner *runner) {
 }
 
 extern "C" int moe_runner_capture_graph(MoeRunner *runner, int num_tokens) {
-    if (runner == nullptr || !runner->enable_graph || runner->graph_cache == nullptr) {
+    if (runner == nullptr || !runner->enable_graph || runner->graph_instance_container == nullptr) {
         return -1;
     }
-    return moe_cuda_graph_cache_capture(runner->graph_cache, num_tokens);
+    return moe_cuda_graph_instance_container_capture(runner->graph_instance_container, num_tokens);
 }
 
 extern "C" int moe_runner_has_graph(const MoeRunner *runner, int num_tokens) {
-    if (runner == nullptr || !runner->enable_graph || runner->graph_cache == nullptr) {
+    if (runner == nullptr || !runner->enable_graph || runner->graph_instance_container == nullptr) {
         return 0;
     }
-    return moe_cuda_graph_cache_has(runner->graph_cache, num_tokens);
+    return moe_cuda_graph_instance_container_has(runner->graph_instance_container, num_tokens);
 }
 
 // 生产推理的入口，D2D -> 选择 graph/eager -> D2D
@@ -234,7 +238,7 @@ extern "C" int moe_runner_forward(MoeRunner *runner, const MoeRunnerForwardCtx *
         stream = static_cast<cudaStream_t>(ctx->stream);
     }
 
-    const int use_graph = moe_runner_should_use_graph(runner, ctx);
+    const bool use_graph = moe_runner_should_use_graph(runner, ctx);
     int rc = -1;
     if (use_graph) {
         rc = moe_runner_forward_graph(runner, ctx, stream);

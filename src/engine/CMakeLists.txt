@@ -1,5 +1,5 @@
 add_library(moe_engine OBJECT
-  moe_cuda_graph_cache.cpp
+  moe_cuda_graph_instance_container.cpp
   moe_runner.cpp
 )
 

@@ -1,9 +1,9 @@
-import moe_cuda_graph_cache_me
+import moe_cuda_graph_instance_container_me
 import moe_pipeline_sota_me
 import numpy as np
 
 
-def test_moe_cuda_graph_cache():
+def test_moe_cuda_graph_instance_container():
     rng = np.random.default_rng(7)
     dtype = np.float32
 
@@ -34,15 +34,17 @@ def test_moe_cuda_graph_cache():
         top_k=top_k,
     )
 
-    cache = moe_cuda_graph_cache_me.create_cache(hidden_size, intermediate_size, num_experts, top_k)
+    container = moe_cuda_graph_instance_container_me.create_container(
+        hidden_size, intermediate_size, num_experts, top_k
+    )
     try:
-        assert not moe_cuda_graph_cache_me.has_graph(cache, num_tokens)
-        moe_cuda_graph_cache_me.capture(cache, num_tokens)
-        assert moe_cuda_graph_cache_me.has_graph(cache, num_tokens)
+        assert not moe_cuda_graph_instance_container_me.has_graph(container, num_tokens)
+        moe_cuda_graph_instance_container_me.capture(container, num_tokens)
+        assert moe_cuda_graph_instance_container_me.has_graph(container, num_tokens)
 
         y_graph = np.zeros((num_tokens, hidden_size), dtype=dtype)
-        moe_cuda_graph_cache_me.run_graph(
-            cache,
+        moe_cuda_graph_instance_container_me.run_graph(
+            container,
             num_tokens,
             x,
             logits,
@@ -58,8 +60,8 @@ def test_moe_cuda_graph_cache():
         )
 
         y_replay = np.zeros((num_tokens, hidden_size), dtype=dtype)
-        moe_cuda_graph_cache_me.run_graph(
-            cache,
+        moe_cuda_graph_instance_container_me.run_graph(
+            container,
             num_tokens,
             x,
             logits,
@@ -71,10 +73,10 @@ def test_moe_cuda_graph_cache():
         )
         assert np.allclose(y_replay, y_eager, rtol=1e-4, atol=5e-3)
     finally:
-        moe_cuda_graph_cache_me.destroy_cache(cache)
+        moe_cuda_graph_instance_container_me.destroy_container(container)
 
     print("Passed")
 
 
 if __name__ == "__main__":
-    test_moe_cuda_graph_cache()
+    test_moe_cuda_graph_instance_container()
