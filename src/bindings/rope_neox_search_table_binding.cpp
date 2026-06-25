@@ -5,8 +5,8 @@
 
 namespace py = pybind11;
 
-extern "C" void rope_search_table(float *input, int *pos, float *output,
-                                  std::vector<int> &input_dims);
+extern "C" void rope_with_search_table(float *input, int *pos, float *output,
+                                       std::vector<int> &input_dims);
 
 PYBIND11_MODULE(rope_search_table_me, m) {
     m.doc() = "Python binding for CUDA RoPE (Host cos/sin lookup table)";
@@ -22,7 +22,7 @@ PYBIND11_MODULE(rope_search_table_me, m) {
             int *pos_ptr = static_cast<int *>(pos_buf.ptr);
             float *output_ptr = static_cast<float *>(output_buf.ptr);
 
-            rope_search_table(input_ptr, pos_ptr, output_ptr, dims);
+            rope_with_search_table(input_ptr, pos_ptr, output_ptr, dims);
         },
         py::arg("input"), py::arg("pos"), py::arg("output"), py::arg("input_dims"),
         "RoPE with Host-precomputed cos/sin table");

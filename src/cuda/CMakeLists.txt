@@ -25,6 +25,10 @@ add_library(rope_search_table_cuda OBJECT
   rope_neox_search_table.cu
 )
 
+add_library(rope_global_cache_cuda OBJECT
+  rope_neox_global_cache.cu
+)
+
 add_library(q8_1_cuda OBJECT
   q8_1.cu
 )
@@ -49,7 +53,7 @@ add_library(roll_cuda OBJECT
 )
 
 foreach(t gated_unary_cuda
-          rope_cuda rope_search_table_cuda q8_1_cuda mm_q4_0_q8_1_cuda
+          rope_cuda rope_search_table_cuda rope_global_cache_cuda q8_1_cuda mm_q4_0_q8_1_cuda
           cpy_continue_cuda
           cpy_transpose_cuda
           roll_cuda)

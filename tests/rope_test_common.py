@@ -48,7 +48,8 @@ def rope_ref_single(vec: np.ndarray, pos: float, base: float = ROPE_FREQ_BASE) -
     return out
 
 
-def check_token(
+# 检查 单个 TOKEN，如Decode
+def check_single_token(
     input_np: np.ndarray,
     output_np: np.ndarray,
     pos_np: np.ndarray,
@@ -71,11 +72,14 @@ def check_token(
     return ok
 
 
+# test 多个TOKEN ，如 Prefill
 def check_all_tokens(
     input_np: np.ndarray, output_np: np.ndarray, pos_np: np.ndarray, *, verbose: bool = True
 ) -> bool:
     all_ok = True
     for h in range(ROPE_H):
         for t in range(ROPE_T):
-            all_ok = check_token(input_np, output_np, pos_np, h, t, verbose=verbose) and all_ok
+            all_ok = (
+                check_single_token(input_np, output_np, pos_np, h, t, verbose=verbose) and all_ok
+            )
     return all_ok

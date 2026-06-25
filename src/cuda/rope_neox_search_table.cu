@@ -1,3 +1,4 @@
+// Test only, not for producntion
 // RoPE NeoX 优化
 // Host 预计算 cos/sin cache，Device 访问cache即可
 #include <cmath>
@@ -8,7 +9,7 @@
 
 #define CUDA_ROPE_BLOCK_SIZE 256
 
-// 与rope_neox.cu 完全相同
+// 与rope_neox.cu 完全相同，用于 Llama/Qwen 模型配置，Neox 形式的全旋转
 template <bool forward>
 static __global__ void
 rope_neox_search_table_kernel(const float *x, float *dst, const int ne0, const int ne1,
@@ -35,7 +36,10 @@ rope_neox_search_table_kernel(const float *x, float *dst, const int ne0, const i
         return;
     }
 
+    // cos_sin 与num_head 无关，不同head共享 cos_sin，
+    // cos_sin 由 TOKEN id 和 fast维（即head_dim）确定
     const int half = n_dims / 2;
+    // 构建 Cache时，保证与search 时有相同的线性布局
     const int cs_idx = (id_token * half + id_fast) * 2;
     const float cos_theta = cos_sin[cs_idx + 0];
     float sin_theta = cos_sin[cs_idx + 1];
@@ -58,6 +62,7 @@ static void cache_sin_cos_table(const int *pos, const int n_tokens, const int n_
         for (int i = 0; i < half; ++i) {
             const float theta =
                 static_cast<float>(pos[t]) * powf(theta_scale, static_cast<float>(i));
+            // 保证 search 时，使用相同的线性布局
             const int idx = (t * half + i) * 2;
             cos_sin_host[idx + 0] = cosf(theta);
             cos_sin_host[idx + 1] = sinf(theta);
@@ -65,8 +70,9 @@ static void cache_sin_cos_table(const int *pos, const int n_tokens, const int n_
     }
 }
 
-extern "C" void rope_search_table(float *input, int *pos, float *output,
-                                  std::vector<int> &input_dims) {
+// 仅用于测试，不用于推理生产
+extern "C" void rope_with_search_table(float *input, int *pos, float *output,
+                                       std::vector<int> &input_dims) {
     const int64_t ne0_0 = input_dims[0];
     const int64_t ne0_1 = input_dims[1];
     const int64_t ne0_2 = input_dims[2];
@@ -86,6 +92,7 @@ extern "C" void rope_search_table(float *input, int *pos, float *output,
     const float theta_scale = powf(freq_base, -2.0f / static_cast<float>(n_dims));
 
     std::vector<float> cos_sin_host(static_cast<size_t>(cos_sin_elems));
+    // 生产过程中，只在模型加载时计算 Cache，常驻GPU
     cache_sin_cos_table(pos, n_tokens, n_dims, theta_scale, cos_sin_host.data());
 
     float *d_x = nullptr;
@@ -108,7 +115,7 @@ extern "C" void rope_search_table(float *input, int *pos, float *output,
     const dim3 blocks(static_cast<unsigned>(nr), static_cast<unsigned>(n_blocks_x), 1);
 
 #if defined(MY_OPS_DEBUG)
-    std::printf("rope_search_table launch: block=(%u,%u,%u), grid=(%u,%u,%u)\n", threads.x,
+    std::printf("rope_with_search_table launch: block=(%u,%u,%u), grid=(%u,%u,%u)\n", threads.x,
                 threads.y, threads.z, blocks.x, blocks.y, blocks.z);
     std::fflush(stdout);
 #endif
