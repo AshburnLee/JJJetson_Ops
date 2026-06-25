@@ -102,11 +102,12 @@ def pipeline_ref_from_gpu_dispatch(
 def test_moe_pipeline():
     rng = np.random.default_rng(42)
     dtype = np.float32
-
+    # (num_tokens, top_k, hidden_size, intermediate_size, num_experts)
     cases = [
         (5, 2, 4, 2, 3),
         # (5, 2, 4, 8, 3),
         # (12, 2, 16, 32, 5),
+        # (4, 8, 256, 96, 128)
     ]
 
     for num_tokens, top_k, hidden_size, intermediate_size, num_experts in cases:

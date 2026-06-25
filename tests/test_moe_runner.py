@@ -7,11 +7,12 @@ def test_moe_runner():
     rng = np.random.default_rng(11)
     dtype = np.float32
 
-    num_tokens = 5
-    top_k = 2
-    hidden_size = 4
-    intermediate_size = 2
-    num_experts = 4
+    # Qwen3-30B-A3B MoE block size, reduce size for avoid OOM
+    num_tokens = 1  # 4 / 4
+    top_k = 8
+    hidden_size = 256  # 2048 / 8
+    intermediate_size = 96  # 768 / 8
+    num_experts = 128
 
     x = rng.standard_normal((num_tokens, hidden_size)).astype(dtype)
     logits = rng.standard_normal((num_tokens, num_experts)).astype(dtype)
