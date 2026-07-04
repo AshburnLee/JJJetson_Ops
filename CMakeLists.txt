@@ -42,5 +42,6 @@ file(MAKE_DIRECTORY "${MY_OPS_PYTHON_OUTPUT_DIR}")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${MY_OPS_PYTHON_OUTPUT_DIR}")
 
 add_subdirectory(src/cuda)
+add_subdirectory(src/model)
 add_subdirectory(src/engine)
 add_subdirectory(src/bindings)

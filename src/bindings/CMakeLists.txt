@@ -65,6 +65,7 @@ set_python_module_props(rope_search_table_me)
 add_library(rope_global_cache_me MODULE
   rope_neox_global_cache_binding.cpp
   $<TARGET_OBJECTS:rope_global_cache_cuda>
+  $<TARGET_OBJECTS:rope_model>
 )
 
 target_link_libraries(rope_global_cache_me PRIVATE
