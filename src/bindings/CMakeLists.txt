@@ -334,6 +334,20 @@ target_link_libraries(rms_norm_me PRIVATE
 
 set_python_module_props(rms_norm_me)
 
+add_library(layer_norm_me MODULE
+  layer_norm_binding.cpp
+  $<TARGET_OBJECTS:layer_norm_cuda>
+)
+
+target_link_libraries(layer_norm_me PRIVATE
+  pybind11::module
+  ${Python3_LIBRARIES}
+  cuda
+  cudart
+)
+
+set_python_module_props(layer_norm_me)
+
 # Debug 构建时：对所有 *_me 模块统一开启可选调试/可观测性代码路径
 if(CMAKE_BUILD_TYPE MATCHES "Debug")
   foreach(t gated_unary_me
@@ -349,7 +363,8 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
             moe_runner_me
             moe_pipeline_me
             roll_me
-            rms_norm_me)
+            rms_norm_me
+            layer_norm_me)
     target_compile_definitions(${t} PRIVATE MY_OPS_DEBUG=1)
   endforeach()
 endif()

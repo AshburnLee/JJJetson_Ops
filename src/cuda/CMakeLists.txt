@@ -56,12 +56,17 @@ add_library(rms_norm_cuda OBJECT
   rms_norm.cu
 )
 
+add_library(layer_norm_cuda OBJECT
+  layer_norm.cu
+)
+
 foreach(t gated_unary_cuda
           rope_cuda rope_search_table_cuda rope_global_cache_cuda q8_1_cuda mm_q4_0_q8_1_cuda
           cpy_continue_cuda
           cpy_transpose_cuda
           roll_cuda
-          rms_norm_cuda)
+          rms_norm_cuda
+          layer_norm_cuda)
   set_target_properties(${t} PROPERTIES
     POSITION_INDEPENDENT_CODE ON
   )
