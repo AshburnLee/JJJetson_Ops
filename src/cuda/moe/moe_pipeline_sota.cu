@@ -1,6 +1,7 @@
 // Full MoE pipeline (sota): top-k -> dispatch_sota -> grouped GEMM x3 -> SwiGLU -> combine_sota
 #include "moe_pipeline_sota.h"
 #include "cuda_utils.cuh"
+#include "swiglu.h"
 
 extern "C" void moe_top_k_launch_cuda(cudaStream_t stream, const float *d_logits, float *d_weights,
                                       int *d_expert_ids, int num_tokens, int num_experts,
@@ -27,10 +28,6 @@ extern "C" void moe_combine_sota_launch_cuda(cudaStream_t stream, const float *d
                                              int num_tokens, int hidden_size, int top_k);
 
 namespace {
-
-static __device__ __forceinline__ float silu_f(float x) {
-    return x * (1.0f / (1.0f + expf(-x)));
-}
 
 __device__ int expert_id_for_permuted_row(const int *expert_offsets, int num_experts, int row) {
     int lo = 0;
@@ -76,14 +73,6 @@ static void moe_grouped_gemm_nt_launch_cuda(cudaStream_t stream, const float *d_
     moe_grouped_gemm_nt_kernel<<<num_rows, threads, 0, stream>>>(
         d_permuted_x, d_weight, d_out, d_expert_offsets, num_experts, num_rows, in_dim, out_dim);
     LAUNCH_CHECK();
-}
-
-__global__ void moe_swiglu_silu_mul_kernel(const float *gate, const float *up, float *mid,
-                                           int n_elem) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n_elem) {
-        mid[i] = silu_f(gate[i]) * up[i];
-    }
 }
 
 } // namespace
@@ -194,11 +183,7 @@ extern "C" void moe_pipeline_sota_forward_device(void *stream, MoePipelineSotaBu
     moe_grouped_gemm_nt_launch_cuda(s, buffers->d_permuted_x, buffers->d_w_up, buffers->d_up,
                                     buffers->d_expert_offsets, num_experts, R, H, I);
 
-    const int silu_threads = 256;
-    const int silu_blocks = (R * I + silu_threads - 1) / silu_threads;
-    moe_swiglu_silu_mul_kernel<<<silu_blocks, silu_threads, 0, s>>>(buffers->d_gate, buffers->d_up,
-                                                                    buffers->d_mid, R * I);
-    LAUNCH_CHECK();
+    swiglu_silu_mul_launch_device(s, buffers->d_gate, buffers->d_up, buffers->d_mid, R * I);
 
     moe_grouped_gemm_nt_launch_cuda(s, buffers->d_mid, buffers->d_w_down, buffers->d_expert_out,
                                     buffers->d_expert_offsets, num_experts, R, I, H);

@@ -239,6 +239,7 @@ set_python_module_props(moe_combine_sota_me)
 add_library(moe_pipeline_sota_me MODULE
   moe_pipeline_sota_binding.cpp
   $<TARGET_OBJECTS:moe_pipeline_sota_cuda>
+  $<TARGET_OBJECTS:swiglu_cuda>
   $<TARGET_OBJECTS:moe_top_k_cuda>
   $<TARGET_OBJECTS:moe_dispatch_sota_cuda>
   $<TARGET_OBJECTS:moe_combine_sota_cuda>
@@ -257,6 +258,7 @@ add_library(moe_cuda_graph_instance_container_me MODULE
   moe_cuda_graph_instance_container_binding.cpp
   $<TARGET_OBJECTS:moe_engine>
   $<TARGET_OBJECTS:moe_pipeline_sota_cuda>
+  $<TARGET_OBJECTS:swiglu_cuda>
   $<TARGET_OBJECTS:moe_top_k_cuda>
   $<TARGET_OBJECTS:moe_dispatch_sota_cuda>
   $<TARGET_OBJECTS:moe_combine_sota_cuda>
@@ -275,6 +277,7 @@ add_library(moe_runner_me MODULE
   moe_runner_binding.cpp
   $<TARGET_OBJECTS:moe_engine>
   $<TARGET_OBJECTS:moe_pipeline_sota_cuda>
+  $<TARGET_OBJECTS:swiglu_cuda>
   $<TARGET_OBJECTS:moe_top_k_cuda>
   $<TARGET_OBJECTS:moe_dispatch_sota_cuda>
   $<TARGET_OBJECTS:moe_combine_sota_cuda>
@@ -292,6 +295,7 @@ set_python_module_props(moe_runner_me)
 add_library(moe_pipeline_me MODULE
   moe_pipeline_binding.cpp
   $<TARGET_OBJECTS:moe_pipeline_cuda>
+  $<TARGET_OBJECTS:swiglu_cuda>
   $<TARGET_OBJECTS:moe_dispatch_cuda>
   $<TARGET_OBJECTS:moe_combine_cuda>
 )
@@ -362,6 +366,38 @@ target_link_libraries(rms_norm_fused_add_me PRIVATE
 
 set_python_module_props(rms_norm_fused_add_me)
 
+add_library(linear_me MODULE
+  linear_binding.cpp
+  $<TARGET_OBJECTS:linear_cuda>
+)
+
+target_link_libraries(linear_me PRIVATE
+  pybind11::module
+  ${Python3_LIBRARIES}
+  CUDA::cublas
+  cuda
+  cudart
+)
+
+set_python_module_props(linear_me)
+
+add_library(transformer_runner_me MODULE
+  transformer_runner_binding.cpp
+  $<TARGET_OBJECTS:transformer_engine>
+  $<TARGET_OBJECTS:linear_cuda>
+  $<TARGET_OBJECTS:swiglu_cuda>
+)
+
+target_link_libraries(transformer_runner_me PRIVATE
+  pybind11::module
+  ${Python3_LIBRARIES}
+  CUDA::cublas
+  cuda
+  cudart
+)
+
+set_python_module_props(transformer_runner_me)
+
 # Debug 构建时：对所有 *_me 模块统一开启可选调试/可观测性代码路径
 if(CMAKE_BUILD_TYPE MATCHES "Debug")
   foreach(t gated_unary_me
@@ -379,7 +415,9 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
             roll_me
             rms_norm_me
             layer_norm_me
-            rms_norm_fused_add_me)
+            rms_norm_fused_add_me
+            linear_me
+            transformer_runner_me)
     target_compile_definitions(${t} PRIVATE MY_OPS_DEBUG=1)
   endforeach()
 endif()

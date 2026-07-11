@@ -64,6 +64,14 @@ add_library(rms_norm_fused_add_cuda OBJECT
   rms_norm_fused_add.cu
 )
 
+add_library(linear_cuda OBJECT
+  linear.cu
+)
+
+add_library(swiglu_cuda OBJECT
+  swiglu.cu
+)
+
 foreach(t gated_unary_cuda
           rope_cuda rope_search_table_cuda rope_global_cache_cuda q8_1_cuda mm_q4_0_q8_1_cuda
           cpy_continue_cuda
@@ -71,7 +79,9 @@ foreach(t gated_unary_cuda
           roll_cuda
           rms_norm_cuda
           layer_norm_cuda
-          rms_norm_fused_add_cuda)
+          rms_norm_fused_add_cuda
+          linear_cuda
+          swiglu_cuda)
   set_target_properties(${t} PROPERTIES
     POSITION_INDEPENDENT_CODE ON
   )
@@ -84,3 +94,5 @@ foreach(t gated_unary_cuda
     target_compile_definitions(${t} PRIVATE MY_OPS_DEBUG=1)
   endif()
 endforeach()
+
+target_link_libraries(linear_cuda PRIVATE CUDA::cublas)

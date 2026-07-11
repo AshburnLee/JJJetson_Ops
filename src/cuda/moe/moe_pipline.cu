@@ -4,6 +4,7 @@
 
 #include "cublas_utils.cuh"
 #include "cuda_utils.cuh"
+#include "swiglu.h"
 
 extern "C" void moe_dispatch_launch_cuda(cudaStream_t stream, const float *d_x,
                                          const int *d_expert_ids, int num_tokens, int top_k,
@@ -15,18 +16,6 @@ extern "C" void moe_combine_launch_cuda(cudaStream_t stream, const float *d_expe
                                         const int *d_source_token, const int *d_source_k,
                                         const float *d_route_weights, float *d_y, int num_routes,
                                         int hidden_size, int top_k);
-
-static __device__ __forceinline__ float silu_f(float x) {
-    return x * (1.0f / (1.0f + expf(-x)));
-}
-
-static __global__ void moe_swiglu_silu_mul_kernel(const float *gate, const float *up, float *mid,
-                                                  int n_elem) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n_elem) {
-        mid[i] = silu_f(gate[i]) * up[i];
-    }
-}
 
 static void moe_pipeline_forward_cublas_device(
     cudaStream_t stream, cublasHandle_t handle, const float *d_x, const int *d_expert_ids,
@@ -71,10 +60,7 @@ static void moe_pipeline_forward_cublas_device(
                                  &beta, Ue, I));
     }
 
-    const int threads = 256;
-    const int blocks_silu = (R * I + threads - 1) / threads;
-    moe_swiglu_silu_mul_kernel<<<blocks_silu, threads, 0, stream>>>(d_gate, d_up, d_mid, R * I);
-    LAUNCH_CHECK();
+    swiglu_silu_mul_launch_device(stream, d_gate, d_up, d_mid, R * I);
 
     for (int e = 0; e < num_experts; ++e) {
         const int start = h_off_host[e];
