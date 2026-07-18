@@ -68,6 +68,10 @@ add_library(linear_cuda OBJECT
   linear.cu
 )
 
+add_library(kv_cache_cuda OBJECT
+  kv_cache.cu
+)
+
 add_library(swiglu_cuda OBJECT
   swiglu.cu
 )
@@ -81,6 +85,7 @@ foreach(t gated_unary_cuda
           layer_norm_cuda
           rms_norm_fused_add_cuda
           linear_cuda
+          kv_cache_cuda
           swiglu_cuda)
   set_target_properties(${t} PROPERTIES
     POSITION_INDEPENDENT_CODE ON

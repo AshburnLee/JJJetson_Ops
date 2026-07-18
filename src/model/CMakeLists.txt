@@ -1,5 +1,6 @@
 add_library(rope_model OBJECT
   rope_cossin_cache.cpp
+  kv_cache.cpp
 )
 
 target_link_libraries(rope_model PRIVATE CUDA::cudart)
