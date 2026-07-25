@@ -1,4 +1,4 @@
-// Test only, not for producntion
+// ======================= Test only, not for producntion ======================
 // RoPE NeoX 优化
 // Host 预计算 cos/sin cache，Device 访问cache即可
 #include <cmath>

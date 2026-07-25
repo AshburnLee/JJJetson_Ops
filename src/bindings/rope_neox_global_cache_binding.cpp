@@ -1,3 +1,4 @@
+#include "rope.h"
 #include "rope_cossin_cache.h"
 
 #include <pybind11/numpy.h>
@@ -35,20 +36,17 @@ PYBIND11_MODULE(rope_global_cache_me, m) {
         py::arg("cache_handle"), "Destroy model-owned cos/sin cache");
 
     m.def(
-        "RoPE",
+        "forward_device",
         [](uintptr_t cache_handle, py::array_t<float> input, py::array_t<int> pos,
-           py::array_t<float> output, std::vector<int> dims) {
+           py::array_t<float> output, int head_dim, int num_heads, int num_tokens, int batch) {
+            std::vector<int> dims = {head_dim, num_heads, num_tokens, batch};
             auto *cache = reinterpret_cast<RopeCosSinCache *>(cache_handle);
-            auto input_buf = input.request();
-            auto pos_buf = pos.request();
-            auto output_buf = output.request();
-
-            float *input_ptr = static_cast<float *>(input_buf.ptr);
-            int *pos_ptr = static_cast<int *>(pos_buf.ptr);
-            float *output_ptr = static_cast<float *>(output_buf.ptr);
-
+            float *input_ptr = static_cast<float *>(input.request().ptr);
+            int *pos_ptr = static_cast<int *>(pos.request().ptr);
+            float *output_ptr = static_cast<float *>(output.request().ptr);
             rope_with_global_cossin_cache(input_ptr, pos_ptr, output_ptr, dims, cache);
         },
         py::arg("cache_handle"), py::arg("input"), py::arg("pos"), py::arg("output"),
-        py::arg("input_dims"), "RoPE forward using model-owned global cos/sin cache");
+        py::arg("head_dim"), py::arg("num_heads"), py::arg("num_tokens"), py::arg("batch"),
+        "Explicit-shape RoPE via production rope_neox_forward_device (host I/O for testing)");
 }
