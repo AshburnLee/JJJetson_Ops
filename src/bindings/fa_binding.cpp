@@ -23,6 +23,10 @@ extern "C" void fa_one_pass_parallel_double_buffer(const uint16_t *q_host, const
 extern "C" void fa(const uint16_t *q_host, const uint16_t *k_host, const uint16_t *v_host,
                    float *dst_host, float scale);
 
+extern "C" void fa_double_buffer_forward_host(const FaDoubleBufferShape *shape,
+                                              const uint16_t *q_host, const uint16_t *k_host,
+                                              const uint16_t *v_host, float *dst_host, float scale);
+
 #if defined(MY_OPS_DEBUG)
 extern "C" void fa_debug(const uint16_t *q_host, const uint16_t *k_host, const uint16_t *v_host,
                          float *dst_host, float scale, float *m_host, float *l_host, float *s_host,
@@ -67,6 +71,28 @@ void fa_one_pass_parallel_py(py::buffer q, py::buffer k, py::buffer v, py::array
 void fa_double_buffer_py(py::buffer q, py::buffer k, py::buffer v, py::array_t<float> dst,
                          float scale) {
     fa_launch_impl(fa_one_pass_parallel_double_buffer, q, k, v, dst, scale);
+}
+
+void fa_double_buffer_shape_py(py::buffer q, py::buffer k, py::buffer v, py::array_t<float> dst,
+                               float scale) {
+    auto q_buf = q.request();
+    auto k_buf = k.request();
+    auto v_buf = v.request();
+    auto dst_buf = dst.request();
+    if (q_buf.ndim != 4 || k_buf.ndim != 4 || v_buf.ndim != 4) {
+        throw std::runtime_error("Q/K/V must be 4-D col-major [head_dim, tokens, heads, 1]");
+    }
+
+    FaDoubleBufferShape shape{};
+    shape.head_dim = static_cast<int>(q_buf.shape[0]);
+    shape.num_q_tokens = static_cast<int>(q_buf.shape[1]);
+    shape.num_q_heads = static_cast<int>(q_buf.shape[2]);
+    shape.num_kv_tokens = static_cast<int>(k_buf.shape[1]);
+    shape.num_kv_heads = static_cast<int>(k_buf.shape[2]);
+
+    fa_double_buffer_forward_host(
+        &shape, static_cast<const uint16_t *>(q_buf.ptr), static_cast<const uint16_t *>(k_buf.ptr),
+        static_cast<const uint16_t *>(v_buf.ptr), static_cast<float *>(dst_buf.ptr), scale);
 }
 
 void fa_py(py::buffer q, py::buffer k, py::buffer v, py::array_t<float> dst, float scale) {
@@ -127,7 +153,11 @@ PYBIND11_MODULE(fa_me, m) {
     // 测试入口：host H2D -> fa_double_buffer_forward_device -> D2H
     m.def("forward_device", &fa_double_buffer_py, py::arg("q"), py::arg("k"), py::arg("v"),
           py::arg("dst"), py::arg("scale"),
-          "Production FA via fa_double_buffer_forward_device (host wrapper for testing)");
+          "Production FA via fa_double_buffer_forward_device (legacy 128x13x16 shape)");
+
+    m.def("forward_device_shape", &fa_double_buffer_shape_py, py::arg("q"), py::arg("k"),
+          py::arg("v"), py::arg("dst"), py::arg("scale"),
+          "Production FA; infer FaDoubleBufferShape from Q/K/V array dims");
 
 #if defined(MY_OPS_DEBUG)
     m.def("launch_fa_debug_ml", &fa_debug_py, "One-pass kernel with m/l/S dumps (debug build)",

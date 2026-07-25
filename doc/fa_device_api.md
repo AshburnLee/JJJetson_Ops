@@ -2,18 +2,23 @@
 
 Flash Attention **生产路径**：`fa_double_buffer_forward_device`（`include/fa.h`，实现 `src/cuda/fa/fa_double_buffer.cu`）。
 
-`fa/` 下其余 kernel（`fa_one_pass_parallel`、`fa_one_pass_parallel_tc`、`fa_one_pass_parallel_tc_true` 等）为中间优化实验，**engine 勿用**。
+`fa/` 下其余 kernel 为中间优化实验，**engine 勿用**。
 
-## 固定形状（Phase 1 kernel 常量）
+## Layout (col-major)
 
-与 `tests/fa_test_common.py` 一致：
+| Tensor | dtype | shape |
+|--------|-------|-------|
+| Q | fp16 | [head_dim, num_q_tokens, num_q_heads, 1] |
+| K/V | fp16 | [head_dim, num_kv_tokens, num_kv_heads, 1] |
+| dst | fp32 | [head_dim, num_q_tokens, num_q_heads, 1] |
 
-| Tensor | dtype | layout (col-major) |
-|--------|-------|-------------------|
-| Q | fp16 | [128, 13, 16, 1] |
-| K | fp16 | [128, 256, 8, 1] |
-| V | fp16 | [128, 256, 8, 1] |
-| dst | fp32 | [128, 13, 16, 1] |
+## 约束（Phase 1）
+
+- `head_dim` ∈ {32, 64, 128}（16 的倍数，WMMA）
+- `num_q_heads == 2 * num_kv_heads`（每 block 2 个 Q head）
+- `1 <= num_q_tokens <= 16`
+- `num_kv_tokens >= 1`（末 tile 自动 mask）
+- Q/K/V fp16；scale 通常为 `1/sqrt(head_dim)`
 
 ## 数据流
 
@@ -21,34 +26,25 @@ Flash Attention **生产路径**：`fa_double_buffer_forward_device`（`include/
 Linear(Q/K/V)  ──► fp16 device Q/K/V
     │
     ▼
-fa_double_buffer_forward_device(stream, d_q, d_k, d_v, d_dst, scale)
-    │  WMMA + K/V 双缓冲 cp.async；8 blocks × 2 Q-heads
+fa_double_buffer_forward_device(stream, &shape, d_q, d_k, d_v, d_dst, scale)
+    │  WMMA + K/V 双缓冲 cp.async；num_kv_heads blocks × 2 Q-heads
     ▼
 d_dst (fp32) ──► Linear(O)
 ~~~
-
-## 接入 TransformerRunner（待办）
-
-~~~
-RoPE(Q,K) in-place
-    │
-    ├─ 当前：D2D 占位 d_q ──► d_attn_out
-    │
-    └─ 目标：fa_double_buffer_forward_device + KV cache 读写
-              │
-              ▼
-         Linear(O)
-~~~
-
-**阻塞点**：现有 FA kernel 固定 head_dim=128、fp16 QKV；`test_transformer_runner` 使用 head_dim=32、fp32。接入 Runner 前需泛化 FA 或增加 FA 对齐的集成 profile。
 
 ## API
 
 | 函数 | 用途 |
 |------|------|
-| `fa_double_buffer_forward_device` | 生产：device 上 Q/K/V in，dst out |
-| `fa_one_pass_parallel_double_buffer` | 测试：host H2D/D2H 包装 |
-| `fa()` / `fa_me.launch_fa` | 默认生产 alias |
-| `fa_me.forward_device` | Python 测试入口 |
+| `FaDoubleBufferShape` | head_dim / tokens / heads |
+| `fa_double_buffer_validate_shape` | host 校验 |
+| `fa_double_buffer_forward_device` | 生产 device 入口 |
+| `fa_double_buffer_forward_host` | 测试 H2D/D2H |
+| `fa_me.forward_device_shape` | Python：从 Q/K/V shape 推断并调用 |
 
-scale 通常为 `1/sqrt(head_dim)`。
+Legacy 固定 128×13×16 / KV256 仍可用 `fa_me.launch_fa` / `forward_device`。
+
+## 待办（Runner 接入）
+
+- fp32 Q/K/V 与 Linear 输出对接（cast 或 fp32 路径）
+- KV cache 读写与 decode 变长 seq
