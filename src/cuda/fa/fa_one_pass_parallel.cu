@@ -5,6 +5,8 @@
 #include "cuda_utils.cuh"
 #include "device_hw_info.cuh"
 
+// 【中间优化版本，非 engine 生产路径】生产 FA 见 fa_double_buffer.cu
+// deprecated
 // 16-block：每 block 1 个 Q head，相邻 blockIdx 共享 KV head（blockIdx.x/2）。
 __global__ void
 fa_kernel_one_pass_parallel(const half *__restrict__ Q, const half *__restrict__ K,
@@ -209,6 +211,7 @@ fa_kernel_one_pass_parallel(const half *__restrict__ Q, const half *__restrict__
     (void)scale;
 }
 
+// 仅测试：host H2D -> kernel launch -> D2H
 extern "C" void fa_one_pass_parallel(const uint16_t *q_host, const uint16_t *k_host,
                                      const uint16_t *v_host, float *dst_host, float scale) {
     // q: (head_dim, n_token, n_qhead)    = (128,13,16)
@@ -277,10 +280,4 @@ extern "C" void fa_one_pass_parallel(const uint16_t *q_host, const uint16_t *k_h
     CUDA_CHECK(cudaFreeAsync(d_k, nullptr));
     CUDA_CHECK(cudaFreeAsync(d_v, nullptr));
     CUDA_CHECK(cudaFreeAsync(d_dst, nullptr));
-}
-
-// 默认call最高新能的路径
-extern "C" void fa(const uint16_t *q_host, const uint16_t *k_host, const uint16_t *v_host,
-                   float *dst_host, float scale) {
-    fa_one_pass_parallel(q_host, k_host, v_host, dst_host, scale);
 }

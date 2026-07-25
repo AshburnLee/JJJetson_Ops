@@ -111,6 +111,7 @@ add_library(fa_me MODULE
   $<TARGET_OBJECTS:fa_two_pass_cuda>
   $<TARGET_OBJECTS:fa_one_pass_cuda>
   $<TARGET_OBJECTS:fa_one_pass_parallel_cuda>
+  $<TARGET_OBJECTS:fa_double_buffer_cuda>
 )
 
 target_link_libraries(fa_me PRIVATE

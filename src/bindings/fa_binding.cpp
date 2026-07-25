@@ -3,6 +3,8 @@
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 
+#include "fa.h"
+
 namespace py = pybind11;
 
 extern "C" void fa_two_pass(const uint16_t *q_host, const uint16_t *k_host, const uint16_t *v_host,
@@ -13,6 +15,10 @@ extern "C" void fa_one_pass(const uint16_t *q_host, const uint16_t *k_host, cons
 
 extern "C" void fa_one_pass_parallel(const uint16_t *q_host, const uint16_t *k_host,
                                      const uint16_t *v_host, float *dst_host, float scale);
+
+extern "C" void fa_one_pass_parallel_double_buffer(const uint16_t *q_host, const uint16_t *k_host,
+                                                   const uint16_t *v_host, float *dst_host,
+                                                   float scale);
 
 extern "C" void fa(const uint16_t *q_host, const uint16_t *k_host, const uint16_t *v_host,
                    float *dst_host, float scale);
@@ -58,6 +64,11 @@ void fa_one_pass_parallel_py(py::buffer q, py::buffer k, py::buffer v, py::array
     fa_launch_impl(fa_one_pass_parallel, q, k, v, dst, scale);
 }
 
+void fa_double_buffer_py(py::buffer q, py::buffer k, py::buffer v, py::array_t<float> dst,
+                         float scale) {
+    fa_launch_impl(fa_one_pass_parallel_double_buffer, q, k, v, dst, scale);
+}
+
 void fa_py(py::buffer q, py::buffer k, py::buffer v, py::array_t<float> dst, float scale) {
     fa_launch_impl(fa, q, k, v, dst, scale);
 }
@@ -98,15 +109,25 @@ void fa_debug_py(py::buffer q, py::buffer k, py::buffer v, py::array_t<float> ds
 #endif
 
 PYBIND11_MODULE(fa_me, m) {
-    m.doc() = "CUDA fused attention (fa): two-pass / one-pass / one-pass parallel";
-    m.def("launch_fa_two_pass", &fa_two_pass_py, "Two-pass KV exact attention", py::arg("q"),
-          py::arg("k"), py::arg("v"), py::arg("dst"), py::arg("scale"));
-    m.def("launch_fa_one_pass", &fa_one_pass_py, "Fused streaming, 8 blocks (2 Q-heads/block)",
+    m.doc() =
+        "CUDA fused attention: production path fa_double_buffer; other launch_* are experimental";
+    m.def("launch_fa_two_pass", &fa_two_pass_py, "Two-pass KV exact attention (experimental)",
           py::arg("q"), py::arg("k"), py::arg("v"), py::arg("dst"), py::arg("scale"));
-    m.def("launch_fa_one_pass_parallel", &fa_one_pass_parallel_py, "Fused streaming, 16 blocks",
+    m.def("launch_fa_one_pass", &fa_one_pass_py, "Fused streaming, 8 blocks (experimental)",
           py::arg("q"), py::arg("k"), py::arg("v"), py::arg("dst"), py::arg("scale"));
-    m.def("launch_fa", &fa_py, "Same as launch_fa_one_pass_parallel", py::arg("q"), py::arg("k"),
+    m.def("launch_fa_one_pass_parallel", &fa_one_pass_parallel_py,
+          "Fused streaming, 16 blocks (experimental)", py::arg("q"), py::arg("k"), py::arg("v"),
+          py::arg("dst"), py::arg("scale"));
+    m.def("launch_fa_double_buffer", &fa_double_buffer_py,
+          "Production FA: WMMA + K/V double buffer", py::arg("q"), py::arg("k"), py::arg("v"),
+          py::arg("dst"), py::arg("scale"));
+    m.def("launch_fa", &fa_py, "Production FA alias (fa_double_buffer)", py::arg("q"), py::arg("k"),
           py::arg("v"), py::arg("dst"), py::arg("scale"));
+
+    // 测试入口：host H2D -> fa_double_buffer_forward_device -> D2H
+    m.def("forward_device", &fa_double_buffer_py, py::arg("q"), py::arg("k"), py::arg("v"),
+          py::arg("dst"), py::arg("scale"),
+          "Production FA via fa_double_buffer_forward_device (host wrapper for testing)");
 
 #if defined(MY_OPS_DEBUG)
     m.def("launch_fa_debug_ml", &fa_debug_py, "One-pass kernel with m/l/S dumps (debug build)",

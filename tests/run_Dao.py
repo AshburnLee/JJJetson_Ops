@@ -45,7 +45,7 @@ def main() -> None:
         "--repeats-after-warmup",
         type=int,
         default=1,
-        help="warmup 之后执行 flash_attn_func 的次数；NCU 抓 kernel 时可设为 1",
+        help="Number of flash_attn_func runs after warmup; use 1 when capturing with NCU",
     )
     args = p.parse_args()
 

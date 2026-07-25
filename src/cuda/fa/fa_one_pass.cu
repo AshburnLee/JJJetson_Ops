@@ -4,6 +4,7 @@
 #include "cuda_fp16.h"
 #include "cuda_utils.cuh"
 
+// deprecated
 // 单遍 streaming：每 block 2 个 Q head，对应 1 个 KV head（GQA 16Q/8KV）。
 __global__ void
 fa_kernel_one_pass(const half *__restrict__ Q, const half *__restrict__ K,

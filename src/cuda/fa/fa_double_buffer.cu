@@ -1,3 +1,4 @@
+// ★ 生产 FA kernel（engine 唯一选用）
 // 使用双缓冲：
 // 当前 tile 的 V cp.async 与 QK WMMA 异步，隐藏 load V
 // 下一 tile 的 K prefetch 与 softmax 异步，隐藏 load K
@@ -9,6 +10,7 @@
 #include <cstdint>
 #include "cuda_fp16.h"
 #include "cuda_utils.cuh"
+#include "fa.h"
 
 namespace fa_db {
 
@@ -310,6 +312,62 @@ __global__ void __launch_bounds__(256, 4)
     (void)scale;
 }
 
+static void fa_double_buffer_launch_device(cudaStream_t stream, const half *d_q, const half *d_k,
+                                           const half *d_v, float *d_dst, float scale) {
+    cudaFuncAttributes attr{};
+    CUDA_CHECK(
+        cudaFuncGetAttributes(&attr, (const void *)fa_kernel_one_pass_parallel_double_buffer));
+    const size_t static_shmem = static_cast<size_t>(attr.sharedSizeBytes);
+    constexpr int kDefaultShmemPerBlock = 48 * 1024;
+
+    int max_optin = 0;
+    CUDA_CHECK(cudaDeviceGetAttribute(&max_optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, 0));
+
+    if (static_shmem > static_cast<size_t>(kDefaultShmemPerBlock)) {
+        const int excess =
+            static_cast<int>(static_shmem - static_cast<size_t>(kDefaultShmemPerBlock));
+        if (excess > 0) {
+            if (max_optin < static_cast<int>(static_shmem)) {
+                std::fprintf(stderr,
+                             "[fa_double_buffer_forward_device] static shared %zu B exceeds "
+                             "cudaDevAttrMaxSharedMemoryPerBlockOptin=%d; launch may fail.\n",
+                             static_shmem, max_optin);
+            }
+            CUDA_CHECK(cudaFuncSetAttribute((void *)fa_kernel_one_pass_parallel_double_buffer,
+                                            cudaFuncAttributeMaxDynamicSharedMemorySize, excess));
+        }
+    }
+
+    dim3 threads(32, 8, 1);
+    dim3 blocks(fa_db::KV_HEADS, 1, 1);
+
+    fa_kernel_one_pass_parallel_double_buffer<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst,
+                                                                              scale);
+    LAUNCH_CHECK();
+}
+
+// -========================-- 生产 (device) --========================-
+// ★ 业务入口 (对外声明见 include/fa.h)
+extern "C" int fa_double_buffer_forward_device(void *stream, const uint16_t *d_q,
+                                               const uint16_t *d_k, const uint16_t *d_v,
+                                               float *d_dst, float scale) {
+    if (stream == nullptr) {
+        std::fprintf(stderr, "fa_double_buffer_forward_device: stream is null\n");
+        return -1;
+    }
+    if (d_q == nullptr || d_k == nullptr || d_v == nullptr || d_dst == nullptr) {
+        std::fprintf(stderr, "fa_double_buffer_forward_device: d_q/d_k/d_v/d_dst is null\n");
+        return -1;
+    }
+
+    fa_double_buffer_launch_device(
+        static_cast<cudaStream_t>(stream), reinterpret_cast<const half *>(d_q),
+        reinterpret_cast<const half *>(d_k), reinterpret_cast<const half *>(d_v), d_dst, scale);
+    return 0;
+}
+
+// -======================== 仅测试用 ========================-
+// host fp16 H2D -> fa_double_buffer_forward_device -> D2H dst
 extern "C" void fa_one_pass_parallel_double_buffer(const uint16_t *q_host, const uint16_t *k_host,
                                                    const uint16_t *v_host, float *dst_host,
                                                    float scale) {
@@ -340,44 +398,31 @@ extern "C" void fa_one_pass_parallel_double_buffer(const uint16_t *q_host, const
     CUDA_CHECK(
         cudaMemcpyAsync(d_v, v_host, kv_elems * sizeof(half_t), cudaMemcpyHostToDevice, stream));
 
-    cudaFuncAttributes attr{};
-    CUDA_CHECK(
-        cudaFuncGetAttributes(&attr, (const void *)fa_kernel_one_pass_parallel_double_buffer));
-    const size_t static_shmem = static_cast<size_t>(attr.sharedSizeBytes);
-    constexpr int kDefaultShmemPerBlock = 48 * 1024;
-
-    int max_optin = 0;
-    CUDA_CHECK(cudaDeviceGetAttribute(&max_optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, 0));
-
-    if (static_shmem > static_cast<size_t>(kDefaultShmemPerBlock)) {
-        const int excess =
-            static_cast<int>(static_shmem - static_cast<size_t>(kDefaultShmemPerBlock));
-        if (excess > 0) {
-            if (max_optin < static_cast<int>(static_shmem)) {
-                std::fprintf(stderr,
-                             "[fa_one_pass_parallel_double_buffer] static shared %zu B exceeds "
-                             "cudaDevAttrMaxSharedMemoryPerBlockOptin=%d; launch may fail.\n",
-                             static_shmem, max_optin);
-            }
-            CUDA_CHECK(cudaFuncSetAttribute((void *)fa_kernel_one_pass_parallel_double_buffer,
-                                            cudaFuncAttributeMaxDynamicSharedMemorySize, excess));
-        }
+    if (fa_double_buffer_forward_device(stream, reinterpret_cast<const uint16_t *>(d_q),
+                                        reinterpret_cast<const uint16_t *>(d_k),
+                                        reinterpret_cast<const uint16_t *>(d_v), d_dst,
+                                        scale) != 0) {
+        CUDA_CHECK(cudaFreeAsync(d_q, stream));
+        CUDA_CHECK(cudaFreeAsync(d_k, stream));
+        CUDA_CHECK(cudaFreeAsync(d_v, stream));
+        CUDA_CHECK(cudaFreeAsync(d_dst, stream));
+        CUDA_CHECK(cudaStreamDestroy(stream));
+        return;
     }
-
-    dim3 threads(32, 8, 1);
-    dim3 blocks(KV_HEADS, 1, 1);
-
-    fa_kernel_one_pass_parallel_double_buffer<<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst,
-                                                                              scale);
-    LAUNCH_CHECK();
 
     CUDA_CHECK(cudaMemcpyAsync(dst_host, d_dst, dst_elems * sizeof(float), cudaMemcpyDeviceToHost,
                                stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
-    CUDA_CHECK(cudaStreamDestroy(stream));
 
-    CUDA_CHECK(cudaFreeAsync(d_q, nullptr));
-    CUDA_CHECK(cudaFreeAsync(d_k, nullptr));
-    CUDA_CHECK(cudaFreeAsync(d_v, nullptr));
-    CUDA_CHECK(cudaFreeAsync(d_dst, nullptr));
+    CUDA_CHECK(cudaFreeAsync(d_q, stream));
+    CUDA_CHECK(cudaFreeAsync(d_k, stream));
+    CUDA_CHECK(cudaFreeAsync(d_v, stream));
+    CUDA_CHECK(cudaFreeAsync(d_dst, stream));
+    CUDA_CHECK(cudaStreamDestroy(stream));
+}
+
+// 默认 launch_fa / engine 生产路径
+extern "C" void fa(const uint16_t *q_host, const uint16_t *k_host, const uint16_t *v_host,
+                   float *dst_host, float scale) {
+    fa_one_pass_parallel_double_buffer(q_host, k_host, v_host, dst_host, scale);
 }

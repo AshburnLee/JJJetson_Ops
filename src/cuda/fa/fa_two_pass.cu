@@ -4,6 +4,7 @@
 #include "cuda_fp16.h"
 #include "cuda_utils.cuh"
 
+// deprecated
 // Tensor 列主序。两遍 KV：先扫 K 更新全局 m/l，再扫 K+V 写输出。
 __global__ void
 fa_kernel_two_pass(const half *__restrict__ Q, const half *__restrict__ K,

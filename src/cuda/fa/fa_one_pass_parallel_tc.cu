@@ -5,6 +5,8 @@
 #include "cuda_fp16.h"
 #include "cuda_utils.cuh"
 
+// 【中间优化版本，非 engine 生产路径】生产 FA 见 fa_double_buffer.cu
+
 // deprecated
 
 // 与 fa_kernel_one_pass_parallel 对齐：grid (16,1,1)，block (32,4,1)，HEAD_DIM=128，Q 行数 13，KV

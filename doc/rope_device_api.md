@@ -21,7 +21,7 @@ Per forward step (prefill or decode)
 rope_neox_forward_device(stream, cache, d_in, d_out, d_pos, ...)
     │  kernel 查 d_cos_sin[pos[t]]
     ▼
-d_out  ──► Flash Attention (下一步接入)
+d_out  ──► Flash Attention（生产：`fa_double_buffer_forward_device`）
 ~~~
 
 ## 接入 TransformerRunner
@@ -33,7 +33,7 @@ hidden ──► Linear(Q/K/V)
               ├─► rope_neox_forward_device(K, in-place)
               │
               ▼
-         Attention 占位 (d_q ──D2D──► d_attn_out)
+         Attention 占位 (d_q ──D2D──► d_attn_out)  →  目标：fa_double_buffer_forward_device
               │
               ▼
          Linear(O) ──► FFN

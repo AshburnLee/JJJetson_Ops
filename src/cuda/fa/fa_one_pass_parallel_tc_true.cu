@@ -5,6 +5,8 @@
 #include "cuda_fp16.h"
 #include "cuda_utils.cuh"
 
+// 【中间优化版本，非 engine 生产路径】生产 FA 见 fa_double_buffer.cu
+// deprecated
 // 使用 Tensor core计算两段 mma
 
 namespace {

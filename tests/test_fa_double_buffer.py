@@ -1,4 +1,6 @@
-import fa_tc_me
+"""测试生产 FA：fa_double_buffer（WMMA + K/V 双缓冲）。"""
+
+import fa_me
 
 import fa_test_common as fc
 
@@ -6,7 +8,7 @@ import fa_test_common as fc
 def test_fa_double_buffer() -> None:
     seed = 2477
     Q, K, V = fc.random_fa_inputs(seed)
-    dst = fc.run_launcher(fa_tc_me.launch_fa_one_pass_parallel_double_buffer, Q, K, V, 1.0)
+    dst = fc.run_launcher(fa_me.launch_fa_double_buffer, Q, K, V, 1.0)
     dst_ref = fc.fa_ref_dst_only(Q, K, V)
     fc.assert_dst_close(f"double_buffer seed={seed}", dst, dst_ref)
     print("Passed")

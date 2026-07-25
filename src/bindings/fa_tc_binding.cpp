@@ -62,8 +62,8 @@ void fa_one_pass_parallel_double_buffer_py(py::buffer q, py::buffer k, py::buffe
 }
 
 PYBIND11_MODULE(fa_tc_me, m) {
-    m.doc() = "Fused attention one-pass parallel: launch_fa_one_pass_parallel_tc (WMMA); "
-              "launch_fa_one_pass_parallel_tc_true; launch_fa_one_pass_parallel_double_buffer; ";
+    m.doc() =
+        "FA experimental kernels (tc / tc_true / double_buffer); use fa_me for engine production";
     m.def("launch_fa_one_pass_parallel_tc", &fa_one_pass_parallel_tc_py, py::arg("q"), py::arg("k"),
           py::arg("v"), py::arg("dst"), py::arg("scale"));
     m.def("launch_fa_one_pass_parallel_tc_true", &fa_one_pass_parallel_tc_true_py, py::arg("q"),
