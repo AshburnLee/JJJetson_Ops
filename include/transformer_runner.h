@@ -2,6 +2,8 @@
 
 #include <stddef.h>
 
+#include "rope_cossin_cache.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -33,11 +35,13 @@ typedef struct TransformerRunnerForwardCtx {
     void *stream;
     const float *d_hidden_in;
     float *d_hidden_out;
+    const int *d_pos; // device，长度 num_tokens；绝对 token 位置
 } TransformerRunnerForwardCtx;
 
-// 7 个 Linear 权重一次性 H2D
+// max_seq_len / freq_base 用于创建 model 级 RopeCosSinCache
 TransformerRunner *transformer_runner_create(int hidden_size, int intermediate_size,
                                              int num_q_heads, int num_kv_heads, int head_dim,
+                                             int max_seq_len, float freq_base,
                                              const float *w_q_host, const float *w_k_host,
                                              const float *w_v_host, const float *w_o_host,
                                              const float *w_gate_host, const float *w_up_host,
@@ -50,22 +54,23 @@ void transformer_runner_destroy(TransformerRunner *runner);
 TransformerLayerLinearDeviceBuffers *transformer_runner_buffers_get(TransformerRunner *runner,
                                                                     int num_tokens);
 
-// 单层 7 个 Linear + SwiGLU：Q/K/V -> O -> gate/up -> silu(gate)*up -> down，
-// Attention 暂用 D2D 占位
+// 单层 Linear 链 + RoPE(Q,K) + Attention 占位 + FFN
 void transformer_layer_linears_forward_device(void *stream, void *cublas_handle,
                                               TransformerLayerLinearDeviceBuffers *buffers,
                                               const float *d_w_q, const float *d_w_k,
                                               const float *d_w_v, const float *d_w_o,
                                               const float *d_w_gate, const float *d_w_up,
-                                              const float *d_w_down);
+                                              const float *d_w_down,
+                                              const RopeCosSinCache *rope_cache, const int *d_pos,
+                                              int head_dim, int num_q_heads, int num_kv_heads);
 
 // 生产入口：ctx 中 d_hidden_in/out 已在 GPU，内部 D2D 拷贝后执行 7 Linear 链
 int transformer_runner_forward_device(TransformerRunner *runner,
                                       const TransformerRunnerForwardCtx *ctx);
 
-// 测试入口：host hidden H2D -> forward_device 链 -> D2H 写回 hidden_out_host
+// 测试入口：pos_offset 生成本步 d_pos = [offset, offset+num_tokens)
 int transformer_runner_test(TransformerRunner *runner, const float *hidden_in_host,
-                            float *hidden_out_host, int num_tokens);
+                            float *hidden_out_host, int num_tokens, int pos_offset);
 
 #ifdef __cplusplus
 }

@@ -1,5 +1,6 @@
 import linear_me
 import numpy as np
+import rope_global_cache_me
 import torch
 import transformer_runner_me
 
@@ -15,6 +16,8 @@ KV_DIM = NUM_KV_HEADS * HEAD_DIM
 NUM_TOKENS = 13
 BATCH = 1
 SEED = 24
+MAX_SEQ_LEN = 256
+ROPE_FREQ_BASE = 10000.0
 
 
 def _dims(in_features: int) -> list[int]:
@@ -32,8 +35,25 @@ def _silu_np(x: np.ndarray) -> np.ndarray:
     return out
 
 
-# 用 linear_me 组合（7 GEMM + SwiGLU 手动串联）与 Transformer 作为ref，
-# 每次 linear_me.linear 都需要 H2D，该函数仅仅作为 ref
+def _rope_qk_ref(q: np.ndarray, k: np.ndarray, pos_offset: int) -> tuple[np.ndarray, np.ndarray]:
+    pos = np.arange(pos_offset, pos_offset + NUM_TOKENS, dtype=np.int32)
+    q_out = np.zeros_like(q, order="F")
+    k_out = np.zeros_like(k, order="F")
+    cache = rope_global_cache_me.create_cossin_cache(MAX_SEQ_LEN, HEAD_DIM, ROPE_FREQ_BASE)
+    try:
+        rope_global_cache_me.forward_device(
+            cache, q, pos, q_out, HEAD_DIM, NUM_Q_HEADS, NUM_TOKENS, 1
+        )
+        rope_global_cache_me.forward_device(
+            cache, k, pos, k_out, HEAD_DIM, NUM_KV_HEADS, NUM_TOKENS, 1
+        )
+    finally:
+        rope_global_cache_me.destroy_cossin_cache(cache)
+    return q_out, k_out
+
+
+# 用 linear_me 手动串联 (Linear + RoPE + Attention占位 + FFN) 作为 ref；
+# 每次 linear_me.linear 都会 H2D，该函数仅作参考，不是生产路径
 def chain_linear_me_ref(
     hidden_np: np.ndarray,
     w_q: np.ndarray,
@@ -43,6 +63,7 @@ def chain_linear_me_ref(
     w_gate: np.ndarray,
     w_up: np.ndarray,
     w_down: np.ndarray,
+    pos_offset: int = 0,
 ) -> np.ndarray:
     q = np.zeros((Q_DIM, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
     k = np.zeros((KV_DIM, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
@@ -50,6 +71,8 @@ def chain_linear_me_ref(
     linear_me.linear(hidden_np, w_q, q, _dims(HIDDEN_SIZE), Q_DIM)
     linear_me.linear(hidden_np, w_k, k, _dims(HIDDEN_SIZE), KV_DIM)
     linear_me.linear(hidden_np, w_v, v, _dims(HIDDEN_SIZE), KV_DIM)
+
+    q, _k = _rope_qk_ref(q, k, pos_offset)
 
     h_mid = np.zeros((HIDDEN_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
     linear_me.linear(q, w_o, h_mid, _dims(Q_DIM), HIDDEN_SIZE)
@@ -89,6 +112,8 @@ def test_transformer_runner():
         NUM_Q_HEADS,
         NUM_KV_HEADS,
         HEAD_DIM,
+        MAX_SEQ_LEN,
+        ROPE_FREQ_BASE,
         w_q,
         w_k,
         w_v,
@@ -99,15 +124,14 @@ def test_transformer_runner():
     )  # 返回 handle
 
     output_me = np.zeros((HIDDEN_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
-    # test 入口 返回 output_me
-    # 返回handle 表示同一个 runner
-    transformer_runner_me.forward_host(runner, NUM_TOKENS, hidden_np, output_me)
-    transformer_runner_me.destroy_runner(runner)  # 返回handle 表示同一个runner
+    # test 入口：pos_offset=0 表示 prefill，pos=[0..T-1]
+    transformer_runner_me.forward_host(runner, NUM_TOKENS, 0, hidden_np, output_me)
+    transformer_runner_me.destroy_runner(runner)  # handle 表示同一个 runner
 
-    # trs runner vs linear chain 两种编排方式结果一致
-    ref_np = chain_linear_me_ref(hidden_np, w_q, w_k, w_v, w_o, w_gate, w_up, w_down)
+    # transformer_runner vs linear_me 手动链：两种编排方式结果应一致
+    ref_np = chain_linear_me_ref(hidden_np, w_q, w_k, w_v, w_o, w_gate, w_up, w_down, pos_offset=0)
     ok = utils.compare_np_torch(output_me, torch.from_numpy(ref_np), atol=1e-4, rtol=1e-4)
-    assert ok, "transformer_runner output differs from chained linear_me"
+    assert ok, "transformer_runner output differs from chained linear_me + RoPE ref"
     print("Passed")
 
 

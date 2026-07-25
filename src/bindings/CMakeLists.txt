@@ -386,6 +386,8 @@ add_library(transformer_runner_me MODULE
   $<TARGET_OBJECTS:transformer_engine>
   $<TARGET_OBJECTS:linear_cuda>
   $<TARGET_OBJECTS:swiglu_cuda>
+  $<TARGET_OBJECTS:rope_global_cache_cuda>
+  $<TARGET_OBJECTS:rope_model>
 )
 
 target_link_libraries(transformer_runner_me PRIVATE

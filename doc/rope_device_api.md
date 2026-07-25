@@ -4,7 +4,7 @@ NeoX RoPE 生产路径：`rope_neox_forward_device`（`include/rope.h`）。
 
 ## 数据流
 
-```
+~~~
 Model load
     │
     ▼
@@ -22,18 +22,25 @@ rope_neox_forward_device(stream, cache, d_in, d_out, d_pos, ...)
     │  kernel 查 d_cos_sin[pos[t]]
     ▼
 d_out  ──► Flash Attention (下一步接入)
-```
+~~~
 
-## 模块关系（与上、下游各一个模块的关系）
+## 接入 TransformerRunner
 
-```
-RopeCosSinCache          rope_neox_forward_device          TransformerRunner (待接)
- (model/session)    ◄───  (src/cuda/rope_neox_global_cache.cu) ───►  d_q / d_k buffers
-     │                              │
-     └── d_cos_sin ─────────────────┘
+~~~
+hidden ──► Linear(Q/K/V)
+              │
+              ├─► rope_neox_forward_device(Q, in-place)
+              ├─► rope_neox_forward_device(K, in-place)
+              │
+              ▼
+         Attention 占位 (d_q ──D2D──► d_attn_out)
+              │
+              ▼
+         Linear(O) ──► FFN
+~~~
 
-Python: rope_global_cache_me.forward_device  ──H2D/D2H──►  测试包装（非生产 I/O 路径）
-```
+Runner 在 create 时持有 `RopeCosSinCache`；ForwardCtx 需传入 device 侧 `d_pos`。
+测试入口 `forward_host(..., pos_offset)` 自动生成 pos = [offset, offset+T)。
 
 ## API
 

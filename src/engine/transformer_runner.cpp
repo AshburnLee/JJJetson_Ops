@@ -2,21 +2,27 @@
 
 #include <stdio.h>
 #include <unordered_map>
+#include <vector>
 
 #include "cublas_utils.cuh"
 #include "cuda_utils.h"
 #include "linear.h"
+#include "rope.h"
 #include "swiglu.h"
 
 // Transformer 调度器
 struct TransformerRunner {
     int hidden_size = 0;
     int intermediate_size = 0;
+    int head_dim = 0;
+    int num_q_heads = 0;
+    int num_kv_heads = 0;
     int q_dim = 0;
     int kv_dim = 0;
     cudaStream_t stream = nullptr;
     bool owns_stream = false;
     cublasHandle_t cublas_handle = nullptr;
+    RopeCosSinCache *rope_cache = nullptr;
 
     float *d_w_q = nullptr;
     float *d_w_k = nullptr;
@@ -29,6 +35,7 @@ struct TransformerRunner {
     // device buffer 由Runner 管理，按num_tokens 保存、查找，找不到才 cudamalloc
     // 保存的是Device的指针，避免了 每 次forward 前的 cudaMalloc
     std::unordered_map<int, TransformerLayerLinearDeviceBuffers *> buffers_by_tokens;
+    std::unordered_map<int, int *> d_pos_by_tokens;
 };
 
 static size_t transformer_col_major_bytes(int features, int num_tokens) {
@@ -106,11 +113,13 @@ static void transformer_runner_copy_output(cudaStream_t stream, float *d_hidden_
     }
 }
 
-// 生产 Transformer pipline (7 GEMM all on Device)
+// 生产时的一层 Transformer pipeline (Linear + RoPE + Attention 占位 + FFN，均在 Device)
 extern "C" void transformer_layer_linears_forward_device(
     void *stream, void *cublas_handle, TransformerLayerLinearDeviceBuffers *buffers,
     const float *d_w_q, const float *d_w_k, const float *d_w_v, const float *d_w_o,
-    const float *d_w_gate, const float *d_w_up, const float *d_w_down) {
+    const float *d_w_gate, const float *d_w_up, const float *d_w_down,
+    const RopeCosSinCache *rope_cache, const int *d_pos, int head_dim, int num_q_heads,
+    int num_kv_heads) {
     const int H = buffers->hidden_size;
     const int T = buffers->num_tokens;
     const int Q = buffers->q_dim;
@@ -121,7 +130,22 @@ extern "C" void transformer_layer_linears_forward_device(
     linear_forward_device(stream, cublas_handle, buffers->d_hidden, d_w_k, buffers->d_k, H, KV, T);
     linear_forward_device(stream, cublas_handle, buffers->d_hidden, d_w_v, buffers->d_v, H, KV, T);
 
+    if (rope_cache != nullptr && d_pos != nullptr) {
+        // RoPE 仅作用于 Q/K；V 不旋转。layout 与 d_q/d_k 的 [q_dim/kv_dim, T] col-major 兼容
+        if (rope_neox_forward_device(stream, rope_cache, buffers->d_q, buffers->d_q, d_pos,
+                                     head_dim, num_q_heads, T, 1) != 0) {
+            std::fprintf(stderr, "transformer_layer: rope on Q failed\n");
+            return;
+        }
+        if (rope_neox_forward_device(stream, rope_cache, buffers->d_k, buffers->d_k, d_pos,
+                                     head_dim, num_kv_heads, T, 1) != 0) {
+            std::fprintf(stderr, "transformer_layer: rope on K failed\n");
+            return;
+        }
+    }
+
     const size_t attn_bytes = transformer_col_major_bytes(Q, T);
+    // Attention 占位：暂 D2D 拷贝 d_q -> d_attn_out；后续替换为 FA + KV cache
     CUDA_CHECK(cudaMemcpyAsync(buffers->d_attn_out, buffers->d_q, attn_bytes,
                                cudaMemcpyDeviceToDevice, static_cast<cudaStream_t>(stream)));
 
@@ -142,11 +166,12 @@ extern "C" void transformer_layer_linears_forward_device(
 // Weight 在 Runner create时，H2D 一次，存入Runner中
 extern "C" TransformerRunner *
 transformer_runner_create(int hidden_size, int intermediate_size, int num_q_heads, int num_kv_heads,
-                          int head_dim, const float *w_q_host, const float *w_k_host,
-                          const float *w_v_host, const float *w_o_host, const float *w_gate_host,
-                          const float *w_up_host, const float *w_down_host, void *stream_in) {
+                          int head_dim, int max_seq_len, float freq_base, const float *w_q_host,
+                          const float *w_k_host, const float *w_v_host, const float *w_o_host,
+                          const float *w_gate_host, const float *w_up_host,
+                          const float *w_down_host, void *stream_in) {
     if (hidden_size <= 0 || intermediate_size <= 0 || num_q_heads <= 0 || num_kv_heads <= 0 ||
-        head_dim <= 0) {
+        head_dim <= 0 || max_seq_len <= 0) {
         std::fprintf(stderr, "transformer_runner_create: invalid shape\n");
         return nullptr;
     }
@@ -157,6 +182,9 @@ transformer_runner_create(int hidden_size, int intermediate_size, int num_q_head
     auto *runner = new TransformerRunner{};
     runner->hidden_size = hidden_size;
     runner->intermediate_size = intermediate_size;
+    runner->head_dim = head_dim;
+    runner->num_q_heads = num_q_heads;
+    runner->num_kv_heads = num_kv_heads;
     runner->q_dim = q_dim;
     runner->kv_dim = kv_dim;
     runner->owns_stream = (stream_in == nullptr);
@@ -166,6 +194,13 @@ transformer_runner_create(int hidden_size, int intermediate_size, int num_q_head
     }
 
     CUBLAS_CHECK(cublasCreate(&runner->cublas_handle));
+
+    // model 级 RoPE cos/sin cache，create 时 H2D 一次，forward 时查表
+    runner->rope_cache = rope_cossin_cache_create(max_seq_len, head_dim, freq_base);
+    if (runner->rope_cache == nullptr) {
+        transformer_runner_destroy(runner);
+        return nullptr;
+    }
 
     const size_t w_q_bytes = static_cast<size_t>(q_dim) * hidden_size * sizeof(float);
     const size_t w_kv_bytes = static_cast<size_t>(kv_dim) * hidden_size * sizeof(float);
@@ -203,6 +238,16 @@ extern "C" void transformer_runner_destroy(TransformerRunner *runner) {
     }
     runner->buffers_by_tokens.clear();
 
+    for (auto &entry : runner->d_pos_by_tokens) {
+        cudaFree(entry.second);
+    }
+    runner->d_pos_by_tokens.clear();
+
+    if (runner->rope_cache != nullptr) {
+        rope_cossin_cache_destroy(runner->rope_cache);
+        runner->rope_cache = nullptr;
+    }
+
     cudaFree(runner->d_w_q);
     cudaFree(runner->d_w_k);
     cudaFree(runner->d_w_v);
@@ -236,11 +281,43 @@ transformer_runner_buffers_get(TransformerRunner *runner, int num_tokens) {
     return buffers;
 }
 
-// 生产入口，为暴露给 python 端，暂不能测试到，ctx 暂时也用不到
-// TODO：接入生产链路，构造 ctx
+// 测试路径辅助：为当前 step 准备 device 侧 d_pos。
+// - 按 num_tokens 复用已 cudaMalloc 的 buffer (见 d_pos_by_tokens)
+// - 每步将 pos[t] 写为 pos_offset + t，再 H2D 到 d_pos
+//   prefill:  pos_offset=0        -> [0, 1, ..., T-1]
+//   decode:   pos_offset=cache_len -> [cache_len] (num_tokens=1)
+// 生产路径 forward_device 由调用方直接提供 ctx->d_pos，不经过此函数。
+static int *transformer_runner_d_pos_get(TransformerRunner *runner, int num_tokens, int pos_offset,
+                                         cudaStream_t stream) {
+    // 按 num_tokens 缓存 d_pos buffer；每步根据 pos_offset 刷新 pos[t]=offset+t
+    int *d_pos = nullptr;
+    const auto it = runner->d_pos_by_tokens.find(num_tokens);
+    if (it != runner->d_pos_by_tokens.end()) {
+        d_pos = it->second;
+    } else {
+        CUDA_CHECK(cudaMalloc(&d_pos, static_cast<size_t>(num_tokens) * sizeof(int)));
+        runner->d_pos_by_tokens[num_tokens] = d_pos;
+    }
+
+    std::vector<int> pos_host(static_cast<size_t>(num_tokens));
+    for (int t = 0; t < num_tokens; ++t) {
+        pos_host[static_cast<size_t>(t)] = pos_offset + t;
+    }
+    CUDA_CHECK(cudaMemcpyAsync(d_pos, pos_host.data(),
+                               static_cast<size_t>(num_tokens) * sizeof(int),
+                               cudaMemcpyHostToDevice, stream));
+    return d_pos;
+}
+
+// 生产入口：ctx 中 d_hidden_in/out、d_pos 已在 GPU
+// TODO：暴露给 Python 端，构造 ctx 后可直接测 forward_device
 extern "C" int transformer_runner_forward_device(TransformerRunner *runner,
                                                  const TransformerRunnerForwardCtx *ctx) {
     if (runner == nullptr || ctx == nullptr) {
+        return -1;
+    }
+    if (ctx->d_pos == nullptr) {
+        std::fprintf(stderr, "transformer_runner_forward_device: d_pos is null\n");
         return -1;
     }
     // 获取 Device buffer
@@ -252,9 +329,10 @@ extern "C" int transformer_runner_forward_device(TransformerRunner *runner,
     transformer_runner_copy_input(stream, buffers, ctx->d_hidden_in, runner->hidden_size,
                                   ctx->num_tokens);
 
-    transformer_layer_linears_forward_device(stream, runner->cublas_handle, buffers, runner->d_w_q,
-                                             runner->d_w_k, runner->d_w_v, runner->d_w_o,
-                                             runner->d_w_gate, runner->d_w_up, runner->d_w_down);
+    transformer_layer_linears_forward_device(
+        stream, runner->cublas_handle, buffers, runner->d_w_q, runner->d_w_k, runner->d_w_v,
+        runner->d_w_o, runner->d_w_gate, runner->d_w_up, runner->d_w_down, runner->rope_cache,
+        ctx->d_pos, runner->head_dim, runner->num_q_heads, runner->num_kv_heads);
     // 计算结束后 D2D
     transformer_runner_copy_output(stream, ctx->d_hidden_out, buffers, runner->hidden_size,
                                    ctx->num_tokens);
@@ -262,25 +340,27 @@ extern "C" int transformer_runner_forward_device(TransformerRunner *runner,
     return 0;
 }
 
-// Transformer test 入口
+// Transformer test 入口：host hidden H2D -> layer forward (含 RoPE) -> D2H
 extern "C" int transformer_runner_test(TransformerRunner *runner, const float *hidden_in_host,
-                                       float *hidden_out_host, int num_tokens) {
+                                       float *hidden_out_host, int num_tokens, int pos_offset) {
     if (runner == nullptr) {
         return -1;
     }
 
-    // 按照 num_tokens 的大小 缓存不同的 buffer，避免每次都cudaMalloc
+    // 按照 num_tokens 的大小缓存 buffer，避免每次都 cudaMalloc
     TransformerLayerLinearDeviceBuffers *buffers =
         transformer_runner_buffers_get(runner, num_tokens);
     cudaStream_t stream = runner->stream;
+    int *d_pos = transformer_runner_d_pos_get(runner, num_tokens, pos_offset, stream);
     const size_t hidden_bytes = transformer_col_major_bytes(runner->hidden_size, num_tokens);
     // H2D
     CUDA_CHECK(cudaMemcpyAsync(buffers->d_hidden, hidden_in_host, hidden_bytes,
                                cudaMemcpyHostToDevice, stream));
-    // Linear * 7
-    transformer_layer_linears_forward_device(stream, runner->cublas_handle, buffers, runner->d_w_q,
-                                             runner->d_w_k, runner->d_w_v, runner->d_w_o,
-                                             runner->d_w_gate, runner->d_w_up, runner->d_w_down);
+    // Linear + RoPE + Attention 占位 + FFN
+    transformer_layer_linears_forward_device(
+        stream, runner->cublas_handle, buffers, runner->d_w_q, runner->d_w_k, runner->d_w_v,
+        runner->d_w_o, runner->d_w_gate, runner->d_w_up, runner->d_w_down, runner->rope_cache,
+        d_pos, runner->head_dim, runner->num_q_heads, runner->num_kv_heads);
     // D2H
     CUDA_CHECK(cudaMemcpyAsync(hidden_out_host, buffers->d_hidden_out, hidden_bytes,
                                cudaMemcpyDeviceToHost, stream));
