@@ -1,32 +1,24 @@
+#include "layer_norm.h"
+
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
-#include <vector>
 
 namespace py = pybind11;
-
-extern "C" void layer_norm(float *input, float *weight, float *bias, float *output,
-                           std::vector<int> &input_dims, float epsilon);
 
 PYBIND11_MODULE(layer_norm_me, m) {
     m.doc() = "Python binding for CUDA LayerNorm kernel";
     m.def(
-        "layer_norm",
+        "forward_host",
         [](py::array_t<float> input, py::array_t<float> weight, py::array_t<float> bias,
-           py::array_t<float> output, std::vector<int> dims, float epsilon) {
-            auto input_buf = input.request();
-            auto weight_buf = weight.request();
-            auto bias_buf = bias.request();
-            auto output_buf = output.request();
-
-            float *input_ptr = static_cast<float *>(input_buf.ptr);
-            float *weight_ptr = static_cast<float *>(weight_buf.ptr);
-            float *bias_ptr = static_cast<float *>(bias_buf.ptr);
-            float *output_ptr = static_cast<float *>(output_buf.ptr);
-
-            layer_norm(input_ptr, weight_ptr, bias_ptr, output_ptr, dims, epsilon);
+           py::array_t<float> output, int hidden_size, int num_tokens, float epsilon) {
+            float *input_ptr = static_cast<float *>(input.request().ptr);
+            float *weight_ptr = static_cast<float *>(weight.request().ptr);
+            float *bias_ptr = static_cast<float *>(bias.request().ptr);
+            float *output_ptr = static_cast<float *>(output.request().ptr);
+            layer_norm_forward_host(input_ptr, weight_ptr, bias_ptr, output_ptr, hidden_size,
+                                    num_tokens, epsilon);
         },
         py::arg("input"), py::arg("weight"), py::arg("bias"), py::arg("output"),
-        py::arg("input_dims"), py::arg("epsilon") = 1e-6f,
-        "LayerNorm on col-major [hidden_size, num_tokens, 1, 1]");
+        py::arg("hidden_size"), py::arg("num_tokens"), py::arg("epsilon") = 1e-6f,
+        "Test wrapper: host I/O around layer_norm kernel");
 }

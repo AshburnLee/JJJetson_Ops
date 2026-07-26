@@ -1,6 +1,8 @@
+#include "layer_norm.h"
+
 #include <cuda_runtime.h>
 #include <cstdio>
-#include <vector>
+
 #include "cuda_utils.cuh"
 
 #define CUDA_LAYER_NORM_BLOCK_SIZE 256
@@ -52,23 +54,20 @@ static __global__ void layer_norm_kernel(const float *__restrict__ input,
         output[row_base + i] = (x - mean) * inverse_std * weight[i] + bias[i];
     }
 }
-// input shape: [hidden_size, num_tokens, 1, 1]
-extern "C" void layer_norm(float *input, float *weight, float *bias, float *output,
-                           std::vector<int> &input_dims, float epsilon) {
-    const int64_t ne0_0 = input_dims[0];
-    const int64_t ne0_1 = input_dims[1];
-    const int64_t ne0_2 = input_dims[2];
-    const int64_t ne0_3 = input_dims[3];
-
-    const int hidden_size = static_cast<int>(ne0_0);
-    const int num_tokens = static_cast<int>(ne0_1 * ne0_2 * ne0_3);
-    const int64_t n_elem = ne0_0 * ne0_1 * ne0_2 * ne0_3;
-
+// ======================== 仅供 Python 测试 ================================
+extern "C" void layer_norm_forward_host(float *input, float *weight, float *bias, float *output,
+                                        int hidden_size, int num_tokens, float epsilon) {
     if (hidden_size <= 0 || num_tokens <= 0) {
-        std::fprintf(stderr, "layer_norm: invalid hidden_size=%d num_tokens=%d\n", hidden_size,
-                     num_tokens);
+        std::fprintf(stderr, "layer_norm_forward_host: invalid hidden_size=%d num_tokens=%d\n",
+                     hidden_size, num_tokens);
         return;
     }
+    if (input == nullptr || weight == nullptr || bias == nullptr || output == nullptr) {
+        std::fprintf(stderr, "layer_norm_forward_host: null pointer argument\n");
+        return;
+    }
+
+    const int64_t n_elem = static_cast<int64_t>(hidden_size) * num_tokens;
 
     float *d_x = nullptr;
     float *d_w = nullptr;
@@ -77,16 +76,17 @@ extern "C" void layer_norm(float *input, float *weight, float *bias, float *outp
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
-    CUDA_CHECK(cudaMallocAsync(&d_x, n_elem * sizeof(float), stream));
-    CUDA_CHECK(cudaMallocAsync(&d_w, hidden_size * sizeof(float), stream));
-    CUDA_CHECK(cudaMallocAsync(&d_b, hidden_size * sizeof(float), stream));
-    CUDA_CHECK(cudaMallocAsync(&d_y, n_elem * sizeof(float), stream));
+    CUDA_CHECK(cudaMallocAsync(&d_x, static_cast<size_t>(n_elem) * sizeof(float), stream));
+    CUDA_CHECK(cudaMallocAsync(&d_w, static_cast<size_t>(hidden_size) * sizeof(float), stream));
+    CUDA_CHECK(cudaMallocAsync(&d_b, static_cast<size_t>(hidden_size) * sizeof(float), stream));
+    CUDA_CHECK(cudaMallocAsync(&d_y, static_cast<size_t>(n_elem) * sizeof(float), stream));
 
-    CUDA_CHECK(cudaMemcpyAsync(d_x, input, n_elem * sizeof(float), cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(
-        cudaMemcpyAsync(d_w, weight, hidden_size * sizeof(float), cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(
-        cudaMemcpyAsync(d_b, bias, hidden_size * sizeof(float), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyAsync(d_x, input, static_cast<size_t>(n_elem) * sizeof(float),
+                               cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyAsync(d_w, weight, static_cast<size_t>(hidden_size) * sizeof(float),
+                               cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyAsync(d_b, bias, static_cast<size_t>(hidden_size) * sizeof(float),
+                               cudaMemcpyHostToDevice, stream));
 
     const int block_size =
         hidden_size < CUDA_LAYER_NORM_BLOCK_SIZE ? hidden_size : CUDA_LAYER_NORM_BLOCK_SIZE;
@@ -95,7 +95,8 @@ extern "C" void layer_norm(float *input, float *weight, float *bias, float *outp
 
 #if defined(MY_OPS_DEBUG)
     std::printf(
-        "layer_norm launch: block=(%u,%u,%u), grid=(%u,%u,%u), hidden=%d tokens=%d eps=%g\n",
+        "layer_norm_forward_host launch: block=(%u,%u,%u), grid=(%u,%u,%u), hidden=%d tokens=%d "
+        "eps=%g\n",
         threads.x, threads.y, threads.z, blocks.x, blocks.y, blocks.z, hidden_size, num_tokens,
         static_cast<double>(epsilon));
     std::fflush(stdout);
@@ -105,8 +106,8 @@ extern "C" void layer_norm(float *input, float *weight, float *bias, float *outp
                                                       epsilon);
     LAUNCH_CHECK();
 
-    CUDA_CHECK(
-        cudaMemcpyAsync(output, d_y, n_elem * sizeof(float), cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaMemcpyAsync(output, d_y, static_cast<size_t>(n_elem) * sizeof(float),
+                               cudaMemcpyDeviceToHost, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
     CUDA_CHECK(cudaFreeAsync(d_x, stream));

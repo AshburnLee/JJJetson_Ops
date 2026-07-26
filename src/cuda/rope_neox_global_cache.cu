@@ -3,7 +3,6 @@
 
 #include <cuda_runtime.h>
 #include <cstdio>
-#include <vector>
 
 #include "cuda_utils.cuh"
 
@@ -99,7 +98,8 @@ static void rope_neox_launch_device(cudaStream_t stream, const float *d_input, f
 // TransformerRunner 等在 Linear 产出 d_q/d_k 后应直接调用本函数：
 //   - d_input / d_output / d_pos 均已在 GPU，本路径不做 H2D/D2H
 //   - d_output 可与 d_input 相同（in-place）
-// rope_with_global_cossin_cache 与 Python forward_device 仅为测试包装，内部也会调用此处。
+// rope_neox_forward_host 与 Python forward_host 仅为测试包装，内部也会调用
+// rope_neox_forward_device。
 extern "C" int rope_neox_forward_device(void *stream, const RopeCosSinCache *cache,
                                         const float *d_input, float *d_output, const int *d_pos,
                                         int head_dim, int num_heads, int num_tokens, int batch) {
@@ -122,27 +122,21 @@ extern "C" int rope_neox_forward_device(void *stream, const RopeCosSinCache *cac
     return 0;
 }
 
-// 非生产：host 数组 H2D → rope_neox_forward_device → D2H，仅供 Python forward_device 测试
-extern "C" void rope_with_global_cossin_cache(float *input, int *pos, float *output,
-                                              std::vector<int> &input_dims,
-                                              const RopeCosSinCache *cache) {
+// ======================== 仅供 Python 测试 ================================
+extern "C" void rope_neox_forward_host(float *input, int *pos, float *output, int head_dim,
+                                       int num_heads, int num_tokens, int batch,
+                                       const RopeCosSinCache *cache) {
     if (cache == nullptr) {
-        std::fprintf(stderr,
-                     "rope_with_global_cossin_cache: cache is empty; create RopeCosSinCache when "
-                     "model loading\n");
+        std::fprintf(stderr, "rope_neox_forward_host: cache is empty; create RopeCosSinCache when "
+                             "model loading\n");
+        return;
+    }
+    if (input == nullptr || pos == nullptr || output == nullptr) {
+        std::fprintf(stderr, "rope_neox_forward_host: null pointer argument\n");
         return;
     }
 
-    const int64_t ne0_0 = input_dims[0];
-    const int64_t ne0_1 = input_dims[1];
-    const int64_t ne0_2 = input_dims[2];
-    const int64_t ne0_3 = input_dims[3];
-
-    const int64_t n_elem = ne0_0 * ne0_1 * ne0_2 * ne0_3;
-    const int head_dim = static_cast<int>(ne0_0);
-    const int num_heads = static_cast<int>(ne0_1);
-    const int num_tokens = static_cast<int>(ne0_2);
-    const int batch = static_cast<int>(ne0_3);
+    const int64_t n_elem = static_cast<int64_t>(head_dim) * num_heads * num_tokens * batch;
 
     if (rope_neox_check_shape(cache, head_dim, num_heads, num_tokens, batch) != 0) {
         return;

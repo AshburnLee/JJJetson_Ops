@@ -36,9 +36,10 @@ def test_layer_norm():
     weight_np = np.random.randn(HIDDEN_SIZE).astype(np.float32)
     bias_np = np.random.randn(HIDDEN_SIZE).astype(np.float32)
     output_np = np.zeros_like(input_np, order="F")
-    dims = [HIDDEN_SIZE, NUM_TOKENS, 1, BATCH]
 
-    layer_norm_me.layer_norm(input_np, weight_np, bias_np, output_np, dims, EPS)
+    layer_norm_me.forward_host(
+        input_np, weight_np, bias_np, output_np, HIDDEN_SIZE, NUM_TOKENS, EPS
+    )
 
     ref_np = layer_norm_ref(input_np, weight_np, bias_np, EPS)
 

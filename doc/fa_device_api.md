@@ -39,10 +39,11 @@ d_dst (fp32) ──► Linear(O)
 | `FaDoubleBufferShape` | head_dim / tokens / heads |
 | `fa_double_buffer_validate_shape` | host 校验 |
 | `fa_double_buffer_forward_device` | 生产 device 入口 |
-| `fa_double_buffer_forward_host` | 测试 H2D/D2H |
-| `fa_me.forward_device_shape` | Python：从 Q/K/V shape 推断并调用 |
+| `fa_double_buffer_forward_host` / `fa_double_buffer_forward_host_legacy` | 测试 H2D/D2H |
+| `fa_me.forward_host_shape` | Python：从 Q/K/V shape 推断并调用 |
+| `fa_me.forward_host` | Python：legacy 固定 shape |
 
-Legacy 固定 128×13×16 / KV256 仍可用 `fa_me.launch_fa` / `forward_device`。
+Legacy 固定 128×13×16 / KV256 仍可用 `fa_me.launch_fa` / `forward_host`。
 
 ## 待办（Runner 接入）
 

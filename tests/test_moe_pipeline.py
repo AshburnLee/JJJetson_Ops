@@ -123,7 +123,7 @@ def test_moe_pipeline():
         w_down = rng.standard_normal(wd_elems).astype(dtype)
 
         y_gpu = np.zeros((num_tokens, hidden_size), dtype=dtype)
-        moe_pipeline_me.moe_pipeline_forward(
+        moe_pipeline_me.forward_host(
             x=x,
             expert_ids=expert_ids,
             route_weights=route_weights,

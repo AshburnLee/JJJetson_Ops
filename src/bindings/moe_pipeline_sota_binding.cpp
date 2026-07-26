@@ -14,7 +14,7 @@ extern "C" void moe_pipeline_sota_forward(const float *x_host, const float *logi
 PYBIND11_MODULE(moe_pipeline_sota_me, m) {
     m.doc() = "Full MoE sota pipeline: top-k + dispatch_sota + grouped GEMM + combine_sota";
     m.def(
-        "moe_pipeline_sota_forward",
+        "forward_host",
         [](py::array_t<float, py::array::c_style | py::array::forcecast> x,
            py::array_t<float, py::array::c_style | py::array::forcecast> logits,
            py::array_t<float, py::array::c_style | py::array::forcecast> w_gate,

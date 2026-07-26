@@ -41,10 +41,10 @@ def _rope_qk_ref(q: np.ndarray, k: np.ndarray, pos_offset: int) -> tuple[np.ndar
     k_out = np.zeros_like(k, order="F")
     cache = rope_global_cache_me.create_cossin_cache(MAX_SEQ_LEN, HEAD_DIM, ROPE_FREQ_BASE)
     try:
-        rope_global_cache_me.forward_device(
+        rope_global_cache_me.forward_host(
             cache, q, pos, q_out, HEAD_DIM, NUM_Q_HEADS, NUM_TOKENS, 1
         )
-        rope_global_cache_me.forward_device(
+        rope_global_cache_me.forward_host(
             cache, k, pos, k_out, HEAD_DIM, NUM_KV_HEADS, NUM_TOKENS, 1
         )
     finally:
@@ -53,7 +53,7 @@ def _rope_qk_ref(q: np.ndarray, k: np.ndarray, pos_offset: int) -> tuple[np.ndar
 
 
 # 用 linear_me 手动串联 (Linear + RoPE + Attention占位 + FFN) 作为 ref；
-# 每次 linear_me.linear 都会 H2D，该函数仅作参考，不是生产路径
+# 每次 linear_me.forward_host 都会 H2D，该函数仅作参考，不是生产路径
 def chain_linear_me_ref(
     hidden_np: np.ndarray,
     w_q: np.ndarray,
@@ -68,30 +68,30 @@ def chain_linear_me_ref(
     q = np.zeros((Q_DIM, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
     k = np.zeros((KV_DIM, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
     v = np.zeros((KV_DIM, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
-    linear_me.linear(hidden_np, w_q, q, _dims(HIDDEN_SIZE), Q_DIM)
-    linear_me.linear(hidden_np, w_k, k, _dims(HIDDEN_SIZE), KV_DIM)
-    linear_me.linear(hidden_np, w_v, v, _dims(HIDDEN_SIZE), KV_DIM)
+    linear_me.forward_host(hidden_np, w_q, q, HIDDEN_SIZE, NUM_TOKENS, Q_DIM)
+    linear_me.forward_host(hidden_np, w_k, k, HIDDEN_SIZE, NUM_TOKENS, KV_DIM)
+    linear_me.forward_host(hidden_np, w_v, v, HIDDEN_SIZE, NUM_TOKENS, KV_DIM)
 
     q, _k = _rope_qk_ref(q, k, pos_offset)
 
     h_mid = np.zeros((HIDDEN_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
-    linear_me.linear(q, w_o, h_mid, _dims(Q_DIM), HIDDEN_SIZE)
+    linear_me.forward_host(q, w_o, h_mid, Q_DIM, NUM_TOKENS, HIDDEN_SIZE)
 
     gate = np.zeros((INTERMEDIATE_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
     up = np.zeros((INTERMEDIATE_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
-    linear_me.linear(h_mid, w_gate, gate, _dims(HIDDEN_SIZE), INTERMEDIATE_SIZE)
-    linear_me.linear(h_mid, w_up, up, _dims(HIDDEN_SIZE), INTERMEDIATE_SIZE)
+    linear_me.forward_host(h_mid, w_gate, gate, HIDDEN_SIZE, NUM_TOKENS, INTERMEDIATE_SIZE)
+    linear_me.forward_host(h_mid, w_up, up, HIDDEN_SIZE, NUM_TOKENS, INTERMEDIATE_SIZE)
 
     ffn_mid = (_silu_np(gate) * up).astype(np.float32, order="F")
     h_out = np.zeros((HIDDEN_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
-    linear_me.linear(ffn_mid, w_down, h_out, _dims(INTERMEDIATE_SIZE), HIDDEN_SIZE)
+    linear_me.forward_host(ffn_mid, w_down, h_out, INTERMEDIATE_SIZE, NUM_TOKENS, HIDDEN_SIZE)
     return h_out
 
 
 # torch 的 GEMM 路径与 transformer_runner_me 不尽相同，与torch相比， backend 不同
 # 7 层串联计算链太长，中间结果已不完全一样，
 # silu(gate) * up 将误差非线性放大。所以torch不适合作为ref
-# 这里与 手动串联的 linear_me.linear 构成的同结构的 Transformer 比较
+# 这里与手动串联的 linear_me.forward_host 构成的同结构 Transformer 比较
 def test_transformer_runner():
     np.random.seed(SEED)
     hidden_np = np.asfortranarray(

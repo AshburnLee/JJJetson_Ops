@@ -16,7 +16,7 @@ extern "C" void moe_pipeline_forward(const float *x_host, const int *expert_ids_
 PYBIND11_MODULE(moe_pipeline_me, m) {
     m.doc() = "Full MoE pipeline (dispatch -> gate/up/down GEMM -> silu multiply -> combine)";
     m.def(
-        "moe_pipeline_forward",
+        "forward_host",
         [](py::array_t<float, py::array::c_style | py::array::forcecast> x,
            py::array_t<int, py::array::c_style | py::array::forcecast> expert_ids,
            py::array_t<float, py::array::c_style | py::array::forcecast> route_weights,

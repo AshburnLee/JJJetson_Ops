@@ -16,16 +16,8 @@ extern "C" void fa_one_pass(const uint16_t *q_host, const uint16_t *k_host, cons
 extern "C" void fa_one_pass_parallel(const uint16_t *q_host, const uint16_t *k_host,
                                      const uint16_t *v_host, float *dst_host, float scale);
 
-extern "C" void fa_one_pass_parallel_double_buffer(const uint16_t *q_host, const uint16_t *k_host,
-                                                   const uint16_t *v_host, float *dst_host,
-                                                   float scale);
-
 extern "C" void fa(const uint16_t *q_host, const uint16_t *k_host, const uint16_t *v_host,
                    float *dst_host, float scale);
-
-extern "C" void fa_double_buffer_forward_host(const FaDoubleBufferShape *shape,
-                                              const uint16_t *q_host, const uint16_t *k_host,
-                                              const uint16_t *v_host, float *dst_host, float scale);
 
 #if defined(MY_OPS_DEBUG)
 extern "C" void fa_debug(const uint16_t *q_host, const uint16_t *k_host, const uint16_t *v_host,
@@ -70,7 +62,7 @@ void fa_one_pass_parallel_py(py::buffer q, py::buffer k, py::buffer v, py::array
 
 void fa_double_buffer_py(py::buffer q, py::buffer k, py::buffer v, py::array_t<float> dst,
                          float scale) {
-    fa_launch_impl(fa_one_pass_parallel_double_buffer, q, k, v, dst, scale);
+    fa_launch_impl(fa_double_buffer_forward_host_legacy, q, k, v, dst, scale);
 }
 
 void fa_double_buffer_shape_py(py::buffer q, py::buffer k, py::buffer v, py::array_t<float> dst,
@@ -151,13 +143,13 @@ PYBIND11_MODULE(fa_me, m) {
           py::arg("v"), py::arg("dst"), py::arg("scale"));
 
     // 测试入口：host H2D -> fa_double_buffer_forward_device -> D2H
-    m.def("forward_device", &fa_double_buffer_py, py::arg("q"), py::arg("k"), py::arg("v"),
+    m.def("forward_host", &fa_double_buffer_py, py::arg("q"), py::arg("k"), py::arg("v"),
           py::arg("dst"), py::arg("scale"),
-          "Production FA via fa_double_buffer_forward_device (legacy 128x13x16 shape)");
+          "Test wrapper: legacy fixed shape via fa_double_buffer_forward_host_legacy");
 
-    m.def("forward_device_shape", &fa_double_buffer_shape_py, py::arg("q"), py::arg("k"),
+    m.def("forward_host_shape", &fa_double_buffer_shape_py, py::arg("q"), py::arg("k"),
           py::arg("v"), py::arg("dst"), py::arg("scale"),
-          "Production FA; infer FaDoubleBufferShape from Q/K/V array dims");
+          "Test wrapper: infer FaDoubleBufferShape from Q/K/V dims");
 
 #if defined(MY_OPS_DEBUG)
     m.def("launch_fa_debug_ml", &fa_debug_py, "One-pass kernel with m/l/S dumps (debug build)",

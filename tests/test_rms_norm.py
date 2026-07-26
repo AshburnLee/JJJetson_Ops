@@ -19,7 +19,7 @@ def test_rms_norm():
     weight_np = np.random.randn(HIDDEN_SIZE).astype(np.float32)
     output_np = np.zeros_like(input_np, order="F")
 
-    rms_norm_me.forward_device(input_np, weight_np, output_np, HIDDEN_SIZE, NUM_TOKENS, EPS)
+    rms_norm_me.forward_host(input_np, weight_np, output_np, HIDDEN_SIZE, NUM_TOKENS, EPS)
 
     x = torch.from_numpy(input_np.reshape(HIDDEN_SIZE, -1).T.copy())
     w = torch.from_numpy(weight_np)

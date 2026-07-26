@@ -52,6 +52,6 @@ Runner create 时 H2D 一次 norm 权重；forward 内仅调用 device API，无
 |------|------|
 | `rms_norm_forward_device` | 生产：device 上 RMSNorm |
 | `rms_norm_fused_add_forward_device` | 生产：Pre-LN add + RMSNorm（in-place input/residual） |
-| `rms_norm_forward_host` / `rms_norm_fused_add_forward_host` | 测试：host 包装（H2D → device API → D2H） |
+| `rms_norm_forward_host` / `rms_norm_fused_add_forward_host` | 测试：host 包装（H2D → device API → D2H）；Python 入口 `forward_host` |
 
 Layout：col-major `[hidden_size, num_tokens, 1, batch]`，在 `hidden_size` 维归一化。

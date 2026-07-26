@@ -40,7 +40,7 @@ def test_rms_norm_fused_add():
     input_me = np.array(input_np, copy=True, order="F")
     residual_me = np.array(residual_np, copy=True, order="F")
 
-    rms_norm_fused_add_me.forward_device(
+    rms_norm_fused_add_me.forward_host(
         input_me, residual_me, weight_np, HIDDEN_SIZE, NUM_TOKENS, EPS
     )
 

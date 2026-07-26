@@ -27,9 +27,9 @@ def torch_linear_ref(input_np: np.ndarray, weight_np: np.ndarray) -> np.ndarray:
 def run_linear_case(name: str, in_features: int, out_features: int, input_np: np.ndarray):
     weight_np = np.random.randn(out_features, in_features).astype(np.float32)
     output_np = np.zeros((out_features, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
-    dims = [in_features, NUM_TOKENS, 1, BATCH]
+    num_tokens = NUM_TOKENS * 1 * BATCH
 
-    linear_me.linear(input_np, weight_np, output_np, dims, out_features)
+    linear_me.forward_host(input_np, weight_np, output_np, in_features, num_tokens, out_features)
 
     torch_np = torch_linear_ref(input_np, weight_np)
 

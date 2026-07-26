@@ -9,9 +9,9 @@ extern "C" void fa_one_pass_parallel_tc(const uint16_t *q_host, const uint16_t *
 extern "C" void fa_one_pass_parallel_tc_true(const uint16_t *q_host, const uint16_t *k_host,
                                              const uint16_t *v_host, float *dst_host, float scale);
 
-extern "C" void fa_one_pass_parallel_double_buffer(const uint16_t *q_host, const uint16_t *k_host,
-                                                   const uint16_t *v_host, float *dst_host,
-                                                   float scale);
+extern "C" void fa_double_buffer_forward_host_legacy(const uint16_t *q_host, const uint16_t *k_host,
+                                                     const uint16_t *v_host, float *dst_host,
+                                                     float scale);
 
 void fa_one_pass_parallel_tc_py(py::buffer q, py::buffer k, py::buffer v, py::array_t<float> dst,
                                 float scale) {
@@ -58,7 +58,7 @@ void fa_one_pass_parallel_double_buffer_py(py::buffer q, py::buffer k, py::buffe
     auto *v_ptr = static_cast<const uint16_t *>(v_buf.ptr);
     auto *dst_ptr = static_cast<float *>(dst_buf.ptr);
 
-    fa_one_pass_parallel_double_buffer(q_ptr, k_ptr, v_ptr, dst_ptr, scale);
+    fa_double_buffer_forward_host_legacy(q_ptr, k_ptr, v_ptr, dst_ptr, scale);
 }
 
 PYBIND11_MODULE(fa_tc_me, m) {

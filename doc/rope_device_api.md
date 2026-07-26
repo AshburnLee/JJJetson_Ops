@@ -48,6 +48,6 @@ Runner 在 create 时持有 `RopeCosSinCache`；ForwardCtx 需传入 device 侧 
 |------|------|
 | `rope_cossin_cache_create` | Model 加载时创建 global cos/sin |
 | `rope_neox_forward_device` | 生产：device 上 in/out/pos |
-| `rope_with_global_cossin_cache` | 测试：host 包装 |
+| `rope_neox_forward_host` | 测试：host 包装；Python 入口 `forward_host` |
 
 Layout 与 Qwen NeoX 一致：col-major `[head_dim, num_heads, num_tokens, batch]`。

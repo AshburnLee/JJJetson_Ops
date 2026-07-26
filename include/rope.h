@@ -16,6 +16,10 @@ int rope_neox_forward_device(void *stream, const RopeCosSinCache *cache, const f
                              float *d_output, const int *d_pos, int head_dim, int num_heads,
                              int num_tokens, int batch);
 
+// 测试：host H2D → rope_neox_forward_device → D2H（仅供 Python binding）
+void rope_neox_forward_host(float *input, int *pos, float *output, int head_dim, int num_heads,
+                            int num_tokens, int batch, const RopeCosSinCache *cache);
+
 #ifdef __cplusplus
 }
 #endif

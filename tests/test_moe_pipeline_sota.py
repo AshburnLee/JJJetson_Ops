@@ -82,7 +82,7 @@ def test_moe_pipeline_sota():
         w_down = rng.standard_normal(wd_elems).astype(dtype)
 
         y_gpu = np.zeros((num_tokens, hidden_size), dtype=dtype)
-        moe_pipeline_sota_me.moe_pipeline_sota_forward(
+        moe_pipeline_sota_me.forward_host(
             x=x,
             logits=logits,
             w_gate=w_gate,

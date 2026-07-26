@@ -22,7 +22,7 @@ def test_moe_cuda_graph_instance_container():
     w_down = rng.standard_normal(wd_elems).astype(dtype)
 
     y_eager = np.zeros((num_tokens, hidden_size), dtype=dtype)
-    moe_pipeline_sota_me.moe_pipeline_sota_forward(
+    moe_pipeline_sota_me.forward_host(
         x=x,
         logits=logits,
         w_gate=w_gate,

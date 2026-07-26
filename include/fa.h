@@ -33,6 +33,15 @@ int fa_double_buffer_forward_device(void *stream, const FaDoubleBufferShape *sha
                                     const uint16_t *d_q, const uint16_t *d_k, const uint16_t *d_v,
                                     float *d_dst, float scale);
 
+// 测试：host H2D → fa_double_buffer_forward_device → D2H（仅供 Python binding）
+void fa_double_buffer_forward_host(const FaDoubleBufferShape *shape, const uint16_t *q_host,
+                                   const uint16_t *k_host, const uint16_t *v_host, float *dst_host,
+                                   float scale);
+
+// 测试：legacy 固定 shape (128/13/256/16/8)
+void fa_double_buffer_forward_host_legacy(const uint16_t *q_host, const uint16_t *k_host,
+                                          const uint16_t *v_host, float *dst_host, float scale);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,4 +1,4 @@
-"""测试 fa_kernel_one_pass_parallel（16-block，优化中间步骤）；生产路径见 launch_fa / forward_device。"""
+"""测试 fa_kernel_one_pass_parallel（16-block，优化中间步骤）；生产路径见 launch_fa / forward_host。"""
 
 import fa_me
 
@@ -17,8 +17,8 @@ def test_fa_one_pass_parallel():
     dst_prod = fc.run_launcher(fa_me.launch_fa, Q, K, V, 1.0)
     fc.assert_dst_close("launch_fa (double_buffer)", dst_prod, dst_ref)
 
-    dst_device = fc.run_launcher(fa_me.forward_device, Q, K, V, 1.0)
-    fc.assert_dst_close("forward_device (double_buffer)", dst_device, dst_ref)
+    dst_device = fc.run_launcher(fa_me.forward_host, Q, K, V, 1.0)
+    fc.assert_dst_close("forward_host (double_buffer)", dst_device, dst_ref)
 
     print("Passed")
 

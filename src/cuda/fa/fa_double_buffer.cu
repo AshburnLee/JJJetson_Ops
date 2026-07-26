@@ -129,10 +129,10 @@ static FaDoubleBufferShape fa_legacy_test_shape() {
     return shape;
 }
 
-// -======================== 仅测试用 ========================-
-extern "C" void fa_one_pass_parallel_double_buffer(const uint16_t *q_host, const uint16_t *k_host,
-                                                   const uint16_t *v_host, float *dst_host,
-                                                   float scale) {
+// ======================== 仅供 Python 测试 ================================
+extern "C" void fa_double_buffer_forward_host_legacy(const uint16_t *q_host, const uint16_t *k_host,
+                                                     const uint16_t *v_host, float *dst_host,
+                                                     float scale) {
     const FaDoubleBufferShape shape = fa_legacy_test_shape();
     using half_t = half;
 
@@ -187,7 +187,7 @@ extern "C" void fa_one_pass_parallel_double_buffer(const uint16_t *q_host, const
 
 extern "C" void fa(const uint16_t *q_host, const uint16_t *k_host, const uint16_t *v_host,
                    float *dst_host, float scale) {
-    fa_one_pass_parallel_double_buffer(q_host, k_host, v_host, dst_host, scale);
+    fa_double_buffer_forward_host_legacy(q_host, k_host, v_host, dst_host, scale);
 }
 
 extern "C" void fa_double_buffer_forward_host(const FaDoubleBufferShape *shape,
