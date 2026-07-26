@@ -104,8 +104,10 @@ def test_transformer_runner():
     w_gate = np.random.randn(INTERMEDIATE_SIZE, HIDDEN_SIZE).astype(np.float32)
     w_up = np.random.randn(INTERMEDIATE_SIZE, HIDDEN_SIZE).astype(np.float32)
     w_down = np.random.randn(HIDDEN_SIZE, INTERMEDIATE_SIZE).astype(np.float32)
+    w_input_layernorm = np.random.randn(HIDDEN_SIZE).astype(np.float32)
+    w_post_attention_layernorm = np.random.randn(HIDDEN_SIZE).astype(np.float32)
 
-    # H2D * 7
+    # H2D * 9 (linear + norm weights; forward 仍不含 norm，40b 接入)
     runner = transformer_runner_me.create_runner(
         HIDDEN_SIZE,
         INTERMEDIATE_SIZE,
@@ -121,6 +123,8 @@ def test_transformer_runner():
         w_gate,
         w_up,
         w_down,
+        w_input_layernorm,
+        w_post_attention_layernorm,
     )  # 返回 handle
 
     output_me = np.zeros((HIDDEN_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")

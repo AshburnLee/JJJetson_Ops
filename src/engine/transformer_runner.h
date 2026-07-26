@@ -39,13 +39,14 @@ typedef struct TransformerRunnerForwardCtx {
 } TransformerRunnerForwardCtx;
 
 // max_seq_len / freq_base 用于创建 model 级 RopeCosSinCache
-TransformerRunner *transformer_runner_create(int hidden_size, int intermediate_size,
-                                             int num_q_heads, int num_kv_heads, int head_dim,
-                                             int max_seq_len, float freq_base,
-                                             const float *w_q_host, const float *w_k_host,
-                                             const float *w_v_host, const float *w_o_host,
-                                             const float *w_gate_host, const float *w_up_host,
-                                             const float *w_down_host, void *stream);
+// w_input_layernorm / w_post_attention_layernorm: RMSNorm weight，各 [hidden_size]
+TransformerRunner *
+transformer_runner_create(int hidden_size, int intermediate_size, int num_q_heads, int num_kv_heads,
+                          int head_dim, int max_seq_len, float freq_base, const float *w_q_host,
+                          const float *w_k_host, const float *w_v_host, const float *w_o_host,
+                          const float *w_gate_host, const float *w_up_host,
+                          const float *w_down_host, const float *w_input_layernorm_host,
+                          const float *w_post_attention_layernorm_host, void *stream);
 
 // 释放 Runner、weights及按 num_tokens 缓存的中间 buffer
 void transformer_runner_destroy(TransformerRunner *runner);

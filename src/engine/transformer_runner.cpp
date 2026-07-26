@@ -31,6 +31,8 @@ struct TransformerRunner {
     float *d_w_gate = nullptr;
     float *d_w_up = nullptr;
     float *d_w_down = nullptr;
+    float *d_w_input_layernorm = nullptr;
+    float *d_w_post_attention_layernorm = nullptr;
     // buffer 按 shape 复用，num_tokens 直接体现 shape 的不同
     // device buffer 由Runner 管理，按num_tokens 保存、查找，找不到才 cudamalloc
     // 保存的是Device的指针，避免了 每 次forward 前的 cudaMalloc
@@ -169,10 +171,17 @@ transformer_runner_create(int hidden_size, int intermediate_size, int num_q_head
                           int head_dim, int max_seq_len, float freq_base, const float *w_q_host,
                           const float *w_k_host, const float *w_v_host, const float *w_o_host,
                           const float *w_gate_host, const float *w_up_host,
-                          const float *w_down_host, void *stream_in) {
+                          const float *w_down_host, const float *w_input_layernorm_host,
+                          const float *w_post_attention_layernorm_host, void *stream_in) {
     if (hidden_size <= 0 || intermediate_size <= 0 || num_q_heads <= 0 || num_kv_heads <= 0 ||
         head_dim <= 0 || max_seq_len <= 0) {
         std::fprintf(stderr, "transformer_runner_create: invalid shape\n");
+        return nullptr;
+    }
+    if (w_q_host == nullptr || w_k_host == nullptr || w_v_host == nullptr || w_o_host == nullptr ||
+        w_gate_host == nullptr || w_up_host == nullptr || w_down_host == nullptr ||
+        w_input_layernorm_host == nullptr || w_post_attention_layernorm_host == nullptr) {
+        std::fprintf(stderr, "transformer_runner_create: null weight pointer\n");
         return nullptr;
     }
 
@@ -207,6 +216,7 @@ transformer_runner_create(int hidden_size, int intermediate_size, int num_q_head
     const size_t w_o_bytes = static_cast<size_t>(hidden_size) * q_dim * sizeof(float);
     const size_t w_gu_bytes = static_cast<size_t>(intermediate_size) * hidden_size * sizeof(float);
     const size_t w_d_bytes = static_cast<size_t>(hidden_size) * intermediate_size * sizeof(float);
+    const size_t w_norm_bytes = static_cast<size_t>(hidden_size) * sizeof(float);
 
     CUDA_CHECK(cudaMalloc(&runner->d_w_q, w_q_bytes));
     CUDA_CHECK(cudaMalloc(&runner->d_w_k, w_kv_bytes));
@@ -215,6 +225,8 @@ transformer_runner_create(int hidden_size, int intermediate_size, int num_q_head
     CUDA_CHECK(cudaMalloc(&runner->d_w_gate, w_gu_bytes));
     CUDA_CHECK(cudaMalloc(&runner->d_w_up, w_gu_bytes));
     CUDA_CHECK(cudaMalloc(&runner->d_w_down, w_d_bytes));
+    CUDA_CHECK(cudaMalloc(&runner->d_w_input_layernorm, w_norm_bytes));
+    CUDA_CHECK(cudaMalloc(&runner->d_w_post_attention_layernorm, w_norm_bytes));
 
     CUDA_CHECK(cudaMemcpy(runner->d_w_q, w_q_host, w_q_bytes, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(runner->d_w_k, w_k_host, w_kv_bytes, cudaMemcpyHostToDevice));
@@ -223,6 +235,10 @@ transformer_runner_create(int hidden_size, int intermediate_size, int num_q_head
     CUDA_CHECK(cudaMemcpy(runner->d_w_gate, w_gate_host, w_gu_bytes, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(runner->d_w_up, w_up_host, w_gu_bytes, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(runner->d_w_down, w_down_host, w_d_bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(runner->d_w_input_layernorm, w_input_layernorm_host, w_norm_bytes,
+                          cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(runner->d_w_post_attention_layernorm, w_post_attention_layernorm_host,
+                          w_norm_bytes, cudaMemcpyHostToDevice));
 
     return runner;
 }
@@ -255,6 +271,8 @@ extern "C" void transformer_runner_destroy(TransformerRunner *runner) {
     cudaFree(runner->d_w_gate);
     cudaFree(runner->d_w_up);
     cudaFree(runner->d_w_down);
+    cudaFree(runner->d_w_input_layernorm);
+    cudaFree(runner->d_w_post_attention_layernorm);
 
     if (runner->cublas_handle != nullptr) {
         CUBLAS_CHECK(cublasDestroy(runner->cublas_handle));
