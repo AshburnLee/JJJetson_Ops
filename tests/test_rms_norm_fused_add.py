@@ -11,23 +11,6 @@ EPS = 1e-6
 SEED = 24
 
 
-def rms_norm_fused_add_ref(
-    input_np: np.ndarray, residual_np: np.ndarray, weight_np: np.ndarray, epsilon: float
-) -> tuple[np.ndarray, np.ndarray]:
-    hidden_size = input_np.shape[0]
-    num_tokens = input_np.shape[1] * input_np.shape[2] * input_np.shape[3]
-    out_input = np.array(input_np, copy=True, order="F")
-    out_residual = np.array(residual_np, copy=True, order="F")
-    flat_in = out_input.reshape(hidden_size, num_tokens, order="F")
-    flat_res = out_residual.reshape(hidden_size, num_tokens, order="F")
-    for t in range(num_tokens):
-        z = flat_in[:, t] + flat_res[:, t]
-        flat_res[:, t] = z
-        inv_rms = float(1.0 / np.sqrt(np.mean(z * z) + epsilon))
-        flat_in[:, t] = z * inv_rms * weight_np
-    return out_input, out_residual
-
-
 def torch_rms_norm_fused_add_ref(
     input_np: np.ndarray, residual_np: np.ndarray, weight_np: np.ndarray, epsilon: float
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -56,30 +39,18 @@ def test_rms_norm_fused_add():
     weight_np = np.random.randn(HIDDEN_SIZE).astype(np.float32)
     input_me = np.array(input_np, copy=True, order="F")
     residual_me = np.array(residual_np, copy=True, order="F")
-    dims = [HIDDEN_SIZE, NUM_TOKENS, 1, BATCH]
 
-    rms_norm_fused_add_me.rms_norm_fused_add(input_me, residual_me, weight_np, dims, EPS)
-
-    ref_input, ref_residual = rms_norm_fused_add_ref(input_np, residual_np, weight_np, EPS)
-    torch_input, torch_residual = torch_rms_norm_fused_add_ref(
-        input_np, residual_np, weight_np, EPS
+    rms_norm_fused_add_me.forward_device(
+        input_me, residual_me, weight_np, HIDDEN_SIZE, NUM_TOKENS, EPS
     )
 
-    ok_input_np = utils.compare_np_torch(
-        input_me, torch.from_numpy(ref_input), atol=1e-5, rtol=1e-5
-    )
-    ok_res_np = utils.compare_np_torch(
+    ref_input, ref_residual = torch_rms_norm_fused_add_ref(input_np, residual_np, weight_np, EPS)
+
+    ok_input = utils.compare_np_torch(input_me, torch.from_numpy(ref_input), atol=1e-5, rtol=1e-5)
+    ok_res = utils.compare_np_torch(
         residual_me, torch.from_numpy(ref_residual), atol=1e-5, rtol=1e-5
     )
-    ok_input_torch = utils.compare_np_torch(
-        input_me, torch.from_numpy(torch_input), atol=1e-5, rtol=1e-5
-    )
-    ok_res_torch = utils.compare_np_torch(
-        residual_me, torch.from_numpy(torch_residual), atol=1e-5, rtol=1e-5
-    )
-    assert ok_input_np and ok_res_np and ok_input_torch and ok_res_torch, (
-        "rms_norm_fused_add output differs from reference"
-    )
+    assert ok_input and ok_res, "rms_norm_fused_add output differs from reference"
     print("Passed")
 
 
