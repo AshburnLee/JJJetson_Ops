@@ -382,6 +382,20 @@ target_link_libraries(linear_me PRIVATE
 
 set_python_module_props(linear_me)
 
+add_library(elementwise_me MODULE
+  elementwise_binding.cpp
+  $<TARGET_OBJECTS:elementwise_cuda>
+)
+
+target_link_libraries(elementwise_me PRIVATE
+  pybind11::module
+  ${Python3_LIBRARIES}
+  cuda
+  cudart
+)
+
+set_python_module_props(elementwise_me)
+
 add_library(transformer_runner_me MODULE
   transformer_runner_binding.cpp
   $<TARGET_OBJECTS:transformer_engine>
@@ -420,6 +434,7 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
             layer_norm_me
             rms_norm_fused_add_me
             linear_me
+            elementwise_me
             transformer_runner_me)
     target_compile_definitions(${t} PRIVATE MY_OPS_DEBUG=1)
   endforeach()

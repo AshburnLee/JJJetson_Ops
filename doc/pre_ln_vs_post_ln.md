@@ -55,7 +55,7 @@ hidden_in (x)
     ┌──────────────────┴──────────────────┐  residual skip（绕开 Norm+FFN）
     │                                     │
     ▼                                     │
- RMSNorm  ──►  x_norm2                   │
+ RMSNorm  ──►  x_norm2                    │
     │                                     │
     ▼                                     │
  FFN(x_norm2)                             │
@@ -78,30 +78,30 @@ Phase 1 block 目标链（roadmap）：
 
 ~~~
 hidden_in[device]
-    │
-    ├──────────────────────────────┐  residual stream（attn 子块前保存）
-    │                              │
-    ▼                              │
- rms_norm_fused_add_forward_device  (input_layernorm weight)
-    │  residual ← input + residual
-    │  input    ← RMSNorm(z) * weight
-    ▼                              │
- Q/K/V Linear ──► RoPE ──► FA ──► O Linear
-    │                              │
-    └──────────────► (+) ◄─────────┘   attn 子块出口
+    │                                      residual stream（attn 子块前保存）
+    ├─────────────────────────────────────────────────────────┐
+    │                                                         │
+    ▼                                                         │
+ rms_norm_fused_add_forward_device  (input_layernorm weight)  │
+    │  residual ← input + residual                            │
+    │  input    ← RMSNorm(z) * weight                         │
+    ▼                                                         │
+ Q/K/V Linear ──► RoPE ──► FA ──► O Linear                    │
+    │                                                         │
+    └──────────────► elementwise_add_forward_device ◄─────────┘  attn 子块出口
                        │
                        ▼
               hidden_mid[device]
-                       │
-    ┌──────────────────┴──────────────────┐  residual stream（FFN 子块前保存）
-    │                                     │
-    ▼                                     │
- rms_norm_fused_add_forward_device  (post_attention_layernorm weight)
-    │                                     │
-    ▼                                     │
- gate/up Linear ──► SwiGLU ──► down Linear
-    │                                     │
-    └──────────────► (+) ◄────────────────┘   FFN 子块出口
+                       │                    residual stream（FFN 子块前保存）
+    ┌──────────────────┴──────────────────────────────────────────────┐
+    │                                                                 │
+    ▼                                                                 │
+ rms_norm_fused_add_forward_device  (post_attention_layernorm weight) │
+    │                                                                 │
+    ▼                                                                 │
+ gate/up Linear ──► SwiGLU ──► down Linear                            │
+    │                                                                 │
+    └──────────────► elementwise_add_forward_device ◄─────────────────┘  FFN 子块出口
                        │
                        ▼
                  hidden_out[device]

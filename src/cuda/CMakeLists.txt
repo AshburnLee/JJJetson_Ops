@@ -76,6 +76,10 @@ add_library(swiglu_cuda OBJECT
   swiglu.cu
 )
 
+add_library(elementwise_cuda OBJECT
+  elementwise.cu
+)
+
 foreach(t gated_unary_cuda
           rope_cuda rope_search_table_cuda rope_global_cache_cuda q8_1_cuda mm_q4_0_q8_1_cuda
           cpy_continue_cuda
@@ -86,7 +90,8 @@ foreach(t gated_unary_cuda
           rms_norm_fused_add_cuda
           linear_cuda
           kv_cache_cuda
-          swiglu_cuda)
+          swiglu_cuda
+          elementwise_cuda)
   set_target_properties(${t} PROPERTIES
     POSITION_INDEPENDENT_CODE ON
   )
