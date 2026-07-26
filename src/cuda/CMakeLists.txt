@@ -96,7 +96,7 @@ foreach(t gated_unary_cuda
     POSITION_INDEPENDENT_CODE ON
   )
   target_include_directories(${t} PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
+    ${MY_OPS_INCLUDE_DIRS}
   )
 
   # Debug 构建时 为每一个 xxx_cuda 对象编译debug相关路径

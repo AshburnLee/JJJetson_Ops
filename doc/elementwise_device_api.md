@@ -1,6 +1,6 @@
 # Elementwise Device API
 
-通用二元逐元素算子（add / sub / mul / div），单 kernel 模板 + device functor 实现；Residual add 使用 `elementwise_add_forward_device`（`include/elementwise.h`）。
+通用二元逐元素算子（add / sub / mul / div），单 kernel 模板 + device functor 实现；Residual add 使用 `elementwise_add_forward_device`（`src/cuda/elementwise.h`）。
 
 ## Residual add 在 Pre-LN block 中的位置
 

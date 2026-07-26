@@ -1,6 +1,6 @@
 # RoPE Device API
 
-NeoX RoPE 生产路径：`rope_neox_forward_device`（`include/rope.h`）。
+NeoX RoPE 生产路径：`rope_neox_forward_device`（`src/cuda/rope.h`）。
 
 ## 数据流
 

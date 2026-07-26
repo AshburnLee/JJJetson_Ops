@@ -94,7 +94,7 @@ static void rope_neox_launch_device(cudaStream_t stream, const float *d_input, f
 }
 
 // -========================-- 生产（device）--========================-
-// ★ 业务入口（对外声明见 include/rope.h）
+// ★ 业务入口（对外声明见 src/cuda/rope.h）
 // TransformerRunner 等在 Linear 产出 d_q/d_k 后应直接调用本函数：
 //   - d_input / d_output / d_pos 均已在 GPU，本路径不做 H2D/D2H
 //   - d_output 可与 d_input 相同（in-place）

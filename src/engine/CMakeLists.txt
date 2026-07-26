@@ -16,11 +16,11 @@ set_target_properties(moe_engine transformer_engine PROPERTIES
 )
 
 target_include_directories(moe_engine PRIVATE
-  ${CMAKE_SOURCE_DIR}/include
+  ${MY_OPS_INCLUDE_DIRS}
 )
 
 target_include_directories(transformer_engine PRIVATE
-  ${CMAKE_SOURCE_DIR}/include
+  ${MY_OPS_INCLUDE_DIRS}
 )
 
 if(CMAKE_BUILD_TYPE MATCHES "Debug")

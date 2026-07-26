@@ -11,6 +11,8 @@
 cmake_minimum_required(VERSION 3.22)
 project(my_ops LANGUAGES CXX CUDA)
 
+include("${CMAKE_SOURCE_DIR}/cmake/MyOpsIncludeDirs.cmake")
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 

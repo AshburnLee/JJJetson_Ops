@@ -1,6 +1,6 @@
 # RMSNorm Device API
 
-Pre-LN RMSNorm 生产路径：`rms_norm_forward_device`、`rms_norm_fused_add_forward_device`（`include/rms_norm.h`）。
+Pre-LN RMSNorm 生产路径：`rms_norm_forward_device`、`rms_norm_fused_add_forward_device`（`src/cuda/rms_norm.h`）。
 
 ## 数据流（Pre-LN block 片段）
 

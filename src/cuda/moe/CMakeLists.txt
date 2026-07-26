@@ -38,7 +38,7 @@ foreach(t moe_top_k_cuda
     POSITION_INDEPENDENT_CODE ON
   )
   target_include_directories(${t} PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
+    ${MY_OPS_INCLUDE_DIRS}
   )
 
   if(CMAKE_BUILD_TYPE MATCHES "Debug")

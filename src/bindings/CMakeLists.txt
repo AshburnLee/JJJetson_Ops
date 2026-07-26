@@ -10,7 +10,7 @@
 #
 include_directories(
   ${Python3_INCLUDE_DIRS}
-  ${CMAKE_SOURCE_DIR}/include
+  ${MY_OPS_INCLUDE_DIRS}
 )
 
 function(set_python_module_props target_name)

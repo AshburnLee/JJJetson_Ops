@@ -1,6 +1,6 @@
 # FA Device API
 
-Flash Attention **生产路径**：`fa_double_buffer_forward_device`（`include/fa.h`，实现 `src/cuda/fa/fa_double_buffer.cu`）。
+Flash Attention **生产路径**：`fa_double_buffer_forward_device`（`src/cuda/fa/fa.h`，实现 `src/cuda/fa/fa_double_buffer.cu`）。
 
 `fa/` 下其余 kernel 为中间优化实验，**engine 勿用**。
 

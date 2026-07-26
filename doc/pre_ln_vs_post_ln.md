@@ -133,4 +133,4 @@ Qwen3 额外特性 (不影响 block 级 Pre-LN 判定)：**QK-Norm** (对 Q/K �
 
 - Roadmap block 定义：`.cursor/rules/jjjetson-ops-roadmap.mdc`
 - RMSNorm device API：`doc/rms_norm_device_api.md`
-- Runner 集成状态：`include/transformer_runner.h`, `src/engine/transformer_runner.cpp`
+- Runner 集成状态：`src/engine/transformer_runner.h`, `src/engine/transformer_runner.cpp`
