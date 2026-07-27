@@ -6,6 +6,7 @@
 
 #include "cublas_utils.cuh"
 #include "cuda_utils.h"
+#include "elementwise.h"
 #include "linear.h"
 #include "rms_norm.h"
 #include "rope.h"
@@ -213,6 +214,16 @@ extern "C" void transformer_layer_linears_forward_device(
 
     linear_forward_device(stream, cublas_handle, buffers->d_ffn_mid, d_w_down,
                           buffers->d_hidden_out, I, H, T);
+
+    // Post-FFN residual add：层输出 = d_residual + ffn_out
+    // 调用前: d_residual = h + attn_out（Pre-FFN fused add 写入）, d_hidden_out = ffn_out
+    // 调用后: d_hidden_out 覆盖为 d_residual + ffn_out（in-place，d_out = d_b）
+    const int n_hidden_elem = H * T;
+    if (elementwise_add_forward_device(stream, buffers->d_residual, buffers->d_hidden_out,
+                                       buffers->d_hidden_out, n_hidden_elem) != 0) {
+        std::fprintf(stderr, "transformer_layer: post-ffn elementwise_add failed\n");
+        return;
+    }
 }
 
 // Weight 在 Runner create时，H2D 一次，存入Runner中

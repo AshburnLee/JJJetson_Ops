@@ -1,3 +1,4 @@
+import elementwise_me
 import linear_me
 import numpy as np
 import rms_norm_fused_add_me
@@ -61,7 +62,7 @@ def _rope_qk_ref(q: np.ndarray, k: np.ndarray, pos_offset: int) -> tuple[np.ndar
     return q_out, k_out
 
 
-# 手动串联 Pre-LN fused add + Linear + RoPE + Attention占位 + FFN（无 Post-FFN residual，对齐 40b）
+# 手动串联 Pre-LN fused add + Linear + RoPE + Attention占位 + FFN + Post-FFN residual add
 def chain_linear_me_ref(
     hidden_np: np.ndarray,
     w_q: np.ndarray,
@@ -90,7 +91,7 @@ def chain_linear_me_ref(
     attn_out = np.zeros((HIDDEN_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
     linear_me.forward_host(q, w_o, attn_out, Q_DIM, NUM_TOKENS, HIDDEN_SIZE)
 
-    h_ffn_in, _residual_mid = _fused_add_norm(attn_out, residual_h, w_post_attention_layernorm)
+    h_ffn_in, residual_mid = _fused_add_norm(attn_out, residual_h, w_post_attention_layernorm)
 
     gate = np.zeros((INTERMEDIATE_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
     up = np.zeros((INTERMEDIATE_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
@@ -98,9 +99,12 @@ def chain_linear_me_ref(
     linear_me.forward_host(h_ffn_in, w_up, up, HIDDEN_SIZE, NUM_TOKENS, INTERMEDIATE_SIZE)
 
     ffn_mid = (_silu_np(gate) * up).astype(np.float32, order="F")
-    h_out = np.zeros((HIDDEN_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
-    linear_me.forward_host(ffn_mid, w_down, h_out, INTERMEDIATE_SIZE, NUM_TOKENS, HIDDEN_SIZE)
-    return h_out
+    ffn_out = np.zeros((HIDDEN_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
+    linear_me.forward_host(ffn_mid, w_down, ffn_out, INTERMEDIATE_SIZE, NUM_TOKENS, HIDDEN_SIZE)
+
+    layer_out = np.zeros((HIDDEN_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
+    elementwise_me.forward_host("add", residual_mid, ffn_out, layer_out)
+    return layer_out
 
 
 # torch 的 GEMM 路径与 transformer_runner_me 不尽相同，与torch相比， backend 不同
@@ -160,7 +164,7 @@ def test_transformer_runner():
         pos_offset=0,
     )
     ok = utils.compare_np_torch(output_me, torch.from_numpy(ref_np), atol=1e-4, rtol=1e-4)
-    assert ok, "transformer_runner output differs from chained linear_me + Pre-LN ref"
+    assert ok, "transformer_runner output differs from chained Pre-LN + residual ref"
     print("Passed")
 
 

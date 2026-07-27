@@ -402,6 +402,7 @@ add_library(transformer_runner_me MODULE
   $<TARGET_OBJECTS:linear_cuda>
   $<TARGET_OBJECTS:swiglu_cuda>
   $<TARGET_OBJECTS:rms_norm_fused_add_cuda>
+  $<TARGET_OBJECTS:elementwise_cuda>
   $<TARGET_OBJECTS:rope_global_cache_cuda>
   $<TARGET_OBJECTS:rope_model>
 )
