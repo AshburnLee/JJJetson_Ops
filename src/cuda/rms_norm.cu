@@ -71,6 +71,7 @@ static void rms_norm_launch_device(cudaStream_t stream, const float *d_input, co
 }
 
 // -========================-- 生产（device）--========================-
+// 生产中实际使用的是norm_fused_add, 单独的 norm 不适用，暂为独立算子
 extern "C" int rms_norm_forward_device(void *stream, const float *d_input, const float *d_weight,
                                        float *d_output, int hidden_size, int num_tokens,
                                        float epsilon) {

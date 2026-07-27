@@ -7,8 +7,11 @@
 #include "cublas_utils.cuh"
 #include "cuda_utils.h"
 #include "linear.h"
+#include "rms_norm.h"
 #include "rope.h"
 #include "swiglu.h"
+
+static constexpr float kTransformerRmsNormEps = 1e-6f;
 
 // Transformer 调度器
 struct TransformerRunner {
@@ -71,6 +74,8 @@ transformer_layer_linear_buffers_create(int num_tokens, int hidden_size, int q_d
                           transformer_col_major_bytes(intermediate_size, num_tokens)));
     CUDA_CHECK(
         cudaMalloc(&buffers->d_hidden_out, transformer_col_major_bytes(hidden_size, num_tokens)));
+    CUDA_CHECK(
+        cudaMalloc(&buffers->d_residual, transformer_col_major_bytes(hidden_size, num_tokens)));
 
     return buffers;
 }
@@ -90,6 +95,7 @@ static void transformer_layer_linear_buffers_destroy(TransformerLayerLinearDevic
     cudaFree(buffers->d_up);
     cudaFree(buffers->d_ffn_mid);
     cudaFree(buffers->d_hidden_out);
+    cudaFree(buffers->d_residual);
     delete buffers;
 }
 
@@ -115,23 +121,45 @@ static void transformer_runner_copy_output(cudaStream_t stream, float *d_hidden_
     }
 }
 
-// 生产时的一层 Transformer pipeline (Linear + RoPE + Attention 占位 + FFN，均在 Device)
+// Pre-LN fused add + Linear + RoPE + Attention 占位 + FFN（Post-FFN residual add 见 40c）
 extern "C" void transformer_layer_linears_forward_device(
     void *stream, void *cublas_handle, TransformerLayerLinearDeviceBuffers *buffers,
-    const float *d_w_q, const float *d_w_k, const float *d_w_v, const float *d_w_o,
-    const float *d_w_gate, const float *d_w_up, const float *d_w_down,
-    const RopeCosSinCache *rope_cache, const int *d_pos, int head_dim, int num_q_heads,
-    int num_kv_heads) {
+    const float *d_w_input_layernorm, const float *d_w_post_attention_layernorm, const float *d_w_q,
+    const float *d_w_k, const float *d_w_v, const float *d_w_o, const float *d_w_gate,
+    const float *d_w_up, const float *d_w_down, const RopeCosSinCache *rope_cache, const int *d_pos,
+    int head_dim, int num_q_heads, int num_kv_heads, float rms_norm_epsilon) {
     const int H = buffers->hidden_size;
     const int T = buffers->num_tokens;
     const int Q = buffers->q_dim;
     const int KV = buffers->kv_dim;
     const int I = buffers->intermediate_size;
+    const cudaStream_t s = static_cast<cudaStream_t>(stream);
+    const size_t hidden_bytes = transformer_col_major_bytes(H, T);
 
+    // Pre-Attn:
+    /*
+    调用前:
+    d_hidden   = h        (层输入)
+    d_residual = 0        (memset，尚无 skip)
+
+    rms_norm_fused_add 内部:
+    z = d_hidden + d_residual = h + 0 = h
+
+    调用后（两个 buffer 都被 in-place 覆盖）:
+    d_residual = z = h                    ← 存 skip，给后面 Pre-FFN 用
+    d_hidden   = RMSNorm(h) * w_input      ← 供 Q/K/V Linear
+    */
+    CUDA_CHECK(cudaMemsetAsync(buffers->d_residual, 0, hidden_bytes, s));
+    if (rms_norm_fused_add_forward_device(stream, buffers->d_hidden, buffers->d_residual,
+                                          d_w_input_layernorm, H, T, rms_norm_epsilon) != 0) {
+        std::fprintf(stderr, "transformer_layer: pre-attn rms_norm_fused_add failed\n");
+        return;
+    }
+    // Linear * 3
     linear_forward_device(stream, cublas_handle, buffers->d_hidden, d_w_q, buffers->d_q, H, Q, T);
     linear_forward_device(stream, cublas_handle, buffers->d_hidden, d_w_k, buffers->d_k, H, KV, T);
     linear_forward_device(stream, cublas_handle, buffers->d_hidden, d_w_v, buffers->d_v, H, KV, T);
-
+    // RoPE
     if (rope_cache != nullptr && d_pos != nullptr) {
         // RoPE 仅作用于 Q/K；V 不旋转。layout 与 d_q/d_k 的 [q_dim/kv_dim, T] col-major 兼容
         if (rope_neox_forward_device(stream, rope_cache, buffers->d_q, buffers->d_q, d_pos,
@@ -153,6 +181,28 @@ extern "C" void transformer_layer_linears_forward_device(
 
     linear_forward_device(stream, cublas_handle, buffers->d_attn_out, d_w_o, buffers->d_hidden_mid,
                           Q, H, T);
+
+    // Pre-FFN:
+    /*
+    调用前:
+    d_hidden_mid = attn_out   (O Linear 输出)
+    d_residual   = h          (Pre-Attn 存下的 skip)
+
+    rms_norm_fused_add 内部:
+    z = attn_out + h          ← 等价「Post-Attn residual add」
+
+    调用后:
+    d_residual   = z = h + attn_out       ← 更新 skip（40c Post-FFN add 还会用）
+    d_hidden_mid = RMSNorm(z) * w_post  ← 供 gate/up Linear
+    */
+    if (rms_norm_fused_add_forward_device(stream, buffers->d_hidden_mid, buffers->d_residual,
+                                          d_w_post_attention_layernorm, H, T,
+                                          rms_norm_epsilon) != 0) {
+        std::fprintf(stderr, "transformer_layer: pre-ffn rms_norm_fused_add failed\n");
+        return;
+    }
+
+    // FFN
     linear_forward_device(stream, cublas_handle, buffers->d_hidden_mid, d_w_gate, buffers->d_gate,
                           H, I, T);
     linear_forward_device(stream, cublas_handle, buffers->d_hidden_mid, d_w_up, buffers->d_up, H, I,
@@ -348,9 +398,11 @@ extern "C" int transformer_runner_forward_device(TransformerRunner *runner,
                                   ctx->num_tokens);
 
     transformer_layer_linears_forward_device(
-        stream, runner->cublas_handle, buffers, runner->d_w_q, runner->d_w_k, runner->d_w_v,
+        stream, runner->cublas_handle, buffers, runner->d_w_input_layernorm,
+        runner->d_w_post_attention_layernorm, runner->d_w_q, runner->d_w_k, runner->d_w_v,
         runner->d_w_o, runner->d_w_gate, runner->d_w_up, runner->d_w_down, runner->rope_cache,
-        ctx->d_pos, runner->head_dim, runner->num_q_heads, runner->num_kv_heads);
+        ctx->d_pos, runner->head_dim, runner->num_q_heads, runner->num_kv_heads,
+        kTransformerRmsNormEps);
     // 计算结束后 D2D
     transformer_runner_copy_output(stream, ctx->d_hidden_out, buffers, runner->hidden_size,
                                    ctx->num_tokens);
@@ -376,9 +428,10 @@ extern "C" int transformer_runner_test(TransformerRunner *runner, const float *h
                                cudaMemcpyHostToDevice, stream));
     // Linear + RoPE + Attention 占位 + FFN
     transformer_layer_linears_forward_device(
-        stream, runner->cublas_handle, buffers, runner->d_w_q, runner->d_w_k, runner->d_w_v,
+        stream, runner->cublas_handle, buffers, runner->d_w_input_layernorm,
+        runner->d_w_post_attention_layernorm, runner->d_w_q, runner->d_w_k, runner->d_w_v,
         runner->d_w_o, runner->d_w_gate, runner->d_w_up, runner->d_w_down, runner->rope_cache,
-        d_pos, runner->head_dim, runner->num_q_heads, runner->num_kv_heads);
+        d_pos, runner->head_dim, runner->num_q_heads, runner->num_kv_heads, kTransformerRmsNormEps);
     // D2H
     CUDA_CHECK(cudaMemcpyAsync(hidden_out_host, buffers->d_hidden_out, hidden_bytes,
                                cudaMemcpyDeviceToHost, stream));

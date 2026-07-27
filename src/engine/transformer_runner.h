@@ -28,6 +28,7 @@ typedef struct TransformerLayerLinearDeviceBuffers {
     float *d_up;
     float *d_ffn_mid;
     float *d_hidden_out;
+    float *d_residual; // Pre-LN residual stream（fused add 写入 z）
 } TransformerLayerLinearDeviceBuffers;
 
 typedef struct TransformerRunnerForwardCtx {
@@ -55,15 +56,13 @@ void transformer_runner_destroy(TransformerRunner *runner);
 TransformerLayerLinearDeviceBuffers *transformer_runner_buffers_get(TransformerRunner *runner,
                                                                     int num_tokens);
 
-// 单层 Linear 链 + RoPE(Q,K) + Attention 占位 + FFN
-void transformer_layer_linears_forward_device(void *stream, void *cublas_handle,
-                                              TransformerLayerLinearDeviceBuffers *buffers,
-                                              const float *d_w_q, const float *d_w_k,
-                                              const float *d_w_v, const float *d_w_o,
-                                              const float *d_w_gate, const float *d_w_up,
-                                              const float *d_w_down,
-                                              const RopeCosSinCache *rope_cache, const int *d_pos,
-                                              int head_dim, int num_q_heads, int num_kv_heads);
+// 单层 Pre-LN（fused add + RMSNorm）+ Linear + RoPE + Attention 占位 + FFN
+void transformer_layer_linears_forward_device(
+    void *stream, void *cublas_handle, TransformerLayerLinearDeviceBuffers *buffers,
+    const float *d_w_input_layernorm, const float *d_w_post_attention_layernorm, const float *d_w_q,
+    const float *d_w_k, const float *d_w_v, const float *d_w_o, const float *d_w_gate,
+    const float *d_w_up, const float *d_w_down, const RopeCosSinCache *rope_cache, const int *d_pos,
+    int head_dim, int num_q_heads, int num_kv_heads, float rms_norm_epsilon);
 
 // 生产入口：ctx 中 d_hidden_in/out 已在 GPU，内部 D2D 拷贝后执行 7 Linear 链
 int transformer_runner_forward_device(TransformerRunner *runner,

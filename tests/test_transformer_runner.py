@@ -1,5 +1,6 @@
 import linear_me
 import numpy as np
+import rms_norm_fused_add_me
 import rope_global_cache_me
 import torch
 import transformer_runner_me
@@ -18,10 +19,7 @@ BATCH = 1
 SEED = 24
 MAX_SEQ_LEN = 256
 ROPE_FREQ_BASE = 10000.0
-
-
-def _dims(in_features: int) -> list[int]:
-    return [in_features, NUM_TOKENS, 1, BATCH]
+RMS_NORM_EPS = 1e-6
 
 
 def _silu_np(x: np.ndarray) -> np.ndarray:
@@ -33,6 +31,17 @@ def _silu_np(x: np.ndarray) -> np.ndarray:
     exp_x = np.exp(x_neg)
     out[~pos] = (x_neg * exp_x) / (1.0 + exp_x)
     return out
+
+
+def _fused_add_norm(
+    input_np: np.ndarray, residual_np: np.ndarray, weight_np: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    input_me = np.array(input_np, copy=True, order="F")
+    residual_me = np.array(residual_np, copy=True, order="F")
+    rms_norm_fused_add_me.forward_host(
+        input_me, residual_me, weight_np, HIDDEN_SIZE, NUM_TOKENS, RMS_NORM_EPS
+    )
+    return input_me, residual_me
 
 
 def _rope_qk_ref(q: np.ndarray, k: np.ndarray, pos_offset: int) -> tuple[np.ndarray, np.ndarray]:
@@ -52,8 +61,7 @@ def _rope_qk_ref(q: np.ndarray, k: np.ndarray, pos_offset: int) -> tuple[np.ndar
     return q_out, k_out
 
 
-# 用 linear_me 手动串联 (Linear + RoPE + Attention占位 + FFN) 作为 ref；
-# 每次 linear_me.forward_host 都会 H2D，该函数仅作参考，不是生产路径
+# 手动串联 Pre-LN fused add + Linear + RoPE + Attention占位 + FFN（无 Post-FFN residual，对齐 40b）
 def chain_linear_me_ref(
     hidden_np: np.ndarray,
     w_q: np.ndarray,
@@ -63,24 +71,31 @@ def chain_linear_me_ref(
     w_gate: np.ndarray,
     w_up: np.ndarray,
     w_down: np.ndarray,
+    w_input_layernorm: np.ndarray,
+    w_post_attention_layernorm: np.ndarray,
     pos_offset: int = 0,
 ) -> np.ndarray:
+    residual_zero = np.zeros_like(hidden_np, order="F")
+    h_norm, residual_h = _fused_add_norm(hidden_np, residual_zero, w_input_layernorm)
+
     q = np.zeros((Q_DIM, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
     k = np.zeros((KV_DIM, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
     v = np.zeros((KV_DIM, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
-    linear_me.forward_host(hidden_np, w_q, q, HIDDEN_SIZE, NUM_TOKENS, Q_DIM)
-    linear_me.forward_host(hidden_np, w_k, k, HIDDEN_SIZE, NUM_TOKENS, KV_DIM)
-    linear_me.forward_host(hidden_np, w_v, v, HIDDEN_SIZE, NUM_TOKENS, KV_DIM)
+    linear_me.forward_host(h_norm, w_q, q, HIDDEN_SIZE, NUM_TOKENS, Q_DIM)
+    linear_me.forward_host(h_norm, w_k, k, HIDDEN_SIZE, NUM_TOKENS, KV_DIM)
+    linear_me.forward_host(h_norm, w_v, v, HIDDEN_SIZE, NUM_TOKENS, KV_DIM)
 
     q, _k = _rope_qk_ref(q, k, pos_offset)
 
-    h_mid = np.zeros((HIDDEN_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
-    linear_me.forward_host(q, w_o, h_mid, Q_DIM, NUM_TOKENS, HIDDEN_SIZE)
+    attn_out = np.zeros((HIDDEN_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
+    linear_me.forward_host(q, w_o, attn_out, Q_DIM, NUM_TOKENS, HIDDEN_SIZE)
+
+    h_ffn_in, _residual_mid = _fused_add_norm(attn_out, residual_h, w_post_attention_layernorm)
 
     gate = np.zeros((INTERMEDIATE_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
     up = np.zeros((INTERMEDIATE_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
-    linear_me.forward_host(h_mid, w_gate, gate, HIDDEN_SIZE, NUM_TOKENS, INTERMEDIATE_SIZE)
-    linear_me.forward_host(h_mid, w_up, up, HIDDEN_SIZE, NUM_TOKENS, INTERMEDIATE_SIZE)
+    linear_me.forward_host(h_ffn_in, w_gate, gate, HIDDEN_SIZE, NUM_TOKENS, INTERMEDIATE_SIZE)
+    linear_me.forward_host(h_ffn_in, w_up, up, HIDDEN_SIZE, NUM_TOKENS, INTERMEDIATE_SIZE)
 
     ffn_mid = (_silu_np(gate) * up).astype(np.float32, order="F")
     h_out = np.zeros((HIDDEN_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
@@ -107,7 +122,7 @@ def test_transformer_runner():
     w_input_layernorm = np.random.randn(HIDDEN_SIZE).astype(np.float32)
     w_post_attention_layernorm = np.random.randn(HIDDEN_SIZE).astype(np.float32)
 
-    # H2D * 9 (linear + norm weights; forward 仍不含 norm，40b 接入)
+    # H2D * 9 (linear + norm weights; forward 仍含 norm，已接入)
     runner = transformer_runner_me.create_runner(
         HIDDEN_SIZE,
         INTERMEDIATE_SIZE,
@@ -125,17 +140,27 @@ def test_transformer_runner():
         w_down,
         w_input_layernorm,
         w_post_attention_layernorm,
-    )  # 返回 handle
+    )
 
     output_me = np.zeros((HIDDEN_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
-    # test 入口：pos_offset=0 表示 prefill，pos=[0..T-1]
     transformer_runner_me.forward_host(runner, NUM_TOKENS, 0, hidden_np, output_me)
-    transformer_runner_me.destroy_runner(runner)  # handle 表示同一个 runner
+    transformer_runner_me.destroy_runner(runner)
 
-    # transformer_runner vs linear_me 手动链：两种编排方式结果应一致
-    ref_np = chain_linear_me_ref(hidden_np, w_q, w_k, w_v, w_o, w_gate, w_up, w_down, pos_offset=0)
+    ref_np = chain_linear_me_ref(
+        hidden_np,
+        w_q,
+        w_k,
+        w_v,
+        w_o,
+        w_gate,
+        w_up,
+        w_down,
+        w_input_layernorm,
+        w_post_attention_layernorm,
+        pos_offset=0,
+    )
     ok = utils.compare_np_torch(output_me, torch.from_numpy(ref_np), atol=1e-4, rtol=1e-4)
-    assert ok, "transformer_runner output differs from chained linear_me + RoPE ref"
+    assert ok, "transformer_runner output differs from chained linear_me + Pre-LN ref"
     print("Passed")
 
 
