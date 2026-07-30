@@ -396,6 +396,20 @@ target_link_libraries(elementwise_me PRIVATE
 
 set_python_module_props(elementwise_me)
 
+add_library(qkv_pack_fp16_me MODULE
+  qkv_pack_fp16_binding.cpp
+  $<TARGET_OBJECTS:qkv_pack_fp16_cuda>
+)
+
+target_link_libraries(qkv_pack_fp16_me PRIVATE
+  pybind11::module
+  ${Python3_LIBRARIES}
+  cuda
+  cudart
+)
+
+set_python_module_props(qkv_pack_fp16_me)
+
 add_library(transformer_runner_me MODULE
   transformer_runner_binding.cpp
   $<TARGET_OBJECTS:transformer_engine>
@@ -403,6 +417,7 @@ add_library(transformer_runner_me MODULE
   $<TARGET_OBJECTS:swiglu_cuda>
   $<TARGET_OBJECTS:rms_norm_fused_add_cuda>
   $<TARGET_OBJECTS:elementwise_cuda>
+  $<TARGET_OBJECTS:qkv_pack_fp16_cuda>
   $<TARGET_OBJECTS:rope_global_cache_cuda>
   $<TARGET_OBJECTS:rope_model>
 )
@@ -437,6 +452,7 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
             rms_norm_fused_add_me
             linear_me
             elementwise_me
+            qkv_pack_fp16_me
             transformer_runner_me)
     target_compile_definitions(${t} PRIVATE MY_OPS_DEBUG=1)
   endforeach()

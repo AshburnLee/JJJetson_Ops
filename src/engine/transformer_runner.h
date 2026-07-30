@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include "rope_cossin_cache.h"
 
@@ -29,6 +30,11 @@ typedef struct TransformerLayerLinearDeviceBuffers {
     float *d_ffn_mid;
     float *d_hidden_out;
     float *d_residual; // Pre-LN residual stream（fused add 写入 z）
+
+    // FA/KV layout fp16：[head_dim, num_tokens, num_heads, 1]（由 flat fp32 Q/K/V pack）
+    uint16_t *d_q_fp16;
+    uint16_t *d_k_fp16;
+    uint16_t *d_v_fp16;
 } TransformerLayerLinearDeviceBuffers;
 
 typedef struct TransformerRunnerForwardCtx {

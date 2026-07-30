@@ -8,6 +8,7 @@
 #include "cuda_utils.h"
 #include "elementwise.h"
 #include "linear.h"
+#include "qkv_pack_fp16.h"
 #include "rms_norm.h"
 #include "rope.h"
 #include "swiglu.h"
@@ -51,7 +52,8 @@ static size_t transformer_col_major_bytes(int features, int num_tokens) {
 // cudaMalloc
 static TransformerLayerLinearDeviceBuffers *
 transformer_layer_linear_buffers_create(int num_tokens, int hidden_size, int q_dim, int kv_dim,
-                                        int intermediate_size) {
+                                        int intermediate_size, int head_dim, int num_q_heads,
+                                        int num_kv_heads) {
     auto *buffers = new TransformerLayerLinearDeviceBuffers{};
     buffers->num_tokens = num_tokens;
     buffers->hidden_size = hidden_size;
@@ -78,6 +80,14 @@ transformer_layer_linear_buffers_create(int num_tokens, int hidden_size, int q_d
     CUDA_CHECK(
         cudaMalloc(&buffers->d_residual, transformer_col_major_bytes(hidden_size, num_tokens)));
 
+    const size_t q_fp16_bytes =
+        static_cast<size_t>(head_dim) * num_tokens * num_q_heads * sizeof(uint16_t);
+    const size_t kv_fp16_bytes =
+        static_cast<size_t>(head_dim) * num_tokens * num_kv_heads * sizeof(uint16_t);
+    CUDA_CHECK(cudaMalloc(&buffers->d_q_fp16, q_fp16_bytes));
+    CUDA_CHECK(cudaMalloc(&buffers->d_k_fp16, kv_fp16_bytes));
+    CUDA_CHECK(cudaMalloc(&buffers->d_v_fp16, kv_fp16_bytes));
+
     return buffers;
 }
 
@@ -97,6 +107,9 @@ static void transformer_layer_linear_buffers_destroy(TransformerLayerLinearDevic
     cudaFree(buffers->d_ffn_mid);
     cudaFree(buffers->d_hidden_out);
     cudaFree(buffers->d_residual);
+    cudaFree(buffers->d_q_fp16);
+    cudaFree(buffers->d_k_fp16);
+    cudaFree(buffers->d_v_fp16);
     delete buffers;
 }
 
@@ -173,6 +186,28 @@ extern "C" void transformer_layer_linears_forward_device(
             std::fprintf(stderr, "transformer_layer: rope on K failed\n");
             return;
         }
+    }
+
+    /*
+    Q/K/V pack（RoPE 后）:
+    调用前: d_q/d_k/d_v = fp32 flat [feat_dim, T]（Linear/RoPE 输出）
+    调用后: d_q_fp16/d_k_fp16/d_v_fp16 = fp16 [head_dim, T, num_heads, 1]（FA/KV layout）
+    Attention 占位仍读 fp32 d_q；FA / KV cache 接入时使用 fp16 buffer。
+    */
+    if (qkv_pack_fp16_forward_device(stream, buffers->d_q, buffers->d_q_fp16, head_dim, T,
+                                     num_q_heads) != 0) {
+        std::fprintf(stderr, "transformer_layer: q pack fp16 failed\n");
+        return;
+    }
+    if (qkv_pack_fp16_forward_device(stream, buffers->d_k, buffers->d_k_fp16, head_dim, T,
+                                     num_kv_heads) != 0) {
+        std::fprintf(stderr, "transformer_layer: k pack fp16 failed\n");
+        return;
+    }
+    if (qkv_pack_fp16_forward_device(stream, buffers->d_v, buffers->d_v_fp16, head_dim, T,
+                                     num_kv_heads) != 0) {
+        std::fprintf(stderr, "transformer_layer: v pack fp16 failed\n");
+        return;
     }
 
     const size_t attn_bytes = transformer_col_major_bytes(Q, T);
@@ -355,7 +390,8 @@ transformer_runner_buffers_get(TransformerRunner *runner, int num_tokens) {
     }
 
     TransformerLayerLinearDeviceBuffers *buffers = transformer_layer_linear_buffers_create(
-        num_tokens, runner->hidden_size, runner->q_dim, runner->kv_dim, runner->intermediate_size);
+        num_tokens, runner->hidden_size, runner->q_dim, runner->kv_dim, runner->intermediate_size,
+        runner->head_dim, runner->num_q_heads, runner->num_kv_heads);
     runner->buffers_by_tokens[num_tokens] = buffers;
     return buffers;
 }
