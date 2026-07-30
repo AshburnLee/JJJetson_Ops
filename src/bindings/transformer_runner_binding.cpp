@@ -66,4 +66,12 @@ PYBIND11_MODULE(transformer_runner_me, m) {
         },
         py::arg("runner_handle"), py::arg("num_tokens"), py::arg("pos_offset") = 0,
         py::arg("hidden_in"), py::arg("hidden_out"));
+
+    m.def(
+        "kv_cache_len",
+        [](uintptr_t runner_handle) {
+            return transformer_runner_kv_cache_len(
+                reinterpret_cast<TransformerRunner *>(runner_handle));
+        },
+        py::arg("runner_handle"), "Current KV cache length after forward + advance_len");
 }

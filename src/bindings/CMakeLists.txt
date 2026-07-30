@@ -418,6 +418,8 @@ add_library(transformer_runner_me MODULE
   $<TARGET_OBJECTS:rms_norm_fused_add_cuda>
   $<TARGET_OBJECTS:elementwise_cuda>
   $<TARGET_OBJECTS:qkv_pack_fp16_cuda>
+  $<TARGET_OBJECTS:kv_cache_cuda>
+  $<TARGET_OBJECTS:kv_cache_model>
   $<TARGET_OBJECTS:rope_global_cache_cuda>
   $<TARGET_OBJECTS:rope_model>
 )

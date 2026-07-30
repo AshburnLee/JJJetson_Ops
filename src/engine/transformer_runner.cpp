@@ -7,6 +7,7 @@
 #include "cublas_utils.cuh"
 #include "cuda_utils.h"
 #include "elementwise.h"
+#include "kv_cache.h"
 #include "linear.h"
 #include "qkv_pack_fp16.h"
 #include "rms_norm.h"
@@ -28,6 +29,10 @@ struct TransformerRunner {
     bool owns_stream = false;
     cublasHandle_t cublas_handle = nullptr;
     RopeCosSinCache *rope_cache = nullptr;
+    KVCache *kv_cache = nullptr;
+    int max_seq_len = 0;
+    uint16_t *d_k_fa_fp16 = nullptr;
+    uint16_t *d_v_fa_fp16 = nullptr;
 
     float *d_w_q = nullptr;
     float *d_w_k = nullptr;
@@ -82,11 +87,7 @@ transformer_layer_linear_buffers_create(int num_tokens, int hidden_size, int q_d
 
     const size_t q_fp16_bytes =
         static_cast<size_t>(head_dim) * num_tokens * num_q_heads * sizeof(uint16_t);
-    const size_t kv_fp16_bytes =
-        static_cast<size_t>(head_dim) * num_tokens * num_kv_heads * sizeof(uint16_t);
     CUDA_CHECK(cudaMalloc(&buffers->d_q_fp16, q_fp16_bytes));
-    CUDA_CHECK(cudaMalloc(&buffers->d_k_fp16, kv_fp16_bytes));
-    CUDA_CHECK(cudaMalloc(&buffers->d_v_fp16, kv_fp16_bytes));
 
     return buffers;
 }
@@ -108,8 +109,6 @@ static void transformer_layer_linear_buffers_destroy(TransformerLayerLinearDevic
     cudaFree(buffers->d_hidden_out);
     cudaFree(buffers->d_residual);
     cudaFree(buffers->d_q_fp16);
-    cudaFree(buffers->d_k_fp16);
-    cudaFree(buffers->d_v_fp16);
     delete buffers;
 }
 
@@ -141,7 +140,8 @@ extern "C" void transformer_layer_linears_forward_device(
     const float *d_w_input_layernorm, const float *d_w_post_attention_layernorm, const float *d_w_q,
     const float *d_w_k, const float *d_w_v, const float *d_w_o, const float *d_w_gate,
     const float *d_w_up, const float *d_w_down, const RopeCosSinCache *rope_cache, const int *d_pos,
-    int head_dim, int num_q_heads, int num_kv_heads, float rms_norm_epsilon) {
+    KVCache *kv_cache, uint16_t *d_k_fa_fp16, uint16_t *d_v_fa_fp16, int max_seq_len, int head_dim,
+    int num_q_heads, int num_kv_heads, float rms_norm_epsilon) {
     const int H = buffers->hidden_size;
     const int T = buffers->num_tokens;
     const int Q = buffers->q_dim;
@@ -189,29 +189,50 @@ extern "C" void transformer_layer_linears_forward_device(
     }
 
     /*
-    Q/K/V pack（RoPE 后）:
-    调用前: d_q/d_k/d_v = fp32 flat [feat_dim, T]（Linear/RoPE 输出）
-    调用后: d_q_fp16/d_k_fp16/d_v_fp16 = fp16 [head_dim, T, num_heads, 1]（FA/KV layout）
-    Attention 占位仍读 fp32 d_q；FA / KV cache 接入时使用 fp16 buffer。
+    Q pack（RoPE 后）:
+    调用前: d_q = fp32 flat [q_dim, T]
+    调用后: d_q_fp16 = fp16 [head_dim, T, num_q_heads, 1]（本步 FA Q）
     */
     if (qkv_pack_fp16_forward_device(stream, buffers->d_q, buffers->d_q_fp16, head_dim, T,
                                      num_q_heads) != 0) {
         std::fprintf(stderr, "transformer_layer: q pack fp16 failed\n");
         return;
     }
-    if (qkv_pack_fp16_forward_device(stream, buffers->d_k, buffers->d_k_fp16, head_dim, T,
-                                     num_kv_heads) != 0) {
-        std::fprintf(stderr, "transformer_layer: k pack fp16 failed\n");
-        return;
-    }
-    if (qkv_pack_fp16_forward_device(stream, buffers->d_v, buffers->d_v_fp16, head_dim, T,
-                                     num_kv_heads) != 0) {
-        std::fprintf(stderr, "transformer_layer: v pack fp16 failed\n");
-        return;
+
+    /*
+    KV cache append + 读历史 cast（RoPE 后 flat fp32 d_k/d_v）:
+    调用前: cache_len = L；d_k/d_v 为本步 [kv_dim, T] fp32
+    append 写入 cache [L, L+T)；num_kv_tokens = L + T
+    调用后: d_k_fa_fp16/d_v_fa_fp16 = cache[0:L+T) cast 为 FA fp16 layout
+    Attention 占位仍读 fp32 d_q；FA 接入时使用 d_q_fp16 + d_k/v_fa_fp16。
+    */
+    if (kv_cache != nullptr && d_k_fa_fp16 != nullptr && d_v_fa_fp16 != nullptr) {
+        const int cache_len_before = kv_cache_get_len(kv_cache);
+        const int num_kv_tokens = cache_len_before + T;
+        if (kv_cache_append_device(stream, kv_cache, 0, buffers->d_k, buffers->d_v, T) != 0) {
+            std::fprintf(stderr, "transformer_layer: kv_cache_append failed\n");
+            return;
+        }
+        const float *d_k_cache = kv_cache_get_k_device_ptr(kv_cache, 0);
+        const float *d_v_cache = kv_cache_get_v_device_ptr(kv_cache, 0);
+        if (d_k_cache == nullptr || d_v_cache == nullptr) {
+            std::fprintf(stderr, "transformer_layer: kv_cache device ptr is null\n");
+            return;
+        }
+        if (kv_cache_cast_fp16_forward_device(stream, d_k_cache, d_k_fa_fp16, head_dim, max_seq_len,
+                                              num_kv_heads, num_kv_tokens) != 0) {
+            std::fprintf(stderr, "transformer_layer: kv_cache K cast fp16 failed\n");
+            return;
+        }
+        if (kv_cache_cast_fp16_forward_device(stream, d_v_cache, d_v_fa_fp16, head_dim, max_seq_len,
+                                              num_kv_heads, num_kv_tokens) != 0) {
+            std::fprintf(stderr, "transformer_layer: kv_cache V cast fp16 failed\n");
+            return;
+        }
     }
 
     const size_t attn_bytes = transformer_col_major_bytes(Q, T);
-    // Attention 占位：暂 D2D 拷贝 d_q -> d_attn_out；后续替换为 FA + KV cache
+    // Attention 占位：暂 D2D 拷贝 d_q -> d_attn_out；后续替换为 FA（d_q_fp16 + d_k/v_fa_fp16）
     CUDA_CHECK(cudaMemcpyAsync(buffers->d_attn_out, buffers->d_q, attn_bytes,
                                cudaMemcpyDeviceToDevice, static_cast<cudaStream_t>(stream)));
 
@@ -292,6 +313,7 @@ transformer_runner_create(int hidden_size, int intermediate_size, int num_q_head
     runner->num_kv_heads = num_kv_heads;
     runner->q_dim = q_dim;
     runner->kv_dim = kv_dim;
+    runner->max_seq_len = max_seq_len;
     runner->owns_stream = (stream_in == nullptr);
     runner->stream = runner->owns_stream ? nullptr : static_cast<cudaStream_t>(stream_in);
     if (runner->owns_stream) {
@@ -306,6 +328,17 @@ transformer_runner_create(int hidden_size, int intermediate_size, int num_q_head
         transformer_runner_destroy(runner);
         return nullptr;
     }
+
+    runner->kv_cache = kv_cache_create(max_seq_len, head_dim, num_kv_heads, 1);
+    if (runner->kv_cache == nullptr) {
+        transformer_runner_destroy(runner);
+        return nullptr;
+    }
+
+    const size_t kv_fa_fp16_bytes =
+        static_cast<size_t>(head_dim) * max_seq_len * num_kv_heads * sizeof(uint16_t);
+    CUDA_CHECK(cudaMalloc(&runner->d_k_fa_fp16, kv_fa_fp16_bytes));
+    CUDA_CHECK(cudaMalloc(&runner->d_v_fa_fp16, kv_fa_fp16_bytes));
 
     const size_t w_q_bytes = static_cast<size_t>(q_dim) * hidden_size * sizeof(float);
     const size_t w_kv_bytes = static_cast<size_t>(kv_dim) * hidden_size * sizeof(float);
@@ -359,6 +392,16 @@ extern "C" void transformer_runner_destroy(TransformerRunner *runner) {
         rope_cossin_cache_destroy(runner->rope_cache);
         runner->rope_cache = nullptr;
     }
+
+    if (runner->kv_cache != nullptr) {
+        kv_cache_destroy(runner->kv_cache);
+        runner->kv_cache = nullptr;
+    }
+
+    cudaFree(runner->d_k_fa_fp16);
+    cudaFree(runner->d_v_fa_fp16);
+    runner->d_k_fa_fp16 = nullptr;
+    runner->d_v_fa_fp16 = nullptr;
 
     cudaFree(runner->d_w_q);
     cudaFree(runner->d_w_k);
@@ -448,8 +491,13 @@ extern "C" int transformer_runner_forward_device(TransformerRunner *runner,
         stream, runner->cublas_handle, buffers, runner->d_w_input_layernorm,
         runner->d_w_post_attention_layernorm, runner->d_w_q, runner->d_w_k, runner->d_w_v,
         runner->d_w_o, runner->d_w_gate, runner->d_w_up, runner->d_w_down, runner->rope_cache,
-        ctx->d_pos, runner->head_dim, runner->num_q_heads, runner->num_kv_heads,
-        kTransformerRmsNormEps);
+        ctx->d_pos, runner->kv_cache, runner->d_k_fa_fp16, runner->d_v_fa_fp16, runner->max_seq_len,
+        runner->head_dim, runner->num_q_heads, runner->num_kv_heads, kTransformerRmsNormEps);
+    if (runner->kv_cache != nullptr &&
+        kv_cache_advance_len(runner->kv_cache, ctx->num_tokens) != 0) {
+        std::fprintf(stderr, "transformer_runner_forward_device: kv_cache_advance_len failed\n");
+        return -1;
+    }
     // 计算结束后 D2D
     transformer_runner_copy_output(stream, ctx->d_hidden_out, buffers, runner->hidden_size,
                                    ctx->num_tokens);
@@ -478,10 +526,22 @@ extern "C" int transformer_runner_test(TransformerRunner *runner, const float *h
         stream, runner->cublas_handle, buffers, runner->d_w_input_layernorm,
         runner->d_w_post_attention_layernorm, runner->d_w_q, runner->d_w_k, runner->d_w_v,
         runner->d_w_o, runner->d_w_gate, runner->d_w_up, runner->d_w_down, runner->rope_cache,
-        d_pos, runner->head_dim, runner->num_q_heads, runner->num_kv_heads, kTransformerRmsNormEps);
+        d_pos, runner->kv_cache, runner->d_k_fa_fp16, runner->d_v_fa_fp16, runner->max_seq_len,
+        runner->head_dim, runner->num_q_heads, runner->num_kv_heads, kTransformerRmsNormEps);
+    if (runner->kv_cache != nullptr && kv_cache_advance_len(runner->kv_cache, num_tokens) != 0) {
+        std::fprintf(stderr, "transformer_runner_test: kv_cache_advance_len failed\n");
+        return -1;
+    }
     // D2H
     CUDA_CHECK(cudaMemcpyAsync(hidden_out_host, buffers->d_hidden_out, hidden_bytes,
                                cudaMemcpyDeviceToHost, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
     return 0;
+}
+
+extern "C" int transformer_runner_kv_cache_len(const TransformerRunner *runner) {
+    if (runner == nullptr || runner->kv_cache == nullptr) {
+        return 0;
+    }
+    return kv_cache_get_len(runner->kv_cache);
 }

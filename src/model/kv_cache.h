@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -54,6 +56,16 @@ int kv_cache_append_device(void *stream, KVCache *cache, int layer, const float 
 
 // 一个 forward step 的所有 layer 写完后，推进 cache_len
 int kv_cache_advance_len(KVCache *cache, int n_tokens);
+
+// 将 cache 中前 num_kv_tokens 个 token 的 K/V（float，layout 与 cache 一致）cast 为 FA fp16
+// [head_dim, num_kv_tokens, num_kv_heads, 1] col-major。d_cache 为 kv_cache_get_*_device_ptr。
+int kv_cache_cast_fp16_forward_device(void *stream, const float *d_cache, uint16_t *d_dst,
+                                      int head_dim, int max_seq, int num_kv_heads,
+                                      int num_kv_tokens);
+
+// 测试：host H2D → kv_cache_cast_fp16_forward_device → D2H
+void kv_cache_cast_fp16_forward_host(const float *cache_host, uint16_t *dst_host, int head_dim,
+                                     int max_seq, int num_kv_heads, int num_kv_tokens);
 
 #ifdef __cplusplus
 }

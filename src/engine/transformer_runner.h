@@ -5,6 +5,8 @@
 
 #include "rope_cossin_cache.h"
 
+struct KVCache;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -31,10 +33,8 @@ typedef struct TransformerLayerLinearDeviceBuffers {
     float *d_hidden_out;
     float *d_residual; // Pre-LN residual stream（fused add 写入 z）
 
-    // FA/KV layout fp16：[head_dim, num_tokens, num_heads, 1]（由 flat fp32 Q/K/V pack）
+    // FA Q layout fp16：[head_dim, num_tokens, num_q_heads, 1]（本步 Q pack）
     uint16_t *d_q_fp16;
-    uint16_t *d_k_fp16;
-    uint16_t *d_v_fp16;
 } TransformerLayerLinearDeviceBuffers;
 
 typedef struct TransformerRunnerForwardCtx {
@@ -62,13 +62,14 @@ void transformer_runner_destroy(TransformerRunner *runner);
 TransformerLayerLinearDeviceBuffers *transformer_runner_buffers_get(TransformerRunner *runner,
                                                                     int num_tokens);
 
-// 单层 Pre-LN（fused add + RMSNorm）+ Linear + RoPE + Attention 占位 + FFN
+// 单层 Pre-LN（fused add + RMSNorm）+ Linear + RoPE + KV cache + Attention 占位 + FFN
 void transformer_layer_linears_forward_device(
     void *stream, void *cublas_handle, TransformerLayerLinearDeviceBuffers *buffers,
     const float *d_w_input_layernorm, const float *d_w_post_attention_layernorm, const float *d_w_q,
     const float *d_w_k, const float *d_w_v, const float *d_w_o, const float *d_w_gate,
     const float *d_w_up, const float *d_w_down, const RopeCosSinCache *rope_cache, const int *d_pos,
-    int head_dim, int num_q_heads, int num_kv_heads, float rms_norm_epsilon);
+    KVCache *kv_cache, uint16_t *d_k_fa_fp16, uint16_t *d_v_fa_fp16, int max_seq_len, int head_dim,
+    int num_q_heads, int num_kv_heads, float rms_norm_epsilon);
 
 // 生产入口：ctx 中 d_hidden_in/out 已在 GPU，内部 D2D 拷贝后执行 7 Linear 链
 int transformer_runner_forward_device(TransformerRunner *runner,
@@ -77,6 +78,9 @@ int transformer_runner_forward_device(TransformerRunner *runner,
 // 测试入口：pos_offset 生成本步 d_pos = [offset, offset+num_tokens)
 int transformer_runner_test(TransformerRunner *runner, const float *hidden_in_host,
                             float *hidden_out_host, int num_tokens, int pos_offset);
+
+// 当前 session KV cache 已写入 token 数（测试 / prefill-decode 断言）
+int transformer_runner_kv_cache_len(const TransformerRunner *runner);
 
 #ifdef __cplusplus
 }
