@@ -420,6 +420,7 @@ add_library(transformer_runner_me MODULE
   $<TARGET_OBJECTS:qkv_pack_fp16_cuda>
   $<TARGET_OBJECTS:kv_cache_cuda>
   $<TARGET_OBJECTS:kv_cache_model>
+  $<TARGET_OBJECTS:fa_double_buffer_cuda>
   $<TARGET_OBJECTS:rope_global_cache_cuda>
   $<TARGET_OBJECTS:rope_model>
 )

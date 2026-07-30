@@ -1,6 +1,8 @@
 import elementwise_me
+import fa_me
 import linear_me
 import numpy as np
+import qkv_pack_fp16_me
 import rms_norm_fused_add_me
 import rope_global_cache_me
 import torch
@@ -62,7 +64,7 @@ def _rope_qk_ref(q: np.ndarray, k: np.ndarray, pos_offset: int) -> tuple[np.ndar
     return q_out, k_out
 
 
-# 手动串联 Pre-LN fused add + Linear + RoPE + Attention占位 + FFN + Post-FFN residual add
+# 手动串联 Pre-LN fused add + Linear + RoPE + FA + O Linear + FFN + Post-FFN residual add
 def chain_linear_me_ref(
     hidden_np: np.ndarray,
     w_q: np.ndarray,
@@ -86,10 +88,22 @@ def chain_linear_me_ref(
     linear_me.forward_host(h_norm, w_k, k, HIDDEN_SIZE, NUM_TOKENS, KV_DIM)
     linear_me.forward_host(h_norm, w_v, v, HIDDEN_SIZE, NUM_TOKENS, KV_DIM)
 
-    q, _k = _rope_qk_ref(q, k, pos_offset)
+    q, k = _rope_qk_ref(q, k, pos_offset)
 
+    q_fp16 = np.zeros((HEAD_DIM, NUM_TOKENS, NUM_Q_HEADS, 1), dtype=np.uint16, order="F")
+    k_fp16 = np.zeros((HEAD_DIM, NUM_TOKENS, NUM_KV_HEADS, 1), dtype=np.uint16, order="F")
+    v_fp16 = np.zeros((HEAD_DIM, NUM_TOKENS, NUM_KV_HEADS, 1), dtype=np.uint16, order="F")
+    qkv_pack_fp16_me.forward_host(q, q_fp16, HEAD_DIM, NUM_TOKENS, NUM_Q_HEADS)
+    qkv_pack_fp16_me.forward_host(k, k_fp16, HEAD_DIM, NUM_TOKENS, NUM_KV_HEADS)
+    qkv_pack_fp16_me.forward_host(v, v_fp16, HEAD_DIM, NUM_TOKENS, NUM_KV_HEADS)
+
+    fa_out = np.zeros((HEAD_DIM, NUM_TOKENS, NUM_Q_HEADS, 1), dtype=np.float32, order="F")
+    fa_scale = 1.0 / (HEAD_DIM**0.5)
+    fa_me.forward_host_shape(q_fp16, k_fp16, v_fp16, fa_out, fa_scale)
+
+    fa_q = fa_out.reshape(Q_DIM, NUM_TOKENS, 1, BATCH, order="F")
     attn_out = np.zeros((HIDDEN_SIZE, NUM_TOKENS, 1, BATCH), dtype=np.float32, order="F")
-    linear_me.forward_host(q, w_o, attn_out, Q_DIM, NUM_TOKENS, HIDDEN_SIZE)
+    linear_me.forward_host(fa_q, w_o, attn_out, Q_DIM, NUM_TOKENS, HIDDEN_SIZE)
 
     h_ffn_in, residual_mid = _fused_add_norm(attn_out, residual_h, w_post_attention_layernorm)
 

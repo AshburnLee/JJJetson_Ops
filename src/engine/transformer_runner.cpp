@@ -1,5 +1,6 @@
 #include "transformer_runner.h"
 
+#include <cmath>
 #include <stdio.h>
 #include <unordered_map>
 #include <vector>
@@ -7,6 +8,7 @@
 #include "cublas_utils.cuh"
 #include "cuda_utils.h"
 #include "elementwise.h"
+#include "fa.h"
 #include "kv_cache.h"
 #include "linear.h"
 #include "qkv_pack_fp16.h"
@@ -134,7 +136,7 @@ static void transformer_runner_copy_output(cudaStream_t stream, float *d_hidden_
     }
 }
 
-// Pre-LN fused add + Linear + RoPE + Attention 占位 + FFN（Post-FFN residual add 见 40c）
+// Pre-LN fused add + Linear + RoPE + KV cache + FA Attention + FFN（Post-FFN residual add 见 40c）
 extern "C" void transformer_layer_linears_forward_device(
     void *stream, void *cublas_handle, TransformerLayerLinearDeviceBuffers *buffers,
     const float *d_w_input_layernorm, const float *d_w_post_attention_layernorm, const float *d_w_q,
@@ -200,41 +202,54 @@ extern "C" void transformer_layer_linears_forward_device(
     }
 
     /*
-    KV cache append + 读历史 cast（RoPE 后 flat fp32 d_k/d_v）:
-    调用前: cache_len = L；d_k/d_v 为本步 [kv_dim, T] fp32
-    append 写入 cache [L, L+T)；num_kv_tokens = L + T
-    调用后: d_k_fa_fp16/d_v_fa_fp16 = cache[0:L+T) cast 为 FA fp16 layout
-    Attention 占位仍读 fp32 d_q；FA 接入时使用 d_q_fp16 + d_k/v_fa_fp16。
+    KV cache append + 读历史 cast + FA Attention（RoPE 后 flat fp32 d_k/d_v）:
+    调用前: cache_len = L；d_q_fp16 为本步 Q；d_k/d_v 为本步 [kv_dim, T] fp32
+    append 写入 cache [L, L+T)；cast 得到 d_k/v_fa_fp16 [head_dim, L+T, num_kv_heads, 1]
+    FA 调用后: d_attn_out = FA(d_q_fp16, d_k/v_fa_fp16) fp32 [head_dim, T, num_q_heads, 1]
     */
-    if (kv_cache != nullptr && d_k_fa_fp16 != nullptr && d_v_fa_fp16 != nullptr) {
-        const int cache_len_before = kv_cache_get_len(kv_cache);
-        const int num_kv_tokens = cache_len_before + T;
-        if (kv_cache_append_device(stream, kv_cache, 0, buffers->d_k, buffers->d_v, T) != 0) {
-            std::fprintf(stderr, "transformer_layer: kv_cache_append failed\n");
-            return;
-        }
-        const float *d_k_cache = kv_cache_get_k_device_ptr(kv_cache, 0);
-        const float *d_v_cache = kv_cache_get_v_device_ptr(kv_cache, 0);
-        if (d_k_cache == nullptr || d_v_cache == nullptr) {
-            std::fprintf(stderr, "transformer_layer: kv_cache device ptr is null\n");
-            return;
-        }
-        if (kv_cache_cast_fp16_forward_device(stream, d_k_cache, d_k_fa_fp16, head_dim, max_seq_len,
-                                              num_kv_heads, num_kv_tokens) != 0) {
-            std::fprintf(stderr, "transformer_layer: kv_cache K cast fp16 failed\n");
-            return;
-        }
-        if (kv_cache_cast_fp16_forward_device(stream, d_v_cache, d_v_fa_fp16, head_dim, max_seq_len,
-                                              num_kv_heads, num_kv_tokens) != 0) {
-            std::fprintf(stderr, "transformer_layer: kv_cache V cast fp16 failed\n");
-            return;
-        }
+    if (kv_cache == nullptr || d_k_fa_fp16 == nullptr || d_v_fa_fp16 == nullptr) {
+        std::fprintf(stderr, "transformer_layer: kv_cache and FA fp16 buffers required\n");
+        return;
+    }
+    const int cache_len_before = kv_cache_get_len(kv_cache);
+    const int num_kv_tokens = cache_len_before + T;
+    if (kv_cache_append_device(stream, kv_cache, 0, buffers->d_k, buffers->d_v, T) != 0) {
+        std::fprintf(stderr, "transformer_layer: kv_cache_append failed\n");
+        return;
+    }
+    const float *d_k_cache = kv_cache_get_k_device_ptr(kv_cache, 0);
+    const float *d_v_cache = kv_cache_get_v_device_ptr(kv_cache, 0);
+    if (d_k_cache == nullptr || d_v_cache == nullptr) {
+        std::fprintf(stderr, "transformer_layer: kv_cache device ptr is null\n");
+        return;
+    }
+    if (kv_cache_cast_fp16_forward_device(stream, d_k_cache, d_k_fa_fp16, head_dim, max_seq_len,
+                                          num_kv_heads, num_kv_tokens) != 0) {
+        std::fprintf(stderr, "transformer_layer: kv_cache K cast fp16 failed\n");
+        return;
+    }
+    if (kv_cache_cast_fp16_forward_device(stream, d_v_cache, d_v_fa_fp16, head_dim, max_seq_len,
+                                          num_kv_heads, num_kv_tokens) != 0) {
+        std::fprintf(stderr, "transformer_layer: kv_cache V cast fp16 failed\n");
+        return;
     }
 
-    const size_t attn_bytes = transformer_col_major_bytes(Q, T);
-    // Attention 占位：暂 D2D 拷贝 d_q -> d_attn_out；后续替换为 FA（d_q_fp16 + d_k/v_fa_fp16）
-    CUDA_CHECK(cudaMemcpyAsync(buffers->d_attn_out, buffers->d_q, attn_bytes,
-                               cudaMemcpyDeviceToDevice, static_cast<cudaStream_t>(stream)));
+    FaDoubleBufferShape fa_shape{};
+    fa_shape.head_dim = head_dim;
+    fa_shape.num_q_tokens = T;
+    fa_shape.num_kv_tokens = num_kv_tokens;
+    fa_shape.num_q_heads = num_q_heads;
+    fa_shape.num_kv_heads = num_kv_heads;
+    if (fa_double_buffer_validate_shape(&fa_shape) != 0) {
+        std::fprintf(stderr, "transformer_layer: fa shape validation failed\n");
+        return;
+    }
+    const float fa_scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
+    if (fa_double_buffer_forward_device(stream, &fa_shape, buffers->d_q_fp16, d_k_fa_fp16,
+                                        d_v_fa_fp16, buffers->d_attn_out, fa_scale) != 0) {
+        std::fprintf(stderr, "transformer_layer: fa_double_buffer failed\n");
+        return;
+    }
 
     linear_forward_device(stream, cublas_handle, buffers->d_attn_out, d_w_o, buffers->d_hidden_mid,
                           Q, H, T);

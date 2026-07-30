@@ -18,8 +18,7 @@ cache K/V ──► kv_cache_cast_fp16 ──► d_k_fa_fp16 / d_v_fa_fp16
                                     [head_dim, cache_len+T, num_kv_heads, 1] fp16
                                     （FA 读全历史 + 本步）
 
-Attention 占位：仍 D2D d_q(fp32) → d_attn_out
-FA 接入：fa_double_buffer_forward_device(d_q_fp16, d_k_fa_fp16, d_v_fa_fp16, ...)
+Attention：fa_double_buffer_forward_device(d_q_fp16, d_k_fa_fp16, d_v_fa_fp16, ...)
 ~~~
 
 ## 生命周期（单层 Phase 1）
@@ -60,8 +59,8 @@ kv_cache_create(max_seq, head_dim, num_kv_heads, num_layers=1)
 [4] kv_cache_cast_fp16(cache -> d_k/v_fa_fp16, num_kv_tokens=L+T)
     含义: 读 cache[0:L+T) cast 为 fp16（历史 + 本步）
 
-[5] Attention / O / FFN ...
-    含义: 当前 D2D 占位；接 FA 用 d_q_fp16 + d_k/v_fa_fp16
+[5] fa_double_buffer_forward_device -> d_attn_out
+    含义: d_q_fp16 + d_k/v_fa_fp16；scale=1/sqrt(head_dim)；输出 fp32 进 O Linear
 ~~~
 
 **Layer 外**（`transformer_runner_test` / `forward_device` 返回前）：

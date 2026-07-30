@@ -62,7 +62,7 @@ void transformer_runner_destroy(TransformerRunner *runner);
 TransformerLayerLinearDeviceBuffers *transformer_runner_buffers_get(TransformerRunner *runner,
                                                                     int num_tokens);
 
-// 单层 Pre-LN（fused add + RMSNorm）+ Linear + RoPE + KV cache + Attention 占位 + FFN
+// 单层 Pre-LN（fused add + RMSNorm）+ Linear + RoPE + KV cache + FA Attention + FFN
 void transformer_layer_linears_forward_device(
     void *stream, void *cublas_handle, TransformerLayerLinearDeviceBuffers *buffers,
     const float *d_w_input_layernorm, const float *d_w_post_attention_layernorm, const float *d_w_q,
