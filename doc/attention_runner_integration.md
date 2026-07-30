@@ -46,19 +46,30 @@ kv_cache_create(max_seq, head_dim, num_kv_heads, num_layers=1)
 
 **Layer 内**（`transformer_layer_linears_forward_device`，RoPE 之后）：
 
-| 顺序 | 动作 | 含义 |
-|------|------|------|
-| 1 | `qkv_pack_fp16(d_q → d_q_fp16)` | 仅本步 Q：fp32 flat → fp16 FA layout，长度 **T** |
-| 2 | `L = kv_cache_get_len()` | 记下 append **之前** 的历史长度 |
-| 3 | `kv_cache_append_device(d_k, d_v, T)` | 把本步 K/V（flat fp32）写入 cache 的 **`[L, L+T)`** 槽位；**此时 `cache_len` 仍为 L** |
-| 4 | `kv_cache_cast_fp16(cache → d_k/v_fa_fp16, num_kv_tokens=L+T)` | 把 cache **从头读到 L+T** cast 成 fp16，供 FA 使用（**历史 + 刚 append 的本步**） |
-| 5 | Attention / O / FFN … | 当前仍为 D2D 占位；接 FA 时用 `d_q_fp16` + `d_k/v_fa_fp16` |
+~~~
+[1] qkv_pack_fp16(d_q -> d_q_fp16)
+    含义: 仅本步 Q；fp32 flat -> fp16 FA layout，长度 T
+
+[2] L = kv_cache_get_len()
+    含义: 记下 append 之前的历史长度
+
+[3] kv_cache_append_device(d_k, d_v, T)
+    含义: 本步 K/V(flat fp32) 写入 cache[L, L+T)；
+          此时 cache_len 仍为 L
+
+[4] kv_cache_cast_fp16(cache -> d_k/v_fa_fp16, num_kv_tokens=L+T)
+    含义: 读 cache[0:L+T) cast 为 fp16（历史 + 本步）
+
+[5] Attention / O / FFN ...
+    含义: 当前 D2D 占位；接 FA 用 d_q_fp16 + d_k/v_fa_fp16
+~~~
 
 **Layer 外**（`transformer_runner_test` / `forward_device` 返回前）：
 
-| 顺序 | 动作 | 含义 |
-|------|------|------|
-| 6 | `kv_cache_advance_len(T)` | **`cache_len` 从 L 变为 L+T**，表示本步 K/V 已「入账」 |
+~~~
+[6] kv_cache_advance_len(T)
+    含义: cache_len 从 L 变为 L+T（本步 K/V 入账）
+~~~
 
 要点：**append 与 advance 成对**——append 先写 slot，advance 再 bump 长度；下一步 append 的 offset 自动等于新的 `cache_len`。
 
@@ -89,9 +100,9 @@ decode 时 **Q 的 T=1**，但 **K/V 的 FA 输入长度 = cache_len + T**，即
 
 ## 相关模块
 
-| 模块 | 文件 |
-|------|------|
-| KV Session | `src/model/kv_cache.h` |
-| append / cast kernel | `src/cuda/kv_cache.cu` |
-| Q pack | `src/cuda/qkv_pack_fp16.h` |
-| Runner glue | `src/engine/transformer_runner.cpp` |
+~~~
+KV Session        -> src/model/kv_cache.h
+append/cast kernel -> src/cuda/kv_cache.cu
+Q pack             -> src/cuda/qkv_pack_fp16.h
+Runner glue        -> src/engine/transformer_runner.cpp
+~~~

@@ -23,10 +23,13 @@ Attention 占位阶段仍用 fp32 `d_q` D2D；fp16 buffer 为 FA 与 KV cache �
 
 ## API
 
-| 层级 | C | Python |
-|------|---|--------|
-| 生产 | `qkv_pack_fp16_forward_device` | 不暴露 |
-| 测试 | `qkv_pack_fp16_forward_host` | `qkv_pack_fp16_me.forward_host` |
+~~~
+生产  C: qkv_pack_fp16_forward_device
+      Python: (不暴露)
+
+测试  C: qkv_pack_fp16_forward_host
+      Python: qkv_pack_fp16_me.forward_host
+~~~
 
 ~~~c
 int qkv_pack_fp16_forward_device(void *stream, const float *d_src, uint16_t *d_dst,

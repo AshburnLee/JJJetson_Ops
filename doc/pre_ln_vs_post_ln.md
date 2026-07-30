@@ -111,12 +111,23 @@ hidden_in[device]
 
 ## 对比摘要
 
-| 维度 | Post-LN | Pre-LN (LLaMA / JJJetson_Ops) |
-|------|---------|-------------------------------|
-| Norm 位置 | 子层 **之后** (Attn→add→Norm→FFN→add→Norm) | 子层 **之前** (Norm→Attn→add→Norm→FFN→add) |
-| 常用 Norm | LayerNorm (mean + var) | RMSNorm (RMS only，无 bias) |
-| 训练稳定性 | 深层需 careful init；Post-LN 梯度经 norm 回传 | Pre-LN residual 直连，深层更稳；现代 LLM 默认 |
-| 典型模型 | 原始 Transformer, GPT-2, BERT | LLaMA, LLaMA2/3, Mistral, Qwen2/3, Gemma |
+~~~
+维度: Norm 位置
+  Post-LN: 子层之后 (Attn->add->Norm->FFN->add->Norm)
+  Pre-LN:  子层之前 (Norm->Attn->add->Norm->FFN->add)
+
+维度: 常用 Norm
+  Post-LN: LayerNorm (mean + var)
+  Pre-LN:  RMSNorm (RMS only，无 bias)
+
+维度: 训练稳定性
+  Post-LN: 深层需 careful init；梯度经 norm 回传
+  Pre-LN:  residual 直连，深层更稳；现代 LLM 默认
+
+维度: 典型模型
+  Post-LN: Transformer, GPT-2, BERT
+  Pre-LN:  LLaMA, Mistral, Qwen2/3, Gemma
+~~~
 
 ## Qwen3 与 LLaMA 同族
 

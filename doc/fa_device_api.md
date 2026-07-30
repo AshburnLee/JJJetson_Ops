@@ -6,11 +6,11 @@ Flash Attention **生产路径**：`fa_double_buffer_forward_device`（`src/cuda
 
 ## Layout (col-major)
 
-| Tensor | dtype | shape |
-|--------|-------|-------|
-| Q | fp16 | [head_dim, num_q_tokens, num_q_heads, 1] |
-| K/V | fp16 | [head_dim, num_kv_tokens, num_kv_heads, 1] |
-| dst | fp32 | [head_dim, num_q_tokens, num_q_heads, 1] |
+~~~
+Q:   fp16  [head_dim, num_q_tokens, num_q_heads, 1]
+K/V: fp16  [head_dim, num_kv_tokens, num_kv_heads, 1]
+dst: fp32  [head_dim, num_q_tokens, num_q_heads, 1]
+~~~
 
 ## 约束（Phase 1）
 
@@ -34,14 +34,26 @@ d_dst (fp32) ──► Linear(O)
 
 ## API
 
-| 函数 | 用途 |
-|------|------|
-| `FaDoubleBufferShape` | head_dim / tokens / heads |
-| `fa_double_buffer_validate_shape` | host 校验 |
-| `fa_double_buffer_forward_device` | 生产 device 入口 |
-| `fa_double_buffer_forward_host` / `fa_double_buffer_forward_host_legacy` | 测试 H2D/D2H |
-| `fa_me.forward_host_shape` | Python：从 Q/K/V shape 推断并调用 |
-| `fa_me.forward_host` | Python：legacy 固定 shape |
+~~~
+FaDoubleBufferShape
+  head_dim / tokens / heads 结构体
+
+fa_double_buffer_validate_shape
+  host 校验
+
+fa_double_buffer_forward_device
+  生产 device 入口
+
+fa_double_buffer_forward_host
+fa_double_buffer_forward_host_legacy
+  测试 H2D/D2H
+
+fa_me.forward_host_shape
+  Python: 从 Q/K/V shape 推断
+
+fa_me.forward_host
+  Python: legacy 固定 shape
+~~~
 
 Legacy 固定 128×13×16 / KV256 仍可用 `fa_me.launch_fa` / `forward_host`。
 

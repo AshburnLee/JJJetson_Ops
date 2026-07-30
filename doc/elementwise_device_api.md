@@ -48,12 +48,12 @@ hidden_out_buf[device]  （FFN 前 fused add 写入的 residual = z_ffn）
 
 ### 调用约定
 
-| 参数 | 含义 |
-|------|------|
-| `d_a` | residual stream（子块入口前保存的 hidden） |
-| `d_b` | subblock 输出（attn_out 或 ffn_out） |
-| `d_out` | 相加结果；可与 `d_a` in-place（`d_out = d_a + d_b`） |
-| `n_elem` | `hidden_size * num_tokens * batch`（col-major 展平） |
+~~~
+d_a    residual stream（子块入口前保存的 hidden）
+d_b    subblock 输出（attn_out 或 ffn_out）
+d_out  相加结果；可与 d_a in-place
+n_elem hidden_size * num_tokens * batch（col-major 展平）
+~~~
 
 ~~~
 elementwise_add_forward_device(stream, d_residual, d_subblock, d_out, n_elem);
@@ -68,14 +68,20 @@ elementwise_add_forward_device(stream, d_residual, d_subblock, d_out, n_elem);
 
 ## API
 
-| 函数 | 用途 |
-|------|------|
-| `elementwise_binary_forward_device` | 生产：通用二元 op（`ElementwiseBinaryOp` 枚举） |
-| `elementwise_add_forward_device` | 生产：add 便捷入口（residual + subblock） |
-| `elementwise_sub_forward_device` | 生产：sub |
-| `elementwise_mul_forward_device` | 生产：mul |
-| `elementwise_div_forward_device` | 生产：div |
-| `elementwise_binary_forward_host` | 测试：host 包装；Python 入口 `elementwise_me.forward_host(op, a, b, out)` |
+~~~
+elementwise_binary_forward_device
+  生产: 通用二元 op（ElementwiseBinaryOp 枚举）
+
+elementwise_add_forward_device
+  生产: add（residual + subblock）
+
+elementwise_sub_forward_device / mul / div
+  生产: sub / mul / div
+
+elementwise_binary_forward_host
+  测试: host 包装
+  Python: elementwise_me.forward_host(op, a, b, out)
+~~~
 
 Layout：连续 flat buffer；hidden tensor 为 col-major `[hidden_size, num_tokens, 1, batch]` 时 `n_elem = hidden_size * num_tokens * batch`。
 

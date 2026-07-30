@@ -56,15 +56,52 @@
 
 平台 Jetson Orin Nano，SM 频率 305.99 Mhz，确保 Release 编译
 
-|kernel | gridxblock |shape |duration|
-|---|---|---|---|
-|fa | (8,1,1),(32,4,1) | (128,13,16,1)(128,256,8,1) |  (base)3.39 ms ->  (+bank-conf)1.35 ms -> (+vectorize)1.33 ms -> (+streaming) 863.74 us -> (warp stall + occupancy) 500.32 us|
-|fa | (16,1,1),(32,4,1) | (128,13,16,1)(128,256,8,1) |  TC version (339 us) -> bank conf(302 us) |
-|fa(double buffer) |(8,1,1),(32,4,1)| (128,13,16,1)(128,256,8,1) | doublebuffer(251 us) |
-|quantize_q8_1_kernel   | (13,4,1),(128,1,1) | .. | 26.78 us|
-|rope_neox_kernel | (208,1,1),(1,256,1) | .. | 48.54 us|
-|moe_top_k_kernel | (1024,1,1),(32,4,1) | .. | 1.02 ms|
-|cpy_transpose    | (8,4,1),(32,8,1) | (256,128,4) | (base)145.73 us -> (bank-conf)52.22 us |
-|cpy_continue| (64,1,1),(416,1,1) | (128,16,13,1) | 105.31 us|
-|roll        | (256,1,1),(2048,1,1) | (2048,256,1,1) | 1.13 ms|
-|rope        | g(208,1,1),b(1,256,1) | (128,16,13,1) | 53.44 us|
+~~~
+kernel: fa
+  grid x block: (8,1,1) x (32,4,1)
+  shape: Q(128,13,16,1) K/V(128,256,8,1)
+  duration: (base)3.39ms -> (+bank-conf)1.35ms -> (+vectorize)1.33ms
+            -> (+streaming)864us -> (warp stall+occ)500us
+
+kernel: fa (TC)
+  grid x block: (16,1,1) x (32,4,1)
+  shape: 同上
+  duration: TC 339us -> bank conf 302us
+
+kernel: fa(double buffer)
+  grid x block: (8,1,1) x (32,4,1)
+  shape: 同上
+  duration: doublebuffer 251us
+
+kernel: quantize_q8_1_kernel
+  grid x block: (13,4,1) x (128,1,1)
+  duration: 26.78us
+
+kernel: rope_neox_kernel
+  grid x block: (208,1,1) x (1,256,1)
+  duration: 48.54us
+
+kernel: moe_top_k_kernel
+  grid x block: (1024,1,1) x (32,4,1)
+  duration: 1.02ms
+
+kernel: cpy_transpose
+  grid x block: (8,4,1) x (32,8,1)
+  shape: (256,128,4)
+  duration: (base)146us -> (bank-conf)52us
+
+kernel: cpy_continue
+  grid x block: (64,1,1) x (416,1,1)
+  shape: (128,16,13,1)
+  duration: 105.31us
+
+kernel: roll
+  grid x block: (256,1,1) x (2048,1,1)
+  shape: (2048,256,1,1)
+  duration: 1.13ms
+
+kernel: rope
+  grid x block: (208,1,1) x (1,256,1)
+  shape: (128,16,13,1)
+  duration: 53.44us
+~~~
