@@ -483,7 +483,6 @@ static int *transformer_runner_d_pos_get(TransformerRunner *runner, int num_toke
 }
 
 // 生产入口：ctx 中 d_hidden_in/out、d_pos 已在 GPU
-// TODO：暴露给 Python 端，构造 ctx 后可直接测 forward_device
 extern "C" int transformer_runner_forward_device(TransformerRunner *runner,
                                                  const TransformerRunnerForwardCtx *ctx) {
     if (runner == nullptr || ctx == nullptr) {

@@ -63,7 +63,7 @@ kv_cache_create(max_seq, head_dim, num_kv_heads, num_layers=1)
     含义: d_q_fp16 + d_k/v_fa_fp16；scale=1/sqrt(head_dim)；输出 fp32 进 O Linear
 ~~~
 
-**Layer 外**（`transformer_runner_test` / `forward_device` 返回前）：
+**Layer 外**（`transformer_runner_forward_device` / `forward_host` 返回前）：
 
 ~~~
 [6] kv_cache_advance_len(T)
@@ -104,4 +104,6 @@ KV Session        -> src/model/kv_cache.h
 append/cast kernel -> src/cuda/kv_cache.cu
 Q pack             -> src/cuda/qkv_pack_fp16.h
 Runner glue        -> src/engine/transformer_runner.cpp
+Python 生产入口    -> transformer_runner_me.forward_device(pos 显式)
+Python 测试入口    -> transformer_runner_me.forward_host(pos_offset 自动生成)
 ~~~
