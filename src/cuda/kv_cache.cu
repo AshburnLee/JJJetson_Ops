@@ -47,9 +47,9 @@ extern "C" void kv_cache_append_launch_device(void *stream, const float *d_k, co
     LAUNCH_CHECK();
 }
 
-// cache: [head_dim, max_seq, num_kv_heads, 1] float；dst: [head_dim, num_kv_tokens, num_kv_heads,
-// 1] fp16
-// TODO 前后数据layout有些迷惑，弄清楚
+// cache: [head_dim, max_seq, num_kv_heads, 1] float；
+// dst: [head_dim, num_kv_tokens, num_kv_heads, 1] fp16；
+// 索引见 doc/transformer_runner_device_api.md
 static __global__ void kv_cache_cast_fp16_kernel(const float *cache, uint16_t *dst, int head_dim,
                                                  int max_seq, int num_kv_heads, int num_kv_tokens) {
     const int n_out = head_dim * num_kv_tokens * num_kv_heads;
