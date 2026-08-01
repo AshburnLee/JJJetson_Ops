@@ -55,14 +55,19 @@ Phase 1 `TransformerRunner` 保留为单层测试基准；生产由 Engine 替�
 
 **职责**：模型文件 → host tensor + name 映射；**不**持有 GPU session，**不**做 forward。
 
-**规划路径**：`src/model/weight_loader.{h,cpp}`
+**规划路径**：`src/model/weight_loader.{h,cpp}`、`model_config.h`
 
 | 切面 | 内容 |
 |------|------|
 | 输入 | 文件路径（safetensors / gguf / fixture 目录） |
 | 输出 | `ModelConfig` 校验过的 tensor 表；供 Model H2D |
 | 生命周期 | 无持久 GPU 对象；单次 load 调用栈 |
-| API（规划） | `weight_loader_load_safetensors(...)` 等 |
+| API | `weight_loader_load_fixture` / `weight_loader_load_safetensors`；`weight_load_result_*` |
+
+**骨架（已实现）**
+- [x] `ModelConfig` POD + `model_config_validate`
+- [x] `HostTensor` / `WeightLoadResult` + `find` / `destroy`
+- [x] load API 声明 + 桩实现（返回 -1）；Python `weight_loader_me`
 
 **实现细节**
 - [ ] fixture 路径（Phase 2 先期，不依赖完整格式）

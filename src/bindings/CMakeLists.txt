@@ -435,6 +435,18 @@ target_link_libraries(transformer_runner_me PRIVATE
 
 set_python_module_props(transformer_runner_me)
 
+add_library(weight_loader_me MODULE
+  weight_loader_binding.cpp
+  $<TARGET_OBJECTS:weight_loader_model>
+)
+
+target_link_libraries(weight_loader_me PRIVATE
+  pybind11::module
+  ${Python3_LIBRARIES}
+)
+
+set_python_module_props(weight_loader_me)
+
 # Debug 构建时：对所有 *_me 模块统一开启可选调试/可观测性代码路径
 if(CMAKE_BUILD_TYPE MATCHES "Debug")
   foreach(t gated_unary_me
@@ -456,7 +468,8 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
             linear_me
             elementwise_me
             qkv_pack_fp16_me
-            transformer_runner_me)
+            transformer_runner_me
+            weight_loader_me)
     target_compile_definitions(${t} PRIVATE MY_OPS_DEBUG=1)
   endforeach()
 endif()
