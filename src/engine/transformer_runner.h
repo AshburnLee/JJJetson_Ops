@@ -82,6 +82,10 @@ int transformer_runner_test(TransformerRunner *runner, const float *hidden_in_ho
 // 当前 session KV cache 已写入 token 数（测试 / prefill-decode 断言）
 int transformer_runner_kv_cache_len(const TransformerRunner *runner);
 
+// 新 request / 新对话：cache_len=0，GPU K/V buffer 复用，不 free,不destroy 所以不能将指针置为
+// nullptr
+void transformer_runner_kv_cache_reset(TransformerRunner *runner);
+
 #ifdef __cplusplus
 }
 #endif

@@ -92,7 +92,7 @@ decode 时 **Q 的 T=1**，但 **K/V 的 FA 输入长度 = cache_len + T**，即
 
 ### 新 request / 新对话
 
-- **`kv_cache_reset()`**（后续暴露给 Runner API）：`cache_len = 0`，GPU buffer 复用、不 free。
+- **`transformer_runner_kv_cache_reset` / `transformer_runner_me.kv_cache_reset(runner)`**：`cache_len = 0`，GPU buffer 复用、不要 free。
 - 或 **`destroy_runner` + `create_runner`**：彻底释放再建。
 
 同一对话内 **prefill → decode 不要 reset**；换 prompt / 新 session 才 reset。
@@ -106,4 +106,5 @@ Q pack             -> src/cuda/qkv_pack_fp16.h
 Runner glue        -> src/engine/transformer_runner.cpp
 Python 生产入口    -> transformer_runner_me.forward_device(pos 显式)
 Python 测试入口    -> transformer_runner_me.forward_host(pos_offset 自动生成)
+kv_cache_reset     -> transformer_runner_me.kv_cache_reset(runner)
 ~~~

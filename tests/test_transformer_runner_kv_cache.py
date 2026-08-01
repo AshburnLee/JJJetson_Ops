@@ -66,5 +66,28 @@ def test_transformer_runner_kv_cache_prefill_decode() -> None:
     print("Passed")
 
 
+def test_transformer_runner_kv_cache_reset() -> None:
+    runner = _make_runner()
+    try:
+        num_prefill = 13
+        hidden = np.asfortranarray(
+            np.random.randn(HIDDEN_SIZE, num_prefill, 1, BATCH).astype(np.float32)
+        )
+        out = np.zeros_like(hidden)
+        transformer_runner_me.forward_host(runner, num_prefill, 0, hidden, out)
+        assert transformer_runner_me.kv_cache_len(runner) == num_prefill
+
+        transformer_runner_me.kv_cache_reset(runner)
+        assert transformer_runner_me.kv_cache_len(runner) == 0
+
+        out2 = np.zeros_like(hidden)
+        transformer_runner_me.forward_host(runner, num_prefill, 0, hidden, out2)
+        assert transformer_runner_me.kv_cache_len(runner) == num_prefill
+    finally:
+        transformer_runner_me.destroy_runner(runner)
+    print("reset Passed")
+
+
 if __name__ == "__main__":
     test_transformer_runner_kv_cache_prefill_decode()
+    test_transformer_runner_kv_cache_reset()

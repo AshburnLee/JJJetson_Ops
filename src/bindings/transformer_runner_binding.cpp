@@ -149,4 +149,12 @@ PYBIND11_MODULE(transformer_runner_me, m) {
                 reinterpret_cast<TransformerRunner *>(runner_handle));
         },
         py::arg("runner_handle"), "Current KV cache length after forward + advance_len");
+
+    m.def(
+        "kv_cache_reset",
+        [](uintptr_t runner_handle) {
+            transformer_runner_kv_cache_reset(reinterpret_cast<TransformerRunner *>(runner_handle));
+        },
+        py::arg("runner_handle"),
+        "Reset session KV cache (cache_len=0); reuse GPU buffers for a new request, No destroy");
 }

@@ -559,3 +559,10 @@ extern "C" int transformer_runner_kv_cache_len(const TransformerRunner *runner) 
     }
     return kv_cache_get_len(runner->kv_cache);
 }
+
+extern "C" void transformer_runner_kv_cache_reset(TransformerRunner *runner) {
+    if (runner == nullptr || runner->kv_cache == nullptr) {
+        return;
+    }
+    kv_cache_reset(runner->kv_cache);
+}
