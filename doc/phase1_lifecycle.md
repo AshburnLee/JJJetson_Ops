@@ -1,5 +1,7 @@
 # TransformerRunner 对象生命周期（Phase 1 单层）
 
+Phase 1 交付的是 一个完整的 Pre-LN Transformer decoder block（RMSNorm + residual + QKV + RoPE + FA + KV cache + O + SwiGLU FFN），对外暴露的是 TransformerRunner
+
 对应当前代码：`transformer_runner.cpp`、`kv_cache.cpp`、`transformer_runner_binding.cpp`。
 
 Python 只持有 `uintptr_t` handle；**无自动析构**，必须 `destroy_runner`。
@@ -152,3 +154,5 @@ TransformerModel / InferenceEngine   持有多 layer 权重 + KVCache(num_layers
 ~~~
 
 当前 Phase 1：`num_layers=1`，Runner 即 session 边界。
+
+Phase 2 顶层设计见 [`phase2_lifecycle.md`](phase2_lifecycle.md)（`InferenceEngine` + `TransformerModel`）。
