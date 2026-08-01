@@ -35,7 +35,9 @@ void weight_load_result_destroy(WeightLoadResult *result);
 
 const HostTensor *weight_load_result_find(const WeightLoadResult *result, const char *name);
 
-// 骨架 API：读路径 → 填充 out；0 成功，-1 失败。细节（解析）后续实现。
+// 骨架 API：读路径 👉 填充 out；0 成功，-1 失败。
+// fixture 目录：config.txt（ModelConfig key=value）+ manifest.txt（name ndim dims... relpath）+
+// *.f32
 int weight_loader_load_fixture(const char *path, WeightLoadResult *out);
 
 int weight_loader_load_safetensors(const char *path, WeightLoadResult *out);

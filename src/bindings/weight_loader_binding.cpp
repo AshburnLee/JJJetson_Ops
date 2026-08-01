@@ -1,10 +1,55 @@
 #include "model_config.h"
 #include "weight_loader.h"
 
+#include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
+#include <cstring>
 #include <stdexcept>
+#include <vector>
 
 namespace py = pybind11;
+
+static py::dict model_config_to_py(const ModelConfig &cfg) {
+    py::dict out;
+    out["hidden_size"] = cfg.hidden_size;
+    out["intermediate_size"] = cfg.intermediate_size;
+    out["num_layers"] = cfg.num_layers;
+    out["num_q_heads"] = cfg.num_q_heads;
+    out["num_kv_heads"] = cfg.num_kv_heads;
+    out["head_dim"] = cfg.head_dim;
+    out["vocab_size"] = cfg.vocab_size;
+    out["max_seq_len"] = cfg.max_seq_len;
+    out["freq_base"] = cfg.freq_base;
+    out["rms_norm_epsilon"] = cfg.rms_norm_epsilon;
+    out["tie_word_embeddings"] = cfg.tie_word_embeddings;
+    return out;
+}
+
+static py::dict weight_load_result_to_py(const WeightLoadResult &result) {
+    py::dict tensors;
+    for (int i = 0; i < result.num_tensors; ++i) {
+        const HostTensor &tensor = result.tensors[i];
+        if (tensor.name == nullptr || tensor.data == nullptr || tensor.dims == nullptr) {
+            throw std::runtime_error("invalid tensor entry in WeightLoadResult");
+        }
+        std::vector<pybind11::ssize_t> shape(static_cast<size_t>(tensor.ndim));
+        int64_t numel = 1;
+        for (int d = 0; d < tensor.ndim; ++d) {
+            shape[static_cast<size_t>(d)] = static_cast<pybind11::ssize_t>(tensor.dims[d]);
+            numel *= tensor.dims[d];
+        }
+        py::array_t<float> arr(shape);
+        std::memcpy(arr.mutable_data(), tensor.data, static_cast<size_t>(numel) * sizeof(float));
+        tensors[tensor.name] = arr;
+    }
+
+    py::dict out;
+    out["config"] = model_config_to_py(result.config);
+    out["tensors"] = tensors;
+    out["num_tensors"] = result.num_tensors;
+    return out;
+}
 
 PYBIND11_MODULE(weight_loader_me, m) {
     m.doc() = "WeightLoader: model file to host tensors (no GPU session)";
@@ -42,9 +87,11 @@ PYBIND11_MODULE(weight_loader_me, m) {
             WeightLoadResult result{};
             weight_load_result_init(&result);
             if (weight_loader_load_fixture(path.c_str(), &result) != 0) {
-                throw std::runtime_error("weight_loader_load_fixture not implemented");
+                throw std::runtime_error("weight_loader_load_fixture failed");
             }
-            return result.num_tensors;
+            py::dict py_result = weight_load_result_to_py(result);
+            weight_load_result_destroy(&result);
+            return py_result;
         },
         py::arg("path"));
 
@@ -56,7 +103,9 @@ PYBIND11_MODULE(weight_loader_me, m) {
             if (weight_loader_load_safetensors(path.c_str(), &result) != 0) {
                 throw std::runtime_error("weight_loader_load_safetensors not implemented");
             }
-            return result.num_tensors;
+            py::dict py_result = weight_load_result_to_py(result);
+            weight_load_result_destroy(&result);
+            return py_result;
         },
         py::arg("path"));
 }

@@ -70,7 +70,7 @@ Phase 1 `TransformerRunner` 保留为单层测试基准；生产由 Engine 替�
 - [x] load API 声明 + 桩实现（返回 -1）；Python `weight_loader_me`
 
 **实现细节**
-- [ ] fixture 路径（Phase 2 先期，不依赖完整格式）
+- [x] fixture 路径（`config.txt` + `manifest.txt` + `.f32`）
 - [ ] safetensors 解析 + name→tensor
 - [ ] gguf（若目标模型需要）
 - [ ] 加载单测（小 fixture vs numpy/torch）
