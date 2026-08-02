@@ -1,12 +1,15 @@
 #include "transformer_model.h"
+#include "weight_loader.h"
 
+#include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
+#include <cuda_runtime.h>
 #include <stdexcept>
 
 namespace py = pybind11;
 
 PYBIND11_MODULE(transformer_model_me, m) {
-    m.doc() = "TransformerModel: immutable GPU weights container (skeleton)";
+    m.doc() = "TransformerModel: immutable GPU weights container";
 
     m.def(
         "create_model",
@@ -61,4 +64,54 @@ PYBIND11_MODULE(transformer_model_me, m) {
             return transformer_model_is_tied_embeddings(model) == 1;
         },
         py::arg("model_handle"));
+
+    m.def(
+        "is_weights_loaded",
+        [](uintptr_t model_handle) {
+            const TransformerModel *model =
+                reinterpret_cast<const TransformerModel *>(model_handle);
+            return transformer_model_is_weights_loaded(model) == 1;
+        },
+        py::arg("model_handle"));
+
+    m.def(
+        "load_weights_from_fixture",
+        [](uintptr_t model_handle, const std::string &fixture_path) {
+            TransformerModel *model = reinterpret_cast<TransformerModel *>(model_handle);
+            WeightLoadResult loaded{};
+            weight_load_result_init(&loaded);
+            if (weight_loader_load_fixture(fixture_path.c_str(), &loaded) != 0) {
+                throw std::runtime_error("weight_loader_load_fixture failed");
+            }
+            if (transformer_model_load_weights(model, &loaded) != 0) {
+                weight_load_result_destroy(&loaded);
+                throw std::runtime_error("transformer_model_load_weights failed");
+            }
+            weight_load_result_destroy(&loaded);
+        },
+        py::arg("model_handle"), py::arg("fixture_path"));
+
+    m.def(
+        "read_layer_w_q_host",
+        [](uintptr_t model_handle, int layer_idx, int hidden_size, int q_dim) {
+            const TransformerModel *model =
+                reinterpret_cast<const TransformerModel *>(model_handle);
+            if (transformer_model_is_weights_loaded(model) != 1) {
+                throw std::runtime_error("weights not loaded");
+            }
+            const TransformerLayerWeights *layer =
+                transformer_model_get_layer_weights(model, layer_idx);
+            if (layer == nullptr || layer->d_w_q == nullptr) {
+                throw std::runtime_error("invalid layer or d_w_q");
+            }
+            py::array_t<float> out({hidden_size, q_dim});
+            const size_t bytes = static_cast<size_t>(hidden_size) * q_dim * sizeof(float);
+            cudaError_t err =
+                cudaMemcpy(out.mutable_data(), layer->d_w_q, bytes, cudaMemcpyDeviceToHost);
+            if (err != cudaSuccess) {
+                throw std::runtime_error(cudaGetErrorString(err));
+            }
+            return out;
+        },
+        py::arg("model_handle"), py::arg("layer_idx"), py::arg("hidden_size"), py::arg("q_dim"));
 }

@@ -40,12 +40,14 @@ Phase 1 复用：transformer_layer_linears_forward_device（Engine 内按 layer_
 
 ### 0.3 与 Phase 1 的边界
 
-| Phase 1 | Phase 2 |
-|---------|---------|
-| `TransformerRunner` = session + 单层权重 | **Engine** = session；**Model** = 权重 |
-| `KVCache(num_layers=1)` | `KVCache(num_layers=N)` |
-| 手传 host 权重 | **Loader** 读模型文件 |
-| 无 embed / lm_head / 采样 | Model 含 embed/lm_head；**Sampler** 出 token |
+~~~
+Phase 1                              Phase 2
+─────────────────────────────────────────────────────────────────────────
+TransformerRunner = session + 单层权重   Engine = session；Model = 权重
+KVCache(num_layers=1)                 KVCache(num_layers=N)
+手传 host 权重                         Loader 读模型文件
+无 embed / lm_head / 采样              Model 含 embed/lm_head；Sampler 出 token
+~~~
 
 Phase 1 `TransformerRunner` 保留为单层测试基准；生产由 Engine 替代。
 
@@ -57,12 +59,15 @@ Phase 1 `TransformerRunner` 保留为单层测试基准；生产由 Engine 替�
 
 **规划路径**：`src/model/weight_loader.{h,cpp}`、`model_config.h`
 
-| 切面 | 内容 |
-|------|------|
-| 输入 | 文件路径（safetensors / gguf / fixture 目录） |
-| 输出 | `ModelConfig` 校验过的 tensor 表；供 Model H2D |
-| 生命周期 | 无持久 GPU 对象；单次 load 调用栈 |
-| API | `weight_loader_load_fixture` / `weight_loader_load_safetensors`；`weight_load_result_*` |
+~~~
+切面        内容
+──────────────────────────────────────────────────────────────────
+输入        文件路径（safetensors / gguf / fixture 目录）
+输出        ModelConfig 校验过的 tensor 表；供 Model H2D
+生命周期    无持久 GPU 对象；单次 load 调用栈
+API         weight_loader_load_fixture / weight_loader_load_safetensors；
+            weight_load_result_*
+~~~
 
 **骨架（已实现）**
 - [x] `ModelConfig` POD + `model_config_validate`
@@ -79,7 +84,7 @@ Phase 1 `TransformerRunner` 保留为单层测试基准；生产由 Engine 替�
 
 ## 2. 模块 — TransformerModel
 
-**职责**：**immutable** GPU 权重与 model 级只读资源；被 Engine **引用**，不含 session / KV 状态。
+**职责**：**immutable** GPU 权重与 model 级只读资源；被 Engine **引用**，不含 session / KV 状态。immutable 具体含义见 §2.3。
 
 **规划路径**：`src/model/transformer_model.{h,cpp}`、`model_config.h`
 
@@ -97,26 +102,70 @@ TransformerModel
 
 ### 2.2 生命周期
 
-| 操作 | 行为 |
-|------|------|
-| `model_create` + Loader 填充 | H2D 全部权重；构建 rope cache |
-| `model_destroy` | cudaFree 权重；**须在引用它的 Engine 全部 destroy 之后** |
-| reset | 无（immutable） |
+~~~
+操作                                              行为
+────────────────────────────────────────────────────────────────────────────
+model_create + transformer_model_load_weights   H2D 全部权重（仅一次，immutable）；
+                                                  rope cache 在 create 时构建
+model_destroy                                     cudaFree 权重；须在引用它的
+                                                  Engine 全部 destroy 之后
+reset                                             无（immutable）
+~~~
 
-### 2.3 数据流（被 Engine 调用）
+### 2.3 immutable 含义与模块边界
+
+此处 **immutable** 是 **Model 在推理链中的角色**：权重在 load 之后固定，session 演化发生在 Engine，不在 Model。
+
+**（1）权重内容不变**
+
+- `transformer_model_load_weights` **仅可成功调用一次**；`weights_loaded` 置位后再次 load 返回失败。
+- 无 `model_reset`、无换 checkpoint、forward 路径不修改 `d_w_*` / `d_embed` 等。
+
+**（2）不含 session 状态**
+
+~~~
+                          TransformerModel          InferenceEngine（§3）
+─────────────────────────────────────────────────────────────────────────
+KV cache                  无                        有
+cache_len / d_pos         无                        有
+reset                     无                        engine_reset（新对话）
+权重                      load 后固定               只读引用 Model
+~~~
+
+Model **不随 prefill/decode 演化**；变的是 Engine 里的 KV 与 session 计数。
+
+**（3）生命周期：Engine 只读借用**
+
+~~~
+WeightLoader  →  host tensors
+       ↓  transformer_model_load_weights（一次 H2D）
+TransformerModel  →  GPU 权重冻结（immutable）
+       ↓  只读指针引用（Engine 不 copy 权重、不 own Model）
+InferenceEngine   →  prefill/decode（改 KV，不改权重）
+       ↓
+engine_destroy  →  释放 KV / pool；**不** destroy Model
+       ↓
+model_destroy   →  释放 GPU 权重（须在 Engine 全部 destroy 之后）
+~~~
+
+**tied embed / lm_head**：`tie_word_embeddings=1` 时 `d_lm_head == d_embed`，仍是 load 时定型的同一块显存，语义上同样 immutable。
+
+对齐 vLLM / SGLang：**权重常驻 GPU（Model）**，**session / KV 单独管理（Engine）**。
+
+### 2.4 数据流（被 Engine 调用）
 
 - **embed**：`d_token_ids → d_hidden`
 - **lm_head**：末 hidden → `d_logits`（decode 要 logits 时）
 - **layer 权重**：Engine 按 `layer_idx` 取 `LayerWeights[i]` 传入 Phase 1 layer 链
 - **final norm**：`d_w_final_norm` 作用于末层 hidden
 
-### 2.4 API 与测试（规划）
+### 2.5 API 与测试（规划）
 
 - [x] `ModelConfig` POD + 校验（`model_config.h`）
 - [x] `transformer_model_create` / `destroy`（骨架：GPU 权重容器 + RopeCosSinCache）
 - [x] `TransformerLayerWeights[N]` / `d_embed` / `d_lm_head` / `d_w_final_norm` 分配；tied 可选
+- [x] Loader host 权重 H2D 拷贝（`transformer_model_load_weights`；fixture 名 `layer{i}.w_*` / `embed` / `final_norm`）
 - [ ] embed / lm_head device 算子（或 gather GEMM）+ `forward_host` 单测
-- [ ] Loader 灌入 H2D
 - [ ] 2-layer fixture 权重 layout 单测
 
 ---
@@ -143,12 +192,14 @@ InferenceEngine
 
 ### 3.2 生命周期
 
-| 操作 | 行为 |
-|------|------|
-| `engine_create(model)` | KVCache(N)、pool、stream；`cache_len=0` |
-| `engine_reset` | `kv_cache_reset`；`cache_len=0`；**不**动 Model / pool |
-| `engine_destroy` | 释放 KV、pool、stream；**不** destroy model |
-| forward 每步 | 栈上 `InferenceForwardCtx` |
+~~~
+操作                  行为
+──────────────────────────────────────────────────────────────────
+engine_create(model)  KVCache(N)、pool、stream；cache_len=0
+engine_reset          kv_cache_reset；cache_len=0；不动 Model / pool
+engine_destroy        释放 KV、pool、stream；不 destroy model
+forward 每步          栈上 InferenceForwardCtx
+~~~
 
 ### 3.3 单步 forward（模块内核心数据流）
 
@@ -187,12 +238,14 @@ prefill：`T>1`，`pos=[0..T-1]`。decode：`T=1`，`pos=[cache_len]`，`num_kv_
 
 **规划路径**：`src/engine/generate_loop.*` 或 Python 薄封装（先期）
 
-| 切面 | 内容 |
-|------|------|
-| 输入 | 末 token `d_logits` [vocab] |
-| 输出 | `next_token_id` |
-| 生命周期 | 无 GPU session；可纯 host |
-| 行为 | prefill 一次 → 循环 decode → sampler → 停止条件 |
+~~~
+切面        内容
+──────────────────────────────────────────────────────────────────
+输入        末 token d_logits [vocab]
+输出        next_token_id
+生命周期    无 GPU session；可纯 host
+行为        prefill 一次 → 循环 decode → sampler → 停止条件
+~~~
 
 **实现细节**
 - [ ] 末 token logits slice
@@ -212,7 +265,7 @@ prefill：`T>1`，`pos=[0..T-1]`。decode：`T=1`，`pos=[cache_len]`，`num_kv_
 ## 6. 实现顺序（模块骨架 → 细节）
 
 1. **WeightLoader** — fixture（可并行起步）
-2. **TransformerModel** — 容器 + embed/lm_head + fixture 灌入
+2. **TransformerModel** — 容器 + embed/lm_head + fixture H2D 拷贝
 3. **InferenceEngine** — session + N-layer forward + prefill/decode
 4. **Sampler / GenerateLoop** — 闭合 token 环
 5. **WeightLoader** — safetensors 生产格式

@@ -2,6 +2,7 @@
 
 #include "model_config.h"
 #include "rope_cossin_cache.h"
+#include "weight_loader.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,8 +24,14 @@ typedef struct TransformerLayerWeights {
 
 typedef struct TransformerModel TransformerModel;
 
-// 骨架：按 ModelConfig 分配 GPU 权重容器与 RopeCosSinCache；不做 H2D / forward。
+// 骨架：按 ModelConfig 分配 GPU 权重容器与 RopeCosSinCache。
 TransformerModel *transformer_model_create(const ModelConfig *cfg);
+
+// Loader 产出 host 权重后 H2D 拷贝至 device buffer；仅可调用一次（immutable）。0 成功，-1 失败。
+// model_destroy 须在引用该 Model 的全部 Engine destroy 之后（由调用方保证）。
+int transformer_model_load_weights(TransformerModel *model, const WeightLoadResult *loaded);
+
+int transformer_model_is_weights_loaded(const TransformerModel *model);
 
 void transformer_model_destroy(TransformerModel *model);
 
