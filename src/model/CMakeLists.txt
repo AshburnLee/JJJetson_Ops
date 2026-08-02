@@ -11,7 +11,11 @@ add_library(weight_loader_model OBJECT
   weight_loader.cpp
 )
 
-foreach(t rope_model kv_cache_model weight_loader_model)
+add_library(transformer_model OBJECT
+  transformer_model.cpp
+)
+
+foreach(t rope_model kv_cache_model weight_loader_model transformer_model)
   target_link_libraries(${t} PRIVATE CUDA::cudart)
   set_target_properties(${t} PROPERTIES POSITION_INDEPENDENT_CODE ON)
   target_include_directories(${t} PRIVATE ${MY_OPS_INCLUDE_DIRS})
@@ -19,3 +23,5 @@ foreach(t rope_model kv_cache_model weight_loader_model)
     target_compile_definitions(${t} PRIVATE MY_OPS_DEBUG=1)
   endif()
 endforeach()
+
+target_link_libraries(transformer_model PRIVATE rope_model)

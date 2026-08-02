@@ -447,6 +447,21 @@ target_link_libraries(weight_loader_me PRIVATE
 
 set_python_module_props(weight_loader_me)
 
+add_library(transformer_model_me MODULE
+  transformer_model_binding.cpp
+  $<TARGET_OBJECTS:transformer_model>
+  $<TARGET_OBJECTS:rope_model>
+  $<TARGET_OBJECTS:weight_loader_model>
+)
+
+target_link_libraries(transformer_model_me PRIVATE
+  pybind11::module
+  ${Python3_LIBRARIES}
+  CUDA::cudart
+)
+
+set_python_module_props(transformer_model_me)
+
 # Debug 构建时：对所有 *_me 模块统一开启可选调试/可观测性代码路径
 if(CMAKE_BUILD_TYPE MATCHES "Debug")
   foreach(t gated_unary_me
@@ -469,7 +484,8 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
             elementwise_me
             qkv_pack_fp16_me
             transformer_runner_me
-            weight_loader_me)
+            weight_loader_me
+            transformer_model_me)
     target_compile_definitions(${t} PRIVATE MY_OPS_DEBUG=1)
   endforeach()
 endif()

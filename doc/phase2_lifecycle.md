@@ -112,9 +112,11 @@ TransformerModel
 
 ### 2.4 API 与测试（规划）
 
-- [ ] `ModelConfig` POD + 校验
-- [ ] `transformer_model_create` / `destroy`
+- [x] `ModelConfig` POD + 校验（`model_config.h`）
+- [x] `transformer_model_create` / `destroy`（骨架：GPU 权重容器 + RopeCosSinCache）
+- [x] `TransformerLayerWeights[N]` / `d_embed` / `d_lm_head` / `d_w_final_norm` 分配；tied 可选
 - [ ] embed / lm_head device 算子（或 gather GEMM）+ `forward_host` 单测
+- [ ] Loader 灌入 H2D
 - [ ] 2-layer fixture 权重 layout 单测
 
 ---
