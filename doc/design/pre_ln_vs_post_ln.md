@@ -107,7 +107,7 @@ hidden_in[device]
                  hidden_out[device]
 ~~~
 
-`rms_norm_fused_add_forward_device` 将 Pre-LN 的 **add + RMSNorm** 融合为一次 kernel（in-place input/residual）；详见 `doc/rms_norm_device_api.md`。Norm 权重在 Runner create 时 H2D 一次，forward 内无额外 H2D/D2H。
+`rms_norm_fused_add_forward_device` 将 Pre-LN 的 **add + RMSNorm** 融合为一次 kernel（in-place input/residual）；详见 [`../guide/rms_norm_device_api.md`](../guide/rms_norm_device_api.md)。Norm 权重在 Runner create 时 H2D 一次，forward 内无额外 H2D/D2H。
 
 ## 对比摘要
 
@@ -143,5 +143,5 @@ Qwen3 额外特性 (不影响 block 级 Pre-LN 判定)：**QK-Norm** (对 Q/K �
 ## 参考
 
 - Roadmap block 定义：`.cursor/rules/jjjetson-ops-roadmap.mdc`
-- RMSNorm device API：`doc/rms_norm_device_api.md`
+- RMSNorm device API：[`../guide/rms_norm_device_api.md`](../guide/rms_norm_device_api.md)
 - Runner 集成状态：`src/engine/transformer_runner.h`, `src/engine/transformer_runner.cpp`

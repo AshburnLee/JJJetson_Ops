@@ -2,7 +2,7 @@
 
 Phase 2 交付的是 单 request 完整生成链（embed → N×Pre-LN block → final norm → lm_head → 采样），对外暴露的是 InferenceEngine（session）与 TransformerModel（权重）。
 
-**状态**：设计图纸（未实现）。Phase 1 对照：[`phase1_lifecycle.md`](phase1_lifecycle.md)。
+**状态**：设计图纸（未实现）。Phase 1 对照：[`phase1_lifecycle.md`](phase1_lifecycle.md)（同目录）。
 
 **组织原则**：Phase 2 按 **实体模块** 划分（Loader | Model | Engine | Sampler）；lifecycle 切面（资源、时序、forward、API）作为 **各模块内实现细节**，不再作为顶层 checklist 维度。
 
@@ -176,7 +176,7 @@ prefill：`T>1`，`pos=[0..T-1]`。decode：`T=1`，`pos=[cache_len]`，`num_kv_
 
 - [ ] C：`engine_create` / `destroy` / `reset` / `forward`
 - [ ] Python：`inference_engine_me`；`forward_host` 仅测试
-- [ ] `doc/inference_engine_device_api.md`
+- [ ] `../guide/inference_engine_device_api.md`
 - [ ] 2-layer prefill/decode e2e；N=1 退化 Phase 1
 
 ---
@@ -218,4 +218,4 @@ prefill：`T>1`，`pos=[0..T-1]`。decode：`T=1`，`pos=[cache_len]`，`num_kv_
 5. **WeightLoader** — safetensors 生产格式
 6. **并行**：MoE、Graph、量化
 
-**API 契约**（收工前）：`doc/inference_engine_device_api.md`（Engine 为主；Loader/Model load API 可同文档分节）。
+**API 契约**（收工前）：[`../guide/inference_engine_device_api.md`](../guide/inference_engine_device_api.md)（Engine 为主；Loader/Model load API 可同文档分节）。

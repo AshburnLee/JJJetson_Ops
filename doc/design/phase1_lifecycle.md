@@ -142,7 +142,7 @@ kv_cache_reset(handle)          → kv_cache_reset
 
 `forward_device` binding 内对 hidden/pos 的 cudaMalloc 仅为测试 H2D 包装；生产路径应自带 GPU 指针调 C API。
 
-API 契约（签名、`ForwardCtx`、错误码、KV layout 索引）见 `doc/transformer_runner_device_api.md`。
+API 契约（签名、`ForwardCtx`、错误码、KV layout 索引）见 [`../guide/transformer_runner_device_api.md`](../guide/transformer_runner_device_api.md)。
 
 ---
 

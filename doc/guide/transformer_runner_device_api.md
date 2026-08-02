@@ -2,7 +2,7 @@
 
 C 头文件：`src/engine/transformer_runner.h`。Python：`transformer_runner_me`。
 
-**生命周期、ownership、prefill/decode 时序**见 [`lifecycle.md`](lifecycle.md)。本文补充 **API 视角的对象关系与数据流**。
+**生命周期、ownership、prefill/decode 时序**见 [`../design/phase1_lifecycle.md`](../design/phase1_lifecycle.md)。本文补充 **API 视角的对象关系与数据流**。
 
 ---
 
