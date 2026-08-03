@@ -466,6 +466,28 @@ target_link_libraries(transformer_model_me PRIVATE
 
 set_python_module_props(transformer_model_me)
 
+add_library(inference_engine_me MODULE
+  inference_engine_binding.cpp
+  $<TARGET_OBJECTS:inference_engine>
+  $<TARGET_OBJECTS:transformer_model>
+  $<TARGET_OBJECTS:kv_cache_model>
+  $<TARGET_OBJECTS:kv_cache_cuda>
+  $<TARGET_OBJECTS:rope_model>
+  $<TARGET_OBJECTS:weight_loader_model>
+  $<TARGET_OBJECTS:embed_cuda>
+  $<TARGET_OBJECTS:lm_head_cuda>
+  $<TARGET_OBJECTS:rms_norm_cuda>
+)
+
+target_link_libraries(inference_engine_me PRIVATE
+  pybind11::module
+  ${Python3_LIBRARIES}
+  CUDA::cudart
+  CUDA::cublas
+)
+
+set_python_module_props(inference_engine_me)
+
 # Debug 构建时：对所有 *_me 模块统一开启可选调试/可观测性代码路径
 if(CMAKE_BUILD_TYPE MATCHES "Debug")
   foreach(t gated_unary_me
@@ -489,7 +511,8 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
             qkv_pack_fp16_me
             transformer_runner_me
             weight_loader_me
-            transformer_model_me)
+            transformer_model_me
+            inference_engine_me)
     target_compile_definitions(${t} PRIVATE MY_OPS_DEBUG=1)
   endforeach()
 endif()

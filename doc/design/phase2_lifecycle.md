@@ -334,6 +334,10 @@ engine_destroy        释放 KV、pool、stream；不 destroy model
 forward 每步          栈上 InferenceForwardCtx
 ~~~
 
+**骨架（已实现）**：`src/engine/inference_engine.{h,cpp}` — `inference_engine_create` /
+`destroy` / `reset`；`KVCache(num_layers)` + FA staging BufferPool + `SessionState.next_pos`；
+Python `inference_engine_me`；`tests/test_inference_engine.py`。
+
 ### 3.3 单步 forward（模块内核心数据流）
 
 ~~~
@@ -358,8 +362,10 @@ prefill：`T>1`，`pos=[0..T-1]`。decode：`T=1`，`pos=[cache_len]`，`num_kv_
 
 ### 3.5 API 与测试（规划）
 
-- [ ] C：`engine_create` / `destroy` / `reset` / `forward`
-- [ ] Python：`inference_engine_me`；`forward_host` 仅测试
+- [x] C（骨架）：`inference_engine_create` / `destroy` / `reset`；`kv_cache_len` / `next_pos`
+- [ ] C：`forward`
+- [x] Python（骨架）：`inference_engine_me` — create/destroy/reset/kv_cache_len
+- [ ] Python：`forward_host` 仅测试
 - [ ] `../guide/inference_engine_device_api.md`
 - [ ] 2-layer prefill/decode e2e；N=1 退化 Phase 1
 
