@@ -100,6 +100,61 @@ TransformerModel
   └── d_w_final_norm
 ~~~
 
+### 2.1.1 tied 与 untied：embed 和 lm_head 要不要共用一块权重？
+
+生成一条 token 时，模型一头一尾各碰一次 [词表]：
+
+- **入口 embed**：你给一个 token id（比如 42），模型去查表，得到长度为 hidden 的向量。可以理解为 [这个词读进来时长什么样]。
+- **出口 lm_head**：最后一层算完 hidden 之后，要对照整张词表打分，得到每个词可能是下一个 token 的 logits。可以理解为 [当前状态最像哪个词]。
+
+于是自然有两个权重矩阵：
+
+| 名字 | 形状（本项目） | 干什么 |
+|------|----------------|--------|
+| embed | `[vocab, hidden]` | id -> 向量，查表 |
+| lm_head | `[hidden, vocab]`（untied 时） | 向量 -> 词表分数，投影 |
+
+**untied（`tie_word_embeddings=0`）** —— 各用各的表，两本词典
+
+checkpoint 里 **embed 和 lm_head 是分开存的两块权重**。认字用 embed，猜下一个词用 lm_head，互不共用。
+
+在本项目里：
+
+- GPU 上分配 `d_embed` 和 `d_lm_head` 两块显存；
+- load 时要分别 H2D `embed` 和 `lm_head`；
+- forward 时 lm_head 走 `untied_lm_head_forward_device`，读 `d_lm_head`。
+
+参数量多一块 `vocab * hidden`，但两个矩阵可以各学各的，约束更少。
+
+**tied（`tie_word_embeddings=1`）** —— 认字和猜词共用同一本词典
+
+很多 LLM（含 LLaMA 系）会把 **输出层和输入 embed 绑成同一张表**：`d_lm_head` 不再单独占一块，而是 **直接指向 `d_embed`**。
+
+直觉：同一个词，[读进来] 和 [被预测出来] 最好用同一套向量表示；input 和 output 关于词表是对称的。
+
+在本项目里：
+
+- create 时 `d_lm_head = d_embed`，只 alloc 一块 embed 大小的显存；
+- load 时 **只 load `embed`**，fixture 里可以没有 `lm_head`；
+- forward 时 lm_head 走 `tied_lm_head_forward_device`，用的仍是 `d_embed`，公式是 `logits[v,t] = sum_h embed[v,h] * hidden[h,t]`。
+
+省参数量，也是 LLaMA 等模型的常见默认。
+
+**和代码的对应关系**
+
+配置在 `ModelConfig.tie_word_embeddings` 里，**create model 时** 就定好了（与 checkpoint / fixture 的 config.txt 一致）：
+
+~~~
+tie_word_embeddings=0   -> untied，embed + lm_head 各一块
+tie_word_embeddings=1   -> tied，d_lm_head == d_embed
+~~~
+
+`transformer_model_lm_head_forward_device` 内部只看 `model->lm_head_tied`：为 1 调 tied 路径，为 0 调 untied 路径。Engine 不用每次再传这个开关。
+
+**和 immutable 的关系**
+
+无论 tied 还是 untied，权重都在 load 时一次性 H2D，之后 forward 只读。tied 只是 [占几块显存、load 哪些 tensor 名字] 不同，不改变 [Model 权重冻结、session 在 Engine] 的边界。详见 §2.3。
+
 ### 2.2 生命周期
 
 ~~~
@@ -148,16 +203,93 @@ engine_destroy  →  释放 KV / pool；**不** destroy Model
 model_destroy   →  释放 GPU 权重（须在 Engine 全部 destroy 之后）
 ~~~
 
-**tied embed / lm_head**：`tie_word_embeddings=1` 时 `d_lm_head == d_embed`，仍是 load 时定型的同一块显存，语义上同样 immutable。
+**tied embed / lm_head**：概念与 load/forward 行为见 §2.1.1；此处仅强调 `tie_word_embeddings=1` 时 `d_lm_head == d_embed`，仍是 load 时定型的同一块显存，语义上同样 immutable。
 
 对齐 vLLM / SGLang：**权重常驻 GPU（Model）**，**session / KV 单独管理（Engine）**。
 
 ### 2.4 数据流（被 Engine 调用）
 
-- **embed**：`d_token_ids → d_hidden`
-- **lm_head**：末 hidden → `d_logits`（decode 要 logits 时）
+- **embed**：`d_token_ids -> d_hidden`
+- **lm_head**：末 hidden -> `d_logits`（decode 要 logits 时）
 - **layer 权重**：Engine 按 `layer_idx` 取 `LayerWeights[i]` 传入 Phase 1 layer 链
 - **final norm**：`d_w_final_norm` 作用于末层 hidden
+
+**embed / lm_head 交付摘要**：Model 从 [权重容器 + H2D] 扩展为能独立跑 embed 与 lm_head 的 device 算子，并验证了 `token -> hidden -> logits` 数据流的两端；Engine 级完整 forward 待 §3。
+
+### 2.4.1 算子 vs Model 薄封装：代码里其实是两层，别搞混
+
+读代码时容易以为 embed / lm_head [住在 TransformerModel 里面]，像 struct 的成员函数一样。其实不是。它们和 `linear.cu`、`rms_norm.cu` 一样，先是 **`src/cuda/` 下的通用算子**；`transformer_model_*_forward` 只是在上面套了一层 [很薄的壳]，帮你把 Model 里的权重指针、tied 配置、load 状态接好。真正做乘加、查表的是 cuda 那一层。
+
+可以想成三道工序，各干各的事：
+
+~~~
+谁                    在哪                          干什么（人话）
+──────────────────────────────────────────────────────────────────────────────
+cuda 算子             embed.cu / lm_head.cu         只认指针和 shape：给你 d_embed、
+                                                    token_ids，我帮你 gather 出 hidden；
+                                                    给你 d_hidden、权重，我帮你 GEMM
+                                                    出 logits。不关心这些权重是谁
+                                                    的、load 过没有。
+
+Model 薄封装         transformer_model.h           认识 TransformerModel 这个对象：
+                                                    从 model 里取出 d_embed / d_lm_head；
+                                                    没 load 权重就报错；tied 时走
+                                                    tied_lm_head_*，untied 时走
+                                                    untied_lm_head_*。Engine 调这一层
+                                                    最省事，不用自己拼。
+
+Engine（规划）        inference_engine.*            管 session：这一步 prefill 还是
+                                                    decode、跑几层 block、什么时候
+                                                    final_norm、要不要 lm_head。权重
+                                                    一律只读引用 Model，不自己 alloc
+                                                    第二份 embed。
+~~~
+
+**权重在谁手里？**
+
+`d_embed`、`d_lm_head`、各层 `LayerWeights[i]`、`d_w_final_norm` 全是 **Model 在 create + load 时** 搞定的，load 完就冻结。Engine 用时只拿指针，**不会** 再 copy 一份权重，也 **不会** 在 destroy Engine 时 free 掉 Model。
+
+**那跟 layer 里的 Linear 有什么不一样？**
+
+Phase 1 的 layer 链有个历史习惯：调用 `transformer_layer_linears_forward_device` 时，**9 个 `d_w_*` 都要调用方显式传进来**。所以 Model 用 `get_layer_weights(i)` 把指针暴露给 Engine，Engine 再传给 layer 链——算子 (`linear_forward_device`) 仍然通用，只是 weight 从 Engine 手里过一手。
+
+embed / lm_head 没有这套 [传 9 个指针] 的历史接口。权重本来就是 Model 级的（见 §2.1），tied 时还要在 forward 里判断 [到底用 d_embed 还是 d_lm_head]。所以在 Model 上直接提供 `transformer_model_embed_forward_device` / `transformer_model_lm_head_forward_device`，把 [取指针 + 检查 + tied 分支] 收进去，Engine 一行调用就行。
+
+对比如下（帮助你对照代码）：
+
+~~~
+                    layer 里的 Linear / RMSNorm              embed / lm_head
+─────────────────────────────────────────────────────────────────────────────────
+权重在哪            LayerWeights[i].d_w_*                    model->d_embed /
+                                                             model->d_lm_head
+底层算子            linear_forward_device(…, d_w, …)          embed_forward_device(…)
+                    调用方必须传 weight                         lm_head_*_forward_device(…)
+                                                             调用方传 d_embed / d_lm_head
+Model 怎么接        get_layer_weights(i) 暴露指针            transformer_model_*_forward
+                    Engine 再传给 Phase 1 layer 链            内部取 model 权重 + tied 判断
+~~~
+
+**Engine 能不能跳过 Model 壳，直接调 cuda 算子？**
+
+可以，等价写法大致是：
+
+~~~
+embed_forward_device(stream, transformer_model_get_d_embed(model), d_token_ids, …);
+
+// untied：
+untied_lm_head_forward_device(stream, handle,
+    transformer_model_get_d_lm_head(model), d_hidden, …);
+
+// tied（tie_word_embeddings=1）：
+tied_lm_head_forward_device(stream, handle,
+    transformer_model_get_d_embed(model), d_hidden, …);
+~~~
+
+但要自己保证：权重已 load、tied 时别误用 `get_d_lm_head`（它和 `get_d_embed` 是同一地址，但 GEMM 接口不同）。默认推荐走 Model 薄封装，少踩坑。
+
+**为什么拆成两层，而不是全塞进 Model？**
+
+cuda 算子保持 dumb、好单测：给指针就能跑，不依赖 `TransformerModel` 这个类型。Model 壳表达 [这份 checkpoint 的权重 + tied 配置] 这一层业务边界，Engine 编排 session 时少写重复逻辑。后面的 final_norm 也会同样处理：`rms_norm_forward_device` 做归一化，`transformer_model_final_norm_forward_device` 帮你在 Model 上接 `d_w_final_norm`。
 
 ### 2.5 API 与测试（规划）
 
@@ -165,7 +297,7 @@ model_destroy   →  释放 GPU 权重（须在 Engine 全部 destroy 之后）
 - [x] `transformer_model_create` / `destroy`（骨架：GPU 权重容器 + RopeCosSinCache）
 - [x] `TransformerLayerWeights[N]` / `d_embed` / `d_lm_head` / `d_w_final_norm` 分配；tied 可选
 - [x] Loader host 权重 H2D 拷贝（`transformer_model_load_weights`；fixture 名 `layer{i}.w_*` / `embed` / `final_norm`）
-- [ ] embed / lm_head device 算子（或 gather GEMM）+ `forward_host` 单测
+- [x] embed / lm_head device 算子（或 gather GEMM）+ `forward_host` 单测
 - [ ] 2-layer fixture 权重 layout 单测
 
 ---

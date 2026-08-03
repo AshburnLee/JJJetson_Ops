@@ -52,6 +52,35 @@ const float *transformer_model_get_d_final_norm(const TransformerModel *model);
 
 int transformer_model_is_tied_embeddings(const TransformerModel *model);
 
+// embed / lm_head 的乘加、查表在 src/cuda/embed.cu、lm_head.cu 里做，和 linear、rms_norm
+// 同级，是通用算子。 下面两个 transformer_model_*_forward 只是薄壳，别把它当成算子本体：帮你从
+// model 取出 d_embed、 d_lm_head，先看 weights 有没有 load；lm_head 还要再看
+// tie_word_embeddings——为 1 就走 tied 路径 （权重用 d_embed），为 0 就走 untied 路径（用单独的
+// d_lm_head）。细节见 doc/design/phase2_lifecycle.md §2.1.1、§2.4.1。
+//
+// Engine 理论上也能跳过这层，直接 embed_forward_device(stream, get_d_embed(model), ...)，
+// 但 tied 时函数和指针都要自己配对，load 状态也要自己查，一般还是调这里省心。
+// 和 layer 链的差别：Phase 1 要求 Engine 把每层 9 个 d_w_* 显式传给 layer 链，所以 Model 用
+// get_layer_weights 暴露指针；embed/lm_head 没有这套老接口，权重又挂在 Model 上，就在 Model 包一层
+// forward。
+
+// embed: d_token_ids -> d_hidden（col-major [hidden, T]）。需 weights_loaded。
+int transformer_model_embed_forward_device(void *stream, const TransformerModel *model,
+                                           const int *d_token_ids, float *d_hidden, int num_tokens);
+
+// lm_head: d_hidden -> d_logits（col-major [vocab, T]）；tied 时用 embed^T GEMM。需
+// weights_loaded。
+int transformer_model_lm_head_forward_device(void *stream, void *cublas_handle,
+                                             const TransformerModel *model, const float *d_hidden,
+                                             float *d_logits, int num_tokens);
+
+// 测试薄封装：H2D I/O + 上述 device 路径（权重已在 Model GPU 上）
+int transformer_model_embed_forward_host(const TransformerModel *model, const int *token_ids_host,
+                                         float *hidden_host, int num_tokens);
+
+int transformer_model_lm_head_forward_host(const TransformerModel *model, const float *hidden_host,
+                                           float *logits_host, int num_tokens);
+
 #ifdef __cplusplus
 }
 #endif

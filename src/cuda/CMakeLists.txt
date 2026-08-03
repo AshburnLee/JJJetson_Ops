@@ -84,6 +84,14 @@ add_library(qkv_pack_fp16_cuda OBJECT
   qkv_pack_fp16.cu
 )
 
+add_library(embed_cuda OBJECT
+  embed.cu
+)
+
+add_library(lm_head_cuda OBJECT
+  lm_head.cu
+)
+
 foreach(t gated_unary_cuda
           rope_cuda rope_search_table_cuda rope_global_cache_cuda q8_1_cuda mm_q4_0_q8_1_cuda
           cpy_continue_cuda
@@ -96,7 +104,9 @@ foreach(t gated_unary_cuda
           kv_cache_cuda
           swiglu_cuda
           elementwise_cuda
-          qkv_pack_fp16_cuda)
+          qkv_pack_fp16_cuda
+          embed_cuda
+          lm_head_cuda)
   set_target_properties(${t} PROPERTIES
     POSITION_INDEPENDENT_CODE ON
   )
@@ -111,3 +121,4 @@ foreach(t gated_unary_cuda
 endforeach()
 
 target_link_libraries(linear_cuda PRIVATE CUDA::cublas)
+target_link_libraries(lm_head_cuda PRIVATE CUDA::cublas)

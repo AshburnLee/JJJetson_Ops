@@ -16,7 +16,8 @@ typedef struct ModelConfig {
     int max_seq_len;
     float freq_base;
     float rms_norm_epsilon;
-    int tie_word_embeddings; // 0 = separate lm_head, 1 = tied with embed
+    int tie_word_embeddings; // 0=untied（embed 与 lm_head 各一块）；1=tied（共用 d_embed）。见
+                             // phase2_lifecycle.md §2.1.1
 } ModelConfig;
 
 // 校验维度一致性；0 成功，-1 非法参数。

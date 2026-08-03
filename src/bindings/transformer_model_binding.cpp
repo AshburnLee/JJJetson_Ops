@@ -3,6 +3,7 @@
 
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
+#include <cublas_utils.cuh>
 #include <cuda_runtime.h>
 #include <stdexcept>
 
@@ -114,4 +115,55 @@ PYBIND11_MODULE(transformer_model_me, m) {
             return out;
         },
         py::arg("model_handle"), py::arg("layer_idx"), py::arg("hidden_size"), py::arg("q_dim"));
+
+    m.def(
+        "embed_forward_host",
+        [](uintptr_t model_handle,
+           py::array_t<int, py::array::c_style | py::array::forcecast> token_ids, int num_tokens) {
+            const TransformerModel *model =
+                reinterpret_cast<const TransformerModel *>(model_handle);
+            const ModelConfig *cfg = transformer_model_get_config(model);
+            if (cfg == nullptr) {
+                throw std::runtime_error("invalid model");
+            }
+            if (static_cast<int>(token_ids.size()) != num_tokens) {
+                throw std::runtime_error("token_ids size mismatch");
+            }
+            py::array_t<float> hidden(
+                {cfg->hidden_size, num_tokens},
+                {static_cast<ssize_t>(sizeof(float)),
+                 static_cast<ssize_t>(cfg->hidden_size) * static_cast<ssize_t>(sizeof(float))});
+            if (transformer_model_embed_forward_host(model, token_ids.data(), hidden.mutable_data(),
+                                                     num_tokens) != 0) {
+                throw std::runtime_error("transformer_model_embed_forward_host failed");
+            }
+            return hidden;
+        },
+        py::arg("model_handle"), py::arg("token_ids"), py::arg("num_tokens"));
+
+    m.def(
+        "lm_head_forward_host",
+        [](uintptr_t model_handle,
+           py::array_t<float, py::array::f_style | py::array::forcecast> hidden, int num_tokens) {
+            const TransformerModel *model =
+                reinterpret_cast<const TransformerModel *>(model_handle);
+            const ModelConfig *cfg = transformer_model_get_config(model);
+            if (cfg == nullptr) {
+                throw std::runtime_error("invalid model");
+            }
+            auto hidden_buf = hidden.request();
+            if (hidden_buf.ndim != 2 || static_cast<int>(hidden_buf.shape[1]) != num_tokens) {
+                throw std::runtime_error("hidden must be [hidden_size, num_tokens] Fortran order");
+            }
+            py::array_t<float> logits(
+                {cfg->vocab_size, num_tokens},
+                {static_cast<ssize_t>(sizeof(float)),
+                 static_cast<ssize_t>(cfg->vocab_size) * static_cast<ssize_t>(sizeof(float))});
+            if (transformer_model_lm_head_forward_host(model, hidden.data(), logits.mutable_data(),
+                                                       num_tokens) != 0) {
+                throw std::runtime_error("transformer_model_lm_head_forward_host failed");
+            }
+            return logits;
+        },
+        py::arg("model_handle"), py::arg("hidden"), py::arg("num_tokens"));
 }

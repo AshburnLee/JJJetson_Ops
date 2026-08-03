@@ -4,7 +4,11 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <cublas_v2.h>
+#include <cublas_utils.cuh>
 #include "cuda_utils.h"
+#include "embed.h"
+#include "lm_head.h"
 #include "weight_loader.h"
 
 // 按 ModelConfig 在 device 上为 embed、各层 Linear/RMSNorm、final norm、lm_head
@@ -364,5 +368,137 @@ int transformer_model_load_weights(TransformerModel *model, const WeightLoadResu
     }
 
     model->weights_loaded = true;
+    return 0;
+}
+
+static int check_weights_loaded_for_forward(const TransformerModel *model, const char *op) {
+    if (model == nullptr) {
+        return -1;
+    }
+    if (!model->weights_loaded) {
+        std::fprintf(stderr, "%s: weights not loaded\n", op != nullptr ? op : "transformer_model");
+        return -1;
+    }
+    return 0;
+}
+
+int transformer_model_embed_forward_device(void *stream, const TransformerModel *model,
+                                           const int *d_token_ids, float *d_hidden,
+                                           int num_tokens) {
+    if (check_weights_loaded_for_forward(model, "transformer_model_embed_forward_device") != 0) {
+        return -1;
+    }
+    return embed_forward_device(stream, model->d_embed, d_token_ids, d_hidden,
+                                model->config.hidden_size, num_tokens);
+}
+
+int transformer_model_lm_head_forward_device(void *stream, void *cublas_handle,
+                                             const TransformerModel *model, const float *d_hidden,
+                                             float *d_logits, int num_tokens) {
+    if (check_weights_loaded_for_forward(model, "transformer_model_lm_head_forward_device") != 0) {
+        return -1;
+    }
+    const int hidden_size = model->config.hidden_size;
+    const int vocab_size = model->config.vocab_size;
+    if (model->lm_head_tied) {
+        tied_lm_head_forward_device(stream, cublas_handle, model->d_embed, d_hidden, d_logits,
+                                    hidden_size, vocab_size, num_tokens);
+        return 0;
+    }
+    untied_lm_head_forward_device(stream, cublas_handle, model->d_lm_head, d_hidden, d_logits,
+                                  hidden_size, vocab_size, num_tokens);
+    return 0;
+}
+
+// ======================  test only ========================
+int transformer_model_embed_forward_host(const TransformerModel *model, const int *token_ids_host,
+                                         float *hidden_host, int num_tokens) {
+    if (check_weights_loaded_for_forward(model, "transformer_model_embed_forward_host") != 0) {
+        return -1;
+    }
+    if (token_ids_host == nullptr || hidden_host == nullptr || num_tokens <= 0) {
+        return -1;
+    }
+
+    const int hidden_size = model->config.hidden_size;
+    const int vocab_size = model->config.vocab_size;
+    const int64_t n_hidden = static_cast<int64_t>(hidden_size) * num_tokens;
+
+    int *d_token_ids = nullptr;
+    float *d_hidden = nullptr;
+    cudaStream_t stream;
+    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+
+    CUDA_CHECK(
+        cudaMallocAsync(&d_token_ids, static_cast<size_t>(num_tokens) * sizeof(int), stream));
+    CUDA_CHECK(cudaMallocAsync(&d_hidden, static_cast<size_t>(n_hidden) * sizeof(float), stream));
+
+    CUDA_CHECK(cudaMemcpyAsync(d_token_ids, token_ids_host,
+                               static_cast<size_t>(num_tokens) * sizeof(int),
+                               cudaMemcpyHostToDevice, stream));
+
+    if (transformer_model_embed_forward_device(stream, model, d_token_ids, d_hidden, num_tokens) !=
+        0) {
+        cudaFreeAsync(d_token_ids, stream);
+        cudaFreeAsync(d_hidden, stream);
+        cudaStreamDestroy(stream);
+        return -1;
+    }
+
+    CUDA_CHECK(cudaMemcpyAsync(hidden_host, d_hidden, static_cast<size_t>(n_hidden) * sizeof(float),
+                               cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    CUDA_CHECK(cudaFreeAsync(d_token_ids, stream));
+    CUDA_CHECK(cudaFreeAsync(d_hidden, stream));
+    CUDA_CHECK(cudaStreamDestroy(stream));
+    return 0;
+}
+
+// ======================  test only ========================
+int transformer_model_lm_head_forward_host(const TransformerModel *model, const float *hidden_host,
+                                           float *logits_host, int num_tokens) {
+    if (check_weights_loaded_for_forward(model, "transformer_model_lm_head_forward_host") != 0) {
+        return -1;
+    }
+    if (hidden_host == nullptr || logits_host == nullptr || num_tokens <= 0) {
+        return -1;
+    }
+
+    const int hidden_size = model->config.hidden_size;
+    const int vocab_size = model->config.vocab_size;
+    const int64_t n_hidden = static_cast<int64_t>(hidden_size) * num_tokens;
+    const int64_t n_logits = static_cast<int64_t>(vocab_size) * num_tokens;
+
+    float *d_hidden = nullptr;
+    float *d_logits = nullptr;
+    cudaStream_t stream;
+    cublasHandle_t handle;
+    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+    CUBLAS_CHECK(cublasCreate(&handle));
+
+    CUDA_CHECK(cudaMallocAsync(&d_hidden, static_cast<size_t>(n_hidden) * sizeof(float), stream));
+    CUDA_CHECK(cudaMallocAsync(&d_logits, static_cast<size_t>(n_logits) * sizeof(float), stream));
+
+    CUDA_CHECK(cudaMemcpyAsync(d_hidden, hidden_host, static_cast<size_t>(n_hidden) * sizeof(float),
+                               cudaMemcpyHostToDevice, stream));
+
+    if (transformer_model_lm_head_forward_device(stream, handle, model, d_hidden, d_logits,
+                                                 num_tokens) != 0) {
+        cudaFreeAsync(d_hidden, stream);
+        cudaFreeAsync(d_logits, stream);
+        cudaStreamDestroy(stream);
+        cublasDestroy(handle);
+        return -1;
+    }
+
+    CUDA_CHECK(cudaMemcpyAsync(logits_host, d_logits, static_cast<size_t>(n_logits) * sizeof(float),
+                               cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    CUDA_CHECK(cudaFreeAsync(d_hidden, stream));
+    CUDA_CHECK(cudaFreeAsync(d_logits, stream));
+    CUDA_CHECK(cudaStreamDestroy(stream));
+    CUBLAS_CHECK(cublasDestroy(handle));
     return 0;
 }

@@ -452,12 +452,15 @@ add_library(transformer_model_me MODULE
   $<TARGET_OBJECTS:transformer_model>
   $<TARGET_OBJECTS:rope_model>
   $<TARGET_OBJECTS:weight_loader_model>
+  $<TARGET_OBJECTS:embed_cuda>
+  $<TARGET_OBJECTS:lm_head_cuda>
 )
 
 target_link_libraries(transformer_model_me PRIVATE
   pybind11::module
   ${Python3_LIBRARIES}
   CUDA::cudart
+  CUDA::cublas
 )
 
 set_python_module_props(transformer_model_me)
