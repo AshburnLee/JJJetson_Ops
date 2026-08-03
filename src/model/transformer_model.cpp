@@ -9,6 +9,7 @@
 #include "cuda_utils.h"
 #include "embed.h"
 #include "lm_head.h"
+#include "rms_norm.h"
 #include "weight_loader.h"
 
 // 按 ModelConfig 在 device 上为 embed、各层 Linear/RMSNorm、final norm、lm_head
@@ -500,5 +501,67 @@ int transformer_model_lm_head_forward_host(const TransformerModel *model, const 
     CUDA_CHECK(cudaFreeAsync(d_logits, stream));
     CUDA_CHECK(cudaStreamDestroy(stream));
     CUBLAS_CHECK(cublasDestroy(handle));
+    return 0;
+}
+
+int transformer_model_final_norm_forward_device(void *stream, const TransformerModel *model,
+                                                const float *d_hidden_in, float *d_hidden_out,
+                                                int num_tokens) {
+    if (check_weights_loaded_for_forward(model, "transformer_model_final_norm_forward_device") !=
+        0) {
+        return -1;
+    }
+    if (d_hidden_in == nullptr || d_hidden_out == nullptr || num_tokens <= 0) {
+        return -1;
+    }
+    return rms_norm_forward_device(stream, d_hidden_in, model->d_w_final_norm, d_hidden_out,
+                                   model->config.hidden_size, num_tokens,
+                                   model->config.rms_norm_epsilon);
+}
+
+// ======================  test only ========================
+int transformer_model_final_norm_forward_host(const TransformerModel *model,
+                                              const float *hidden_in_host, float *hidden_out_host,
+                                              int num_tokens) {
+    if (check_weights_loaded_for_forward(model, "transformer_model_final_norm_forward_host") != 0) {
+        return -1;
+    }
+    if (hidden_in_host == nullptr || hidden_out_host == nullptr || num_tokens <= 0) {
+        return -1;
+    }
+
+    const int hidden_size = model->config.hidden_size;
+    const int64_t n_hidden = static_cast<int64_t>(hidden_size) * num_tokens;
+
+    float *d_hidden_in = nullptr;
+    float *d_hidden_out = nullptr;
+    cudaStream_t stream;
+    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+
+    CUDA_CHECK(
+        cudaMallocAsync(&d_hidden_in, static_cast<size_t>(n_hidden) * sizeof(float), stream));
+    CUDA_CHECK(
+        cudaMallocAsync(&d_hidden_out, static_cast<size_t>(n_hidden) * sizeof(float), stream));
+
+    CUDA_CHECK(cudaMemcpyAsync(d_hidden_in, hidden_in_host,
+                               static_cast<size_t>(n_hidden) * sizeof(float),
+                               cudaMemcpyHostToDevice, stream));
+
+    if (transformer_model_final_norm_forward_device(stream, model, d_hidden_in, d_hidden_out,
+                                                    num_tokens) != 0) {
+        cudaFreeAsync(d_hidden_in, stream);
+        cudaFreeAsync(d_hidden_out, stream);
+        cudaStreamDestroy(stream);
+        return -1;
+    }
+
+    CUDA_CHECK(cudaMemcpyAsync(hidden_out_host, d_hidden_out,
+                               static_cast<size_t>(n_hidden) * sizeof(float),
+                               cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    CUDA_CHECK(cudaFreeAsync(d_hidden_in, stream));
+    CUDA_CHECK(cudaFreeAsync(d_hidden_out, stream));
+    CUDA_CHECK(cudaStreamDestroy(stream));
     return 0;
 }

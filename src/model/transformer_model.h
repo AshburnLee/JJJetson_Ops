@@ -81,6 +81,16 @@ int transformer_model_embed_forward_host(const TransformerModel *model, const in
 int transformer_model_lm_head_forward_host(const TransformerModel *model, const float *hidden_host,
                                            float *logits_host, int num_tokens);
 
+// final norm：N 层 block 跑完后的 RMSNorm，权重 d_w_final_norm，epsilon 来自 ModelConfig。
+// 薄壳内部调 rms_norm_forward_device；d_hidden_out 可与 d_hidden_in 相同（in-place）。
+int transformer_model_final_norm_forward_device(void *stream, const TransformerModel *model,
+                                                const float *d_hidden_in, float *d_hidden_out,
+                                                int num_tokens);
+
+int transformer_model_final_norm_forward_host(const TransformerModel *model,
+                                              const float *hidden_in_host, float *hidden_out_host,
+                                              int num_tokens);
+
 #ifdef __cplusplus
 }
 #endif

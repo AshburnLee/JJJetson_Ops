@@ -454,6 +454,7 @@ add_library(transformer_model_me MODULE
   $<TARGET_OBJECTS:weight_loader_model>
   $<TARGET_OBJECTS:embed_cuda>
   $<TARGET_OBJECTS:lm_head_cuda>
+  $<TARGET_OBJECTS:rms_norm_cuda>
 )
 
 target_link_libraries(transformer_model_me PRIVATE

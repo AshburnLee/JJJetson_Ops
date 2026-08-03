@@ -166,4 +166,33 @@ PYBIND11_MODULE(transformer_model_me, m) {
             return logits;
         },
         py::arg("model_handle"), py::arg("hidden"), py::arg("num_tokens"));
+
+    m.def(
+        "final_norm_forward_host",
+        [](uintptr_t model_handle,
+           py::array_t<float, py::array::f_style | py::array::forcecast> hidden_in,
+           int num_tokens) {
+            const TransformerModel *model =
+                reinterpret_cast<const TransformerModel *>(model_handle);
+            const ModelConfig *cfg = transformer_model_get_config(model);
+            if (cfg == nullptr) {
+                throw std::runtime_error("invalid model");
+            }
+            auto in_buf = hidden_in.request();
+            if (in_buf.ndim != 2 || static_cast<int>(in_buf.shape[1]) != num_tokens) {
+                throw std::runtime_error(
+                    "hidden_in must be [hidden_size, num_tokens] Fortran order");
+            }
+            py::array_t<float> hidden_out(
+                {cfg->hidden_size, num_tokens},
+                {static_cast<ssize_t>(sizeof(float)),
+                 static_cast<ssize_t>(cfg->hidden_size) * static_cast<ssize_t>(sizeof(float))});
+            if (transformer_model_final_norm_forward_host(
+                    model, hidden_in.data(), hidden_out.mutable_data(), num_tokens) != 0) {
+                throw std::runtime_error("transformer_model_final_norm_forward_host failed");
+            }
+            return hidden_out;
+        },
+        py::arg("model_handle"), py::arg("hidden_in"), py::arg("num_tokens"),
+        "Test wrapper: host I/O around transformer_model_final_norm_forward_device");
 }

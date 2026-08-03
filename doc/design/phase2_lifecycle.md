@@ -289,7 +289,7 @@ tied_lm_head_forward_device(stream, handle,
 
 **为什么拆成两层，而不是全塞进 Model？**
 
-cuda 算子保持 dumb、好单测：给指针就能跑，不依赖 `TransformerModel` 这个类型。Model 壳表达 [这份 checkpoint 的权重 + tied 配置] 这一层业务边界，Engine 编排 session 时少写重复逻辑。后面的 final_norm 也会同样处理：`rms_norm_forward_device` 做归一化，`transformer_model_final_norm_forward_device` 帮你在 Model 上接 `d_w_final_norm`。
+cuda 算子保持 dumb、好单测：给指针就能跑，不依赖 `TransformerModel` 这个类型。Model 壳表达 [这份 checkpoint 的权重 + tied 配置] 这一层业务边界，Engine 编排 session 时少写重复逻辑。final_norm 已同样处理：`rms_norm_forward_device` + `transformer_model_final_norm_forward_device`。
 
 ### 2.5 API 与测试（规划）
 
@@ -298,6 +298,7 @@ cuda 算子保持 dumb、好单测：给指针就能跑，不依赖 `Transformer
 - [x] `TransformerLayerWeights[N]` / `d_embed` / `d_lm_head` / `d_w_final_norm` 分配；tied 可选
 - [x] Loader host 权重 H2D 拷贝（`transformer_model_load_weights`；fixture 名 `layer{i}.w_*` / `embed` / `final_norm`）
 - [x] embed / lm_head device 算子（或 gather GEMM）+ `forward_host` 单测
+- [x] final norm device（`rms_norm_forward_device` 薄封装）+ `forward_host` 单测
 - [ ] 2-layer fixture 权重 layout 单测
 
 ---
