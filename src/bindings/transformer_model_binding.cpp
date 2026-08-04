@@ -3,9 +3,12 @@
 
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 #include <cublas_utils.cuh>
 #include <cuda_runtime.h>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace py = pybind11;
 
@@ -92,9 +95,61 @@ PYBIND11_MODULE(transformer_model_me, m) {
         },
         py::arg("model_handle"), py::arg("fixture_path"));
 
+    auto read_device_floats = [](const float *d_ptr, const std::vector<ssize_t> &shape) {
+        if (d_ptr == nullptr) {
+            throw std::runtime_error("null device pointer");
+        }
+        int64_t numel = 1;
+        for (ssize_t dim : shape) {
+            numel *= dim;
+        }
+        py::array_t<float> out(shape);
+        const size_t bytes = static_cast<size_t>(numel) * sizeof(float);
+        cudaError_t err = cudaMemcpy(out.mutable_data(), d_ptr, bytes, cudaMemcpyDeviceToHost);
+        if (err != cudaSuccess) {
+            throw std::runtime_error(cudaGetErrorString(err));
+        }
+        return out;
+    };
+
+    auto layer_weight_device_ptr = [](const TransformerLayerWeights *layer,
+                                      const std::string &suffix) -> const float * {
+        if (layer == nullptr) {
+            return nullptr;
+        }
+        if (suffix == "w_q") {
+            return layer->d_w_q;
+        }
+        if (suffix == "w_k") {
+            return layer->d_w_k;
+        }
+        if (suffix == "w_v") {
+            return layer->d_w_v;
+        }
+        if (suffix == "w_o") {
+            return layer->d_w_o;
+        }
+        if (suffix == "w_gate") {
+            return layer->d_w_gate;
+        }
+        if (suffix == "w_up") {
+            return layer->d_w_up;
+        }
+        if (suffix == "w_down") {
+            return layer->d_w_down;
+        }
+        if (suffix == "w_input_layernorm") {
+            return layer->d_w_input_layernorm;
+        }
+        if (suffix == "w_post_attention_layernorm") {
+            return layer->d_w_post_attention_layernorm;
+        }
+        return nullptr;
+    };
+
     m.def(
         "read_layer_w_q_host",
-        [](uintptr_t model_handle, int layer_idx, int hidden_size, int q_dim) {
+        [&](uintptr_t model_handle, int layer_idx, int hidden_size, int q_dim) {
             const TransformerModel *model =
                 reinterpret_cast<const TransformerModel *>(model_handle);
             if (transformer_model_is_weights_loaded(model) != 1) {
@@ -102,19 +157,55 @@ PYBIND11_MODULE(transformer_model_me, m) {
             }
             const TransformerLayerWeights *layer =
                 transformer_model_get_layer_weights(model, layer_idx);
-            if (layer == nullptr || layer->d_w_q == nullptr) {
-                throw std::runtime_error("invalid layer or d_w_q");
-            }
-            py::array_t<float> out({hidden_size, q_dim});
-            const size_t bytes = static_cast<size_t>(hidden_size) * q_dim * sizeof(float);
-            cudaError_t err =
-                cudaMemcpy(out.mutable_data(), layer->d_w_q, bytes, cudaMemcpyDeviceToHost);
-            if (err != cudaSuccess) {
-                throw std::runtime_error(cudaGetErrorString(err));
-            }
-            return out;
+            return read_device_floats(layer_weight_device_ptr(layer, "w_q"), {hidden_size, q_dim});
         },
         py::arg("model_handle"), py::arg("layer_idx"), py::arg("hidden_size"), py::arg("q_dim"));
+
+    m.def(
+        "read_layer_weight_host",
+        [&](uintptr_t model_handle, int layer_idx, const std::string &suffix,
+            const std::vector<ssize_t> &shape) {
+            const TransformerModel *model =
+                reinterpret_cast<const TransformerModel *>(model_handle);
+            if (transformer_model_is_weights_loaded(model) != 1) {
+                throw std::runtime_error("weights not loaded");
+            }
+            const TransformerLayerWeights *layer =
+                transformer_model_get_layer_weights(model, layer_idx);
+            if (layer == nullptr) {
+                throw std::runtime_error("invalid layer_idx");
+            }
+            const float *d_ptr = layer_weight_device_ptr(layer, suffix);
+            if (d_ptr == nullptr) {
+                throw std::runtime_error("unknown layer weight suffix: " + suffix);
+            }
+            return read_device_floats(d_ptr, shape);
+        },
+        py::arg("model_handle"), py::arg("layer_idx"), py::arg("suffix"), py::arg("shape"),
+        "Test only: D2H one layer weight tensor (row-major shape as in fixture)");
+
+    m.def(
+        "read_global_weight_host",
+        [&](uintptr_t model_handle, const std::string &name, const std::vector<ssize_t> &shape) {
+            const TransformerModel *model =
+                reinterpret_cast<const TransformerModel *>(model_handle);
+            if (transformer_model_is_weights_loaded(model) != 1) {
+                throw std::runtime_error("weights not loaded");
+            }
+            const float *d_ptr = nullptr;
+            if (name == "embed") {
+                d_ptr = transformer_model_get_d_embed(model);
+            } else if (name == "lm_head") {
+                d_ptr = transformer_model_get_d_lm_head(model);
+            } else if (name == "final_norm") {
+                d_ptr = transformer_model_get_d_final_norm(model);
+            } else {
+                throw std::runtime_error("unknown global weight name: " + name);
+            }
+            return read_device_floats(d_ptr, shape);
+        },
+        py::arg("model_handle"), py::arg("name"), py::arg("shape"),
+        "Test only: D2H embed / lm_head / final_norm (row-major shape as in fixture)");
 
     m.def(
         "embed_forward_host",

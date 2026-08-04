@@ -299,7 +299,7 @@ cuda 算子保持 dumb、好单测：给指针就能跑，不依赖 `Transformer
 - [x] Loader host 权重 H2D 拷贝（`transformer_model_load_weights`；fixture 名 `layer{i}.w_*` / `embed` / `final_norm`）
 - [x] embed / lm_head device 算子（或 gather GEMM）+ `forward_host` 单测
 - [x] final norm device（`rms_norm_forward_device` 薄封装）+ `forward_host` 单测
-- [ ] 2-layer fixture 权重 layout 单测
+- [x] 2-layer fixture 权重 layout 单测（`tests/test_transformer_model_two_layer_fixture.py`）
 
 ---
 
