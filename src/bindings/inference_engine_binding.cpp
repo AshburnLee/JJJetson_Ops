@@ -1,5 +1,6 @@
 #include "inference_engine.h"
 
+#include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <stdexcept>
 
@@ -62,4 +63,22 @@ PYBIND11_MODULE(inference_engine_me, m) {
             return kv_cache_get_num_layers(cache);
         },
         py::arg("engine_handle"));
+
+    m.def(
+        "forward_hidden_host",
+        [](uintptr_t engine_handle, int num_tokens, int pos_offset,
+           py::array_t<float, py::array::f_style | py::array::forcecast> hidden_in,
+           py::array_t<float, py::array::f_style | py::array::forcecast> hidden_out) {
+            auto in_buf = hidden_in.request();
+            auto out_buf = hidden_out.request();
+            InferenceEngine *engine = reinterpret_cast<InferenceEngine *>(engine_handle);
+            if (inference_engine_forward_hidden_host(engine, static_cast<float *>(in_buf.ptr),
+                                                     static_cast<float *>(out_buf.ptr), num_tokens,
+                                                     pos_offset) != 0) {
+                throw std::runtime_error("inference_engine_forward_hidden_host failed");
+            }
+        },
+        py::arg("engine_handle"), py::arg("num_tokens"), py::arg("pos_offset") = 0,
+        py::arg("hidden_in"), py::arg("hidden_out"),
+        "Test wrapper: hidden H2D + N-layer forward + final_norm + D2H");
 }

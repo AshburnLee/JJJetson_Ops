@@ -57,7 +57,7 @@ static size_t transformer_col_major_bytes(int features, int num_tokens) {
 }
 
 // cudaMalloc
-static TransformerLayerLinearDeviceBuffers *
+TransformerLayerLinearDeviceBuffers *
 transformer_layer_linear_buffers_create(int num_tokens, int hidden_size, int q_dim, int kv_dim,
                                         int intermediate_size, int head_dim, int num_q_heads,
                                         int num_kv_heads) {
@@ -94,7 +94,7 @@ transformer_layer_linear_buffers_create(int num_tokens, int hidden_size, int q_d
     return buffers;
 }
 
-static void transformer_layer_linear_buffers_destroy(TransformerLayerLinearDeviceBuffers *buffers) {
+void transformer_layer_linear_buffers_destroy(TransformerLayerLinearDeviceBuffers *buffers) {
     if (buffers == nullptr) {
         return;
     }
@@ -114,7 +114,27 @@ static void transformer_layer_linear_buffers_destroy(TransformerLayerLinearDevic
     delete buffers;
 }
 
-// D2D, 7 GEMM chain, D2D out，无 H2D/D2H
+void transformer_layer_copy_hidden_in(void *stream, TransformerLayerLinearDeviceBuffers *buffers,
+                                      const float *d_hidden_in, int hidden_size, int num_tokens) {
+    const cudaStream_t s = static_cast<cudaStream_t>(stream);
+    const size_t bytes = transformer_col_major_bytes(hidden_size, num_tokens);
+    if (d_hidden_in != buffers->d_hidden) {
+        CUDA_CHECK(
+            cudaMemcpyAsync(buffers->d_hidden, d_hidden_in, bytes, cudaMemcpyDeviceToDevice, s));
+    }
+}
+
+void transformer_layer_copy_hidden_out(void *stream, float *d_hidden_out,
+                                       TransformerLayerLinearDeviceBuffers *buffers,
+                                       int hidden_size, int num_tokens) {
+    const cudaStream_t s = static_cast<cudaStream_t>(stream);
+    const size_t bytes = transformer_col_major_bytes(hidden_size, num_tokens);
+    if (d_hidden_out != buffers->d_hidden_out) {
+        CUDA_CHECK(cudaMemcpyAsync(d_hidden_out, buffers->d_hidden_out, bytes,
+                                   cudaMemcpyDeviceToDevice, s));
+    }
+}
+
 static void transformer_runner_copy_input(cudaStream_t stream,
                                           TransformerLayerLinearDeviceBuffers *buffers,
                                           const float *d_hidden_in, int hidden_size,
@@ -136,14 +156,32 @@ static void transformer_runner_copy_output(cudaStream_t stream, float *d_hidden_
     }
 }
 
-// Pre-LN fused add + Linear + RoPE + KV cache + FA Attention + FFN（Post-FFN residual add 见 40c）
+// 单层 Pre-LN Transformer block 的生产算子链：一次调用跑完 Attn + FFN，写出层输出 hidden。
+//
+// Big picture 里它在哪？
+//   Runner/Engine forward -> [本函数，每层调一次] -> 外层 advance_len(T)
+//   权重由调用方传入（Runner 自带 d_w_* 或 Model get_layer_weights）；本函数不 own KV，只 append。
+//   layer_idx 指定 KV 写哪一层；**不** 改 cache_len（append 后仍由外层 kv_cache_advance_len）。
+//   对照：这是 Phase 1 block 本体；Engine 用 num_layers 循环调它。
+//   图纸：doc/design/phase1_lifecycle.md §3；buffer 状态表见 jjjetson-ops-transformer-runner.mdc
+//
+// 内部顺序（例：T=1 decode, cache_len=13, layer_idx=0 -> num_kv_tokens=14, d_pos=[13]）：
+//   INPUT：buffers->d_hidden = h [H,T]；d_residual 将被 memset
+//   step 1) Pre-Attn RMSNorm+fused add -> d_hidden 供 Q/K/V
+//   step 2) Q/K/V Linear + RoPE(Q,K)
+//   step 3) Q pack fp16；append K/V 到 KV[layer_idx]；cast；FA -> d_attn_out
+//   step 4) O Linear -> d_hidden_mid
+//   step 5) Pre-FFN RMSNorm+fused add -> gate/up -> SwiGLU -> down
+//   OUTPUT：buffers->d_hidden_out = residual + ffn [H,T]
+//
+// void 返回；失败只打 stderr，调用方勿假定 advance_len 已执行。
 extern "C" void transformer_layer_linears_forward_device(
     void *stream, void *cublas_handle, TransformerLayerLinearDeviceBuffers *buffers,
     const float *d_w_input_layernorm, const float *d_w_post_attention_layernorm, const float *d_w_q,
     const float *d_w_k, const float *d_w_v, const float *d_w_o, const float *d_w_gate,
     const float *d_w_up, const float *d_w_down, const RopeCosSinCache *rope_cache, const int *d_pos,
-    KVCache *kv_cache, uint16_t *d_k_fa_fp16, uint16_t *d_v_fa_fp16, int max_seq_len, int head_dim,
-    int num_q_heads, int num_kv_heads, float rms_norm_epsilon) {
+    KVCache *kv_cache, int layer_idx, uint16_t *d_k_fa_fp16, uint16_t *d_v_fa_fp16, int max_seq_len,
+    int head_dim, int num_q_heads, int num_kv_heads, float rms_norm_epsilon) {
     const int H = buffers->hidden_size;
     const int T = buffers->num_tokens;
     const int Q = buffers->q_dim;
@@ -152,6 +190,7 @@ extern "C" void transformer_layer_linears_forward_device(
     const cudaStream_t s = static_cast<cudaStream_t>(stream);
     const size_t hidden_bytes = transformer_col_major_bytes(H, T);
 
+    // step 1：Pre-Attn RMSNorm + fused add（d_residual 存 skip）
     // Pre-Attn:
     /*
     调用前:
@@ -171,7 +210,7 @@ extern "C" void transformer_layer_linears_forward_device(
         std::fprintf(stderr, "transformer_layer: pre-attn rms_norm_fused_add failed\n");
         return;
     }
-    // Linear * 3
+    // step 2：Q/K/V Linear + RoPE
     linear_forward_device(stream, cublas_handle, buffers->d_hidden, d_w_q, buffers->d_q, H, Q, T);
     linear_forward_device(stream, cublas_handle, buffers->d_hidden, d_w_k, buffers->d_k, H, KV, T);
     linear_forward_device(stream, cublas_handle, buffers->d_hidden, d_w_v, buffers->d_v, H, KV, T);
@@ -190,8 +229,8 @@ extern "C" void transformer_layer_linears_forward_device(
         }
     }
 
+    // step 3：Q fp16 pack + KV append/cast + FA（layer_idx 层；不改 cache_len）
     /*
-    Q pack（RoPE 后）:
     调用前: d_q = fp32 flat [q_dim, T]
     调用后: d_q_fp16 = fp16 [head_dim, T, num_q_heads, 1]（本步 FA Q）
     */
@@ -213,12 +252,12 @@ extern "C" void transformer_layer_linears_forward_device(
     }
     const int cache_len_before = kv_cache_get_len(kv_cache);
     const int num_kv_tokens = cache_len_before + T;
-    if (kv_cache_append_device(stream, kv_cache, 0, buffers->d_k, buffers->d_v, T) != 0) {
+    if (kv_cache_append_device(stream, kv_cache, layer_idx, buffers->d_k, buffers->d_v, T) != 0) {
         std::fprintf(stderr, "transformer_layer: kv_cache_append failed\n");
         return;
     }
-    const float *d_k_cache = kv_cache_get_k_device_ptr(kv_cache, 0);
-    const float *d_v_cache = kv_cache_get_v_device_ptr(kv_cache, 0);
+    const float *d_k_cache = kv_cache_get_k_device_ptr(kv_cache, layer_idx);
+    const float *d_v_cache = kv_cache_get_v_device_ptr(kv_cache, layer_idx);
     if (d_k_cache == nullptr || d_v_cache == nullptr) {
         std::fprintf(stderr, "transformer_layer: kv_cache device ptr is null\n");
         return;
@@ -251,9 +290,11 @@ extern "C" void transformer_layer_linears_forward_device(
         return;
     }
 
+    // step 4：O Linear
     linear_forward_device(stream, cublas_handle, buffers->d_attn_out, d_w_o, buffers->d_hidden_mid,
                           Q, H, T);
 
+    // step 5：Pre-FFN RMSNorm + SwiGLU FFN
     // Pre-FFN:
     /*
     调用前:
@@ -286,6 +327,7 @@ extern "C" void transformer_layer_linears_forward_device(
     linear_forward_device(stream, cublas_handle, buffers->d_ffn_mid, d_w_down,
                           buffers->d_hidden_out, I, H, T);
 
+    // step 6：Post-FFN residual add -> d_hidden_out
     // Post-FFN residual add：层输出 = d_residual + ffn_out
     // 调用前: d_residual = h + attn_out（Pre-FFN fused add 写入）, d_hidden_out = ffn_out
     // 调用后: d_hidden_out 覆盖为 d_residual + ffn_out（in-place，d_out = d_b）
@@ -505,8 +547,9 @@ extern "C" int transformer_runner_forward_device(TransformerRunner *runner,
         stream, runner->cublas_handle, buffers, runner->d_w_input_layernorm,
         runner->d_w_post_attention_layernorm, runner->d_w_q, runner->d_w_k, runner->d_w_v,
         runner->d_w_o, runner->d_w_gate, runner->d_w_up, runner->d_w_down, runner->rope_cache,
-        ctx->d_pos, runner->kv_cache, runner->d_k_fa_fp16, runner->d_v_fa_fp16, runner->max_seq_len,
-        runner->head_dim, runner->num_q_heads, runner->num_kv_heads, kTransformerRmsNormEps);
+        ctx->d_pos, runner->kv_cache, 0, runner->d_k_fa_fp16, runner->d_v_fa_fp16,
+        runner->max_seq_len, runner->head_dim, runner->num_q_heads, runner->num_kv_heads,
+        kTransformerRmsNormEps);
     if (runner->kv_cache != nullptr &&
         kv_cache_advance_len(runner->kv_cache, ctx->num_tokens) != 0) {
         std::fprintf(stderr, "transformer_runner_forward_device: kv_cache_advance_len failed\n");
@@ -540,7 +583,7 @@ extern "C" int transformer_runner_test(TransformerRunner *runner, const float *h
         stream, runner->cublas_handle, buffers, runner->d_w_input_layernorm,
         runner->d_w_post_attention_layernorm, runner->d_w_q, runner->d_w_k, runner->d_w_v,
         runner->d_w_o, runner->d_w_gate, runner->d_w_up, runner->d_w_down, runner->rope_cache,
-        d_pos, runner->kv_cache, runner->d_k_fa_fp16, runner->d_v_fa_fp16, runner->max_seq_len,
+        d_pos, runner->kv_cache, 0, runner->d_k_fa_fp16, runner->d_v_fa_fp16, runner->max_seq_len,
         runner->head_dim, runner->num_q_heads, runner->num_kv_heads, kTransformerRmsNormEps);
     if (runner->kv_cache != nullptr && kv_cache_advance_len(runner->kv_cache, num_tokens) != 0) {
         std::fprintf(stderr, "transformer_runner_test: kv_cache_advance_len failed\n");

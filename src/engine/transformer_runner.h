@@ -62,14 +62,29 @@ void transformer_runner_destroy(TransformerRunner *runner);
 TransformerLayerLinearDeviceBuffers *transformer_runner_buffers_get(TransformerRunner *runner,
                                                                     int num_tokens);
 
+// 按 num_tokens 分配 layer workspace（Engine / Runner 共用）
+TransformerLayerLinearDeviceBuffers *
+transformer_layer_linear_buffers_create(int num_tokens, int hidden_size, int q_dim, int kv_dim,
+                                        int intermediate_size, int head_dim, int num_q_heads,
+                                        int num_kv_heads);
+
+void transformer_layer_linear_buffers_destroy(TransformerLayerLinearDeviceBuffers *buffers);
+
+void transformer_layer_copy_hidden_in(void *stream, TransformerLayerLinearDeviceBuffers *buffers,
+                                      const float *d_hidden_in, int hidden_size, int num_tokens);
+
+void transformer_layer_copy_hidden_out(void *stream, float *d_hidden_out,
+                                       TransformerLayerLinearDeviceBuffers *buffers,
+                                       int hidden_size, int num_tokens);
+
 // 单层 Pre-LN（fused add + RMSNorm）+ Linear + RoPE + KV cache + FA Attention + FFN
 void transformer_layer_linears_forward_device(
     void *stream, void *cublas_handle, TransformerLayerLinearDeviceBuffers *buffers,
     const float *d_w_input_layernorm, const float *d_w_post_attention_layernorm, const float *d_w_q,
     const float *d_w_k, const float *d_w_v, const float *d_w_o, const float *d_w_gate,
     const float *d_w_up, const float *d_w_down, const RopeCosSinCache *rope_cache, const int *d_pos,
-    KVCache *kv_cache, uint16_t *d_k_fa_fp16, uint16_t *d_v_fa_fp16, int max_seq_len, int head_dim,
-    int num_q_heads, int num_kv_heads, float rms_norm_epsilon);
+    KVCache *kv_cache, int layer_idx, uint16_t *d_k_fa_fp16, uint16_t *d_v_fa_fp16, int max_seq_len,
+    int head_dim, int num_q_heads, int num_kv_heads, float rms_norm_epsilon);
 
 // 生产入口：ctx 中 d_hidden_in/out 已在 GPU，内部 D2D 拷贝后执行 7 Linear 链
 int transformer_runner_forward_device(TransformerRunner *runner,

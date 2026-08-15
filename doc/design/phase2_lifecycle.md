@@ -354,20 +354,21 @@ inference_engine_forward(engine, &ctx)
 
 prefill：`T>1`，`pos=[0..T-1]`。decode：`T=1`，`pos=[cache_len]`，`num_kv_tokens=L+1`。
 
+**forward（已实现）**：`inference_engine_forward_device` / `forward_hidden_host`；数据流见 §3.3；
+`tests/test_inference_engine_forward.py`（N=1/N=2 prefill、prefill+decode+reset）。
+
 ### 3.4 从 Phase 1 泛化（Engine 内细节）
 
-- [ ] `kv_cache_create(..., num_layers=N)`；append/cast 按 layer
-- [ ] per-layer 权重指针；`layer_idx` 传入 layer 链
-- [ ] 超出 `max_seq` → 报错
+- [x] `kv_cache_create(..., num_layers=N)`；append/cast 按 `layer_idx`
+- [x] per-layer 权重指针；`layer_idx` 传入 layer 链
+- [x] 超出 `max_seq` → 报错
 
 ### 3.5 API 与测试（规划）
 
-- [x] C（骨架）：`inference_engine_create` / `destroy` / `reset`；`kv_cache_len` / `next_pos`
-- [ ] C：`forward`
-- [x] Python（骨架）：`inference_engine_me` — create/destroy/reset/kv_cache_len
-- [ ] Python：`forward_host` 仅测试
+- [x] C：`inference_engine_create` / `destroy` / `reset` / `forward_device` / `forward_hidden_host`
+- [x] Python：`inference_engine_me` — create/destroy/reset/kv_cache_len/forward_hidden_host
 - [ ] `../guide/inference_engine_device_api.md`
-- [ ] 2-layer prefill/decode e2e；N=1 退化 Phase 1
+- [x] 2-layer prefill e2e；N=1 退化 Phase 1；prefill+decode+reset
 
 ---
 

@@ -12,7 +12,8 @@ extern "C" {
 
 typedef struct InferenceEngine InferenceEngine;
 
-// 每步 forward 的入参视图；栈上构造，不持久化。forward 编排尚未实现。
+// 每步 forward 入参；栈上构造，不持久化。
+// d_token_ids 与 d_hidden_in 二选一：有 token_ids 走 embed，否则用 hidden_in（测试路径）。
 typedef struct InferenceForwardCtx {
     int num_tokens;
     void *stream;
@@ -23,13 +24,10 @@ typedef struct InferenceForwardCtx {
     float *d_logits;
 } InferenceForwardCtx;
 
-// 借用 model 指针（不持有所有权）；分配 KVCache(N)、BufferPool、stream/cublas。
-// stream_in 为 nullptr 时 Engine 自建 non-blocking stream。
 InferenceEngine *inference_engine_create(TransformerModel *model, void *stream_in);
 
 void inference_engine_destroy(InferenceEngine *engine);
 
-// 新对话：kv_cache_reset，next_pos 归零；不释放 pool、不碰 Model。
 void inference_engine_reset(InferenceEngine *engine);
 
 const TransformerModel *inference_engine_get_model(const InferenceEngine *engine);
@@ -38,8 +36,15 @@ KVCache *inference_engine_get_kv_cache(InferenceEngine *engine);
 
 int inference_engine_kv_cache_len(const InferenceEngine *engine);
 
-// SessionState：下一 token 的绝对位置；reset 后为 0，forward 实现后随 prefill/decode 推进。
 int inference_engine_next_pos(const InferenceEngine *engine);
+
+// embed（可选）-> N x layer -> advance_len(T) -> final_norm -> lm_head（可选 d_logits）
+int inference_engine_forward_device(InferenceEngine *engine, const InferenceForwardCtx *ctx);
+
+// 测试：pos_offset 生成本步 d_pos；H2D hidden -> forward_device -> D2H hidden_out
+// _hidden_ 表示：这一步从 hidden 状态进，不走 embed
+int inference_engine_forward_hidden_host(InferenceEngine *engine, const float *hidden_in_host,
+                                         float *hidden_out_host, int num_tokens, int pos_offset);
 
 #ifdef __cplusplus
 }

@@ -469,6 +469,7 @@ set_python_module_props(transformer_model_me)
 add_library(inference_engine_me MODULE
   inference_engine_binding.cpp
   $<TARGET_OBJECTS:inference_engine>
+  $<TARGET_OBJECTS:transformer_engine>
   $<TARGET_OBJECTS:transformer_model>
   $<TARGET_OBJECTS:kv_cache_model>
   $<TARGET_OBJECTS:kv_cache_cuda>
@@ -477,6 +478,13 @@ add_library(inference_engine_me MODULE
   $<TARGET_OBJECTS:embed_cuda>
   $<TARGET_OBJECTS:lm_head_cuda>
   $<TARGET_OBJECTS:rms_norm_cuda>
+  $<TARGET_OBJECTS:linear_cuda>
+  $<TARGET_OBJECTS:swiglu_cuda>
+  $<TARGET_OBJECTS:rms_norm_fused_add_cuda>
+  $<TARGET_OBJECTS:elementwise_cuda>
+  $<TARGET_OBJECTS:qkv_pack_fp16_cuda>
+  $<TARGET_OBJECTS:fa_double_buffer_cuda>
+  $<TARGET_OBJECTS:rope_global_cache_cuda>
 )
 
 target_link_libraries(inference_engine_me PRIVATE
