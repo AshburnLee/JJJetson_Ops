@@ -386,15 +386,24 @@ GenerateLoop **借用** `InferenceEngine*`；不 create/destroy Engine、不 own
 
 ### 4.2 骨架（已实现）
 
-- C：`generate_loop_run` — prefill `inference_engine_forward_token_device` → greedy → decode×N
-- C：`sampler_greedy_host`
+- C：`sampler_top_k_device` / `sampler_top_k_host`（`src/cuda/sampler_top_k.*`）
+- C：`generate_loop_run` — prefill + decode；GPU 末列 logits 上 top-k 采样
 - Python：`generate_loop_me.generate(engine, prompt_ids, max_new_tokens, eos_token_id=-1)`
 - 测试：`tests/test_generate_loop.py`
 
-### 4.3 细节（未做）
+### 4.3 细节
 
-- [ ] temperature / top-k / top-p
-- [ ] `doc/guide/generate_loop_device_api.md`
+**Sampler / 文档**
+
+- [x] 末 token logits slice（GenerateLoop 内 `forward_token_step`）
+- [x] greedy（`sampler_greedy_host`）
+- [ ] temperature
+- [x] top-k（`sampler_top_k_host` + `generate` 的 `top_k`/`seed`）
+- [ ] top-p
+- [x] 短序列 generate e2e + EOS（`tests/test_generate_loop.py`）
+- [x] `doc/guide/generate_loop_device_api.md`
+
+**说明**：temperature / top-k / top-p 的函数签名与组合规则见 API doc [Sampler API] 节（规划条目，实现后勾选）。
 
 ### 4.4 生产化（骨架后，roadmap 模块 4 / §2.6）
 
@@ -403,8 +412,9 @@ GenerateLoop **借用** `InferenceEngine*`；不 create/destroy Engine、不 own
 1. Engine：`inference_engine_forward_token_last_logits`（承接 host↔GPU 步进）
 2. BufferPool：`d_token_ids` / `d_logits` / `d_hidden_out` 按 T session 复用
 3. GenerateLoop：仅循环 + stop，无 CUDA glue
+4. Sampler：`sampler_top_k.cu` 中 **TODO(perf-topk)** — `top_k>1` 现 `<<<1,1>>>` 单线程扫 vocab；改并行 top-k + sample（大词表 decode 前）
 
-代码内见 `// TODO(生产化)`（`generate_loop.cpp`、`inference_engine.cpp`）。
+代码内见 `// TODO(生产化)`（`generate_loop.cpp`、`inference_engine.cpp`）与 `// TODO(perf-topk)`（`sampler_top_k.cu`、`generate_loop.cpp`）。
 
 ---
 

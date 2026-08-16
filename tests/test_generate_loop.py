@@ -126,6 +126,62 @@ def test_generate_loop_binding_eos_stop() -> None:
         _cleanup(model, engine, fixture_dir)
 
 
+def test_sampler_top_k_host_in_top_set() -> None:
+    logits = np.array([0.1, 2.0, 0.5, -1.0, 1.5, 0.0], dtype=np.float32)
+    for top_k in (1, 2, 3, len(logits)):
+        top_indices = set(np.argsort(logits)[-top_k:].tolist())
+        for seed in (0, 42, 99):
+            got = generate_loop_me.sampler_top_k_host(logits, top_k, seed)
+            assert got in top_indices, f"top_k={top_k} seed={seed} got={got} top={top_indices}"
+    print("sampler_top_k_host_in_top_set ok")
+
+
+def test_sampler_top_k_host_reproducible() -> None:
+    logits = np.array([0.1, 2.0, 0.5, -1.0, 1.5, 0.0], dtype=np.float32)
+    a = generate_loop_me.sampler_top_k_host(logits, 3, 42)
+    b = generate_loop_me.sampler_top_k_host(logits, 3, 42)
+    assert a == b
+    print("sampler_top_k_host_reproducible ok")
+
+
+def test_sampler_top_k_one_equals_greedy() -> None:
+    logits = np.array([-1.0, 3.0, 2.0, 0.5], dtype=np.float32)
+    assert generate_loop_me.sampler_top_k_host(logits, 1, 0) == 1
+    print("sampler_top_k_one_equals_greedy ok")
+
+
+def test_generate_top_k_one_matches_default() -> None:
+    model, engine, fixture_dir = _setup_engine()
+    try:
+        prompt = np.array([3, 17, 42], dtype=np.int32)
+        out_default = generate_loop_me.generate(engine, prompt, 3)
+        inference_engine_me.reset_engine(engine)
+        out_top1 = generate_loop_me.generate(engine, prompt, 3, top_k=1, seed=0)
+        assert out_default == out_top1
+        print("generate_top_k_one_matches_default ok")
+    finally:
+        _cleanup(model, engine, fixture_dir)
+
+
+def test_generate_top_k_reproducible() -> None:
+    model, engine, fixture_dir = _setup_engine()
+    try:
+        prompt = np.array([7, 11, 19], dtype=np.int32)
+        out_a = generate_loop_me.generate(engine, prompt, 5, top_k=50, seed=12345)
+        inference_engine_me.reset_engine(engine)
+        out_b = generate_loop_me.generate(engine, prompt, 5, top_k=50, seed=12345)
+        assert out_a == out_b
+        assert len(out_a) == 5
+        print("generate_top_k_reproducible ok")
+    finally:
+        _cleanup(model, engine, fixture_dir)
+
+
 if __name__ == "__main__":
     test_generate_loop_binding_prefill_decode()
     test_generate_loop_binding_eos_stop()
+    test_sampler_top_k_host_in_top_set()
+    test_sampler_top_k_host_reproducible()
+    test_sampler_top_k_one_equals_greedy()
+    test_generate_top_k_one_matches_default()
+    test_generate_top_k_reproducible()

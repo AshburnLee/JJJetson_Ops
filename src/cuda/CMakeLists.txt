@@ -92,6 +92,10 @@ add_library(lm_head_cuda OBJECT
   lm_head.cu
 )
 
+add_library(sampler_top_k_cuda OBJECT
+  sampler_top_k.cu
+)
+
 foreach(t gated_unary_cuda
           rope_cuda rope_search_table_cuda rope_global_cache_cuda q8_1_cuda mm_q4_0_q8_1_cuda
           cpy_continue_cuda
@@ -106,7 +110,8 @@ foreach(t gated_unary_cuda
           elementwise_cuda
           qkv_pack_fp16_cuda
           embed_cuda
-          lm_head_cuda)
+          lm_head_cuda
+          sampler_top_k_cuda)
   set_target_properties(${t} PROPERTIES
     POSITION_INDEPENDENT_CODE ON
   )
