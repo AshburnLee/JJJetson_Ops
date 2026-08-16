@@ -211,6 +211,13 @@ extern "C" int inference_engine_next_pos(const InferenceEngine *engine) {
     return engine->session.next_pos;
 }
 
+extern "C" void *inference_engine_get_stream(InferenceEngine *engine) {
+    if (engine == nullptr) {
+        return nullptr;
+    }
+    return engine->stream;
+}
+
 // Phase 2 InferenceEngine 的单步生产入口：把 Model 里的权重和本 session 的 KV 拼成一次 forward。
 //
 // Big picture 里它在哪？
@@ -383,6 +390,93 @@ extern "C" int inference_engine_forward_hidden_host(InferenceEngine *engine,
 
     CUDA_CHECK(cudaFreeAsync(d_hidden_in, stream));
     CUDA_CHECK(cudaFreeAsync(d_hidden_out, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    return rc;
+}
+
+// 编排/production：token embed + N×layer + lm_head；指针均在 GPU（GenerateLoop 等调用）
+// TODO(生产化)：d_hidden_out 从 Engine BufferPool 按 num_tokens 复用，勿每步 cudaMalloc（roadmap
+// §2.6）。
+extern "C" int inference_engine_forward_token_device(InferenceEngine *engine,
+                                                     const int *d_token_ids, float *d_logits,
+                                                     int num_tokens, int pos_offset) {
+    if (engine == nullptr || d_token_ids == nullptr || d_logits == nullptr || num_tokens <= 0) {
+        return -1;
+    }
+
+    const ModelConfig *cfg = transformer_model_get_config(engine->model);
+    if (cfg == nullptr) {
+        return -1;
+    }
+
+    cudaStream_t stream = engine->stream;
+    const int hidden_size = cfg->hidden_size;
+    const size_t hidden_bytes = inference_col_major_bytes(hidden_size, num_tokens);
+
+    float *d_hidden_out = nullptr;
+    int *d_pos = inference_engine_d_pos_get(engine, num_tokens, pos_offset, stream);
+
+    CUDA_CHECK(cudaMallocAsync(&d_hidden_out, hidden_bytes, stream));
+
+    InferenceForwardCtx ctx{};
+    ctx.num_tokens = num_tokens;
+    ctx.stream = stream;
+    ctx.d_token_ids = d_token_ids;
+    ctx.d_hidden_out = d_hidden_out;
+    ctx.d_pos = d_pos;
+    ctx.d_logits = d_logits;
+
+    const int rc = inference_engine_forward_device(engine, &ctx);
+
+    CUDA_CHECK(cudaFreeAsync(d_hidden_out, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    return rc;
+}
+
+// 测试：H2D token_ids -> forward_token_device -> D2H logits [vocab, T] col-major
+// TODO(生产化)：d_token_ids/d_logits 改用 BufferPool，与 GenerateLoop 共用 session buffer（roadmap
+// §2.6）。
+extern "C" int inference_engine_forward_token_host(InferenceEngine *engine,
+                                                   const int *token_ids_host,
+                                                   float *logits_out_host, int num_tokens,
+                                                   int pos_offset) {
+    if (engine == nullptr || token_ids_host == nullptr || logits_out_host == nullptr ||
+        num_tokens <= 0) {
+        return -1;
+    }
+
+    const ModelConfig *cfg = transformer_model_get_config(engine->model);
+    if (cfg == nullptr) {
+        return -1;
+    }
+
+    cudaStream_t stream = engine->stream;
+    const int vocab_size = cfg->vocab_size;
+    const size_t logits_bytes =
+        static_cast<size_t>(vocab_size) * static_cast<size_t>(num_tokens) * sizeof(float);
+
+    int *d_token_ids = nullptr;
+    float *d_logits = nullptr;
+
+    CUDA_CHECK(
+        cudaMallocAsync(&d_token_ids, static_cast<size_t>(num_tokens) * sizeof(int), stream));
+    CUDA_CHECK(cudaMallocAsync(&d_logits, logits_bytes, stream));
+
+    CUDA_CHECK(cudaMemcpyAsync(d_token_ids, token_ids_host,
+                               static_cast<size_t>(num_tokens) * sizeof(int),
+                               cudaMemcpyHostToDevice, stream));
+
+    const int rc = inference_engine_forward_token_device(engine, d_token_ids, d_logits, num_tokens,
+                                                         pos_offset);
+
+    if (rc == 0) {
+        CUDA_CHECK(cudaMemcpyAsync(logits_out_host, d_logits, logits_bytes, cudaMemcpyDeviceToHost,
+                                   stream));
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+    }
+
+    CUDA_CHECK(cudaFreeAsync(d_token_ids, stream));
+    CUDA_CHECK(cudaFreeAsync(d_logits, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
     return rc;
 }

@@ -17,7 +17,13 @@ add_library(inference_engine OBJECT
 
 target_link_libraries(inference_engine PRIVATE CUDA::cudart CUDA::cublas)
 
-set_target_properties(moe_engine transformer_engine inference_engine PROPERTIES
+add_library(generate_loop OBJECT
+  generate_loop.cpp
+)
+
+target_link_libraries(generate_loop PRIVATE CUDA::cudart CUDA::cublas)
+
+set_target_properties(moe_engine transformer_engine inference_engine generate_loop PROPERTIES
   POSITION_INDEPENDENT_CODE ON
 )
 
@@ -33,8 +39,13 @@ target_include_directories(inference_engine PRIVATE
   ${MY_OPS_INCLUDE_DIRS}
 )
 
+target_include_directories(generate_loop PRIVATE
+  ${MY_OPS_INCLUDE_DIRS}
+)
+
 if(CMAKE_BUILD_TYPE MATCHES "Debug")
   target_compile_definitions(moe_engine PRIVATE MY_OPS_DEBUG=1)
   target_compile_definitions(transformer_engine PRIVATE MY_OPS_DEBUG=1)
   target_compile_definitions(inference_engine PRIVATE MY_OPS_DEBUG=1)
+  target_compile_definitions(generate_loop PRIVATE MY_OPS_DEBUG=1)
 endif()

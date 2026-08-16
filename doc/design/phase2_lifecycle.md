@@ -366,7 +366,10 @@ prefill：`T>1`，`pos=[0..T-1]`。decode：`T=1`，`pos=[cache_len]`，`num_kv_
 ### 3.5 API 与测试（规划）
 
 - [x] C：`inference_engine_create` / `destroy` / `reset` / `forward_device` / `forward_hidden_host`
+- [x] C：`inference_engine_forward_token_device`（token embed + lm_head；GenerateLoop 生产路径）
+- [x] C：`inference_engine_forward_token_host`（H2D/D2H 测试包装，内部调 forward_token_device）
 - [x] Python：`inference_engine_me` — create/destroy/reset/kv_cache_len/forward_hidden_host
+- [ ] Python：`inference_engine_me.forward_token_host`（测试路径；当前仅经 `generate_loop_me` 间接走 token 环）
 - [ ] `../guide/inference_engine_device_api.md`
 - [x] 2-layer prefill e2e；N=1 退化 Phase 1；prefill+decode+reset
 
@@ -376,21 +379,33 @@ prefill：`T>1`，`pos=[0..T-1]`。decode：`T=1`，`pos=[cache_len]`，`num_kv_
 
 **职责**：Engine 产出 logits 之后，**token 出环**；不持有 KV / 权重。
 
-**规划路径**：`src/engine/generate_loop.*` 或 Python 薄封装（先期）
+**路径**：`src/engine/generate_loop.{h,cpp}` + Python `generate_loop_me`
 
-~~~
-切面        内容
-──────────────────────────────────────────────────────────────────
-输入        末 token d_logits [vocab]
-输出        next_token_id
-生命周期    无 GPU session；可纯 host
-行为        prefill 一次 → 循环 decode → sampler → 停止条件
-~~~
+### 4.1 边界
 
-**实现细节**
-- [ ] 末 token logits slice
-- [ ] greedy（先）；temperature / top-k / top-p
-- [ ] 短序列 generate e2e + EOS/stop
+GenerateLoop **借用** `InferenceEngine*`；不 create/destroy Engine、不 own KV/权重。
+
+### 4.2 骨架（已实现）
+
+- C：`generate_loop_run` — prefill `inference_engine_forward_token_device` → greedy → decode×N
+- C：`sampler_greedy_host`
+- Python：`generate_loop_me.generate(engine, prompt_ids, max_new_tokens, eos_token_id=-1)`
+- 测试：`tests/test_generate_loop.py`
+
+### 4.3 细节（未做）
+
+- [ ] temperature / top-k / top-p
+- [ ] `doc/guide/generate_loop_device_api.md`
+
+### 4.4 生产化（骨架后，roadmap 模块 4 / §2.6）
+
+骨架期 `forward_token_step` 每步 cudaMalloc 为过渡；收工顺序：
+
+1. Engine：`inference_engine_forward_token_last_logits`（承接 host↔GPU 步进）
+2. BufferPool：`d_token_ids` / `d_logits` / `d_hidden_out` 按 T session 复用
+3. GenerateLoop：仅循环 + stop，无 CUDA glue
+
+代码内见 `// TODO(生产化)`（`generate_loop.cpp`、`inference_engine.cpp`）。
 
 ---
 

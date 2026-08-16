@@ -496,6 +496,37 @@ target_link_libraries(inference_engine_me PRIVATE
 
 set_python_module_props(inference_engine_me)
 
+add_library(generate_loop_me MODULE
+  generate_loop_binding.cpp
+  $<TARGET_OBJECTS:generate_loop>
+  $<TARGET_OBJECTS:inference_engine>
+  $<TARGET_OBJECTS:transformer_engine>
+  $<TARGET_OBJECTS:transformer_model>
+  $<TARGET_OBJECTS:kv_cache_model>
+  $<TARGET_OBJECTS:kv_cache_cuda>
+  $<TARGET_OBJECTS:rope_model>
+  $<TARGET_OBJECTS:weight_loader_model>
+  $<TARGET_OBJECTS:embed_cuda>
+  $<TARGET_OBJECTS:lm_head_cuda>
+  $<TARGET_OBJECTS:rms_norm_cuda>
+  $<TARGET_OBJECTS:linear_cuda>
+  $<TARGET_OBJECTS:swiglu_cuda>
+  $<TARGET_OBJECTS:rms_norm_fused_add_cuda>
+  $<TARGET_OBJECTS:elementwise_cuda>
+  $<TARGET_OBJECTS:qkv_pack_fp16_cuda>
+  $<TARGET_OBJECTS:fa_double_buffer_cuda>
+  $<TARGET_OBJECTS:rope_global_cache_cuda>
+)
+
+target_link_libraries(generate_loop_me PRIVATE
+  pybind11::module
+  ${Python3_LIBRARIES}
+  CUDA::cudart
+  CUDA::cublas
+)
+
+set_python_module_props(generate_loop_me)
+
 # Debug 构建时：对所有 *_me 模块统一开启可选调试/可观测性代码路径
 if(CMAKE_BUILD_TYPE MATCHES "Debug")
   foreach(t gated_unary_me
@@ -520,7 +551,8 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
             transformer_runner_me
             weight_loader_me
             transformer_model_me
-            inference_engine_me)
+            inference_engine_me
+            generate_loop_me)
     target_compile_definitions(${t} PRIVATE MY_OPS_DEBUG=1)
   endforeach()
 endif()
