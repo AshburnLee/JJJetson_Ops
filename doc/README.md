@@ -29,7 +29,7 @@ API 契约、算子 device API、集成数据流、walkthrough 示例。
 | [moe_pipeline_example.md](guide/moe_pipeline_example.md) | MoE pipeline 小例 |
 | [moe_dispatch_example.md](guide/moe_dispatch_example.md) | MoE dispatch 小例 |
 
-规划中的 Engine API：`guide/inference_engine_device_api.md`（尚未创建）。
+| [inference_engine_device_api.md](guide/inference_engine_device_api.md) | InferenceEngine C/Python API + prefill/decode + token/hidden 路径 |
 
 ## reference/ — 参考 / 性能
 

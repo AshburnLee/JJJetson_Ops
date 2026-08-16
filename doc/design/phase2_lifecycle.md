@@ -368,9 +368,8 @@ prefill：`T>1`，`pos=[0..T-1]`。decode：`T=1`，`pos=[cache_len]`，`num_kv_
 - [x] C：`inference_engine_create` / `destroy` / `reset` / `forward_device` / `forward_hidden_host`
 - [x] C：`inference_engine_forward_token_device`（token embed + lm_head；GenerateLoop 生产路径）
 - [x] C：`inference_engine_forward_token_host`（H2D/D2H 测试包装，内部调 forward_token_device）
-- [x] Python：`inference_engine_me` — create/destroy/reset/kv_cache_len/forward_hidden_host
-- [ ] Python：`inference_engine_me.forward_token_host`（测试路径；当前仅经 `generate_loop_me` 间接走 token 环）
-- [ ] `../guide/inference_engine_device_api.md`
+- [x] Python：`inference_engine_me` — create/destroy/reset/kv_cache_len/forward_hidden_host/forward_token_host
+- [x] `../guide/inference_engine_device_api.md`
 - [x] 2-layer prefill e2e；N=1 退化 Phase 1；prefill+decode+reset
 
 ---
