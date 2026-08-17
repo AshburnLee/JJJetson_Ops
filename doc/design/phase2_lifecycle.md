@@ -396,8 +396,8 @@ GenerateLoop **借用** `InferenceEngine*`；不 create/destroy Engine、不 own
 **Sampler / 文档**
 
 - [x] 末 token logits slice（GenerateLoop 内 `forward_token_step`）
-- [x] greedy（`sampler_greedy_host`）
-- [ ] temperature
+- [x] greedy（`top_k==1` via `sampler_top_k_device`）
+- [x] temperature（`sampler_top_k_device` 的 `temperature` 参数 + `generate` 透传）
 - [x] top-k（`sampler_top_k_host` + `generate` 的 `top_k`/`seed`）
 - [ ] top-p
 - [x] 短序列 generate e2e + EOS（`tests/test_generate_loop.py`）

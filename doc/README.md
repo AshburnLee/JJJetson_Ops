@@ -31,6 +31,7 @@ API 契约、算子 device API、集成数据流、walkthrough 示例。
 
 | [inference_engine_device_api.md](guide/inference_engine_device_api.md) | InferenceEngine C/Python API + prefill/decode + token/hidden 路径 |
 | [generate_loop_device_api.md](guide/generate_loop_device_api.md) | GenerateLoop + Sampler（CUDA top-k；greedy/top-p 规划） |
+| [sampler-temperature.md](guide/sampler-temperature.md) | Sampler temperature：控制什么、为何需要、与 top_k 关系 |
 
 ## reference/ — 参考 / 性能
 

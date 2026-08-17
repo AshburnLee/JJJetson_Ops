@@ -98,7 +98,7 @@ static __global__ void sampler_greedy_kernel(const float *logits, int vocab_size
 }
 
 static __global__ void sampler_top_k_kernel(const float *logits, int vocab_size, int top_k,
-                                            uint64_t seed, int *out_token) {
+                                            float temperature, uint64_t seed, int *out_token) {
     // TODO(perf-topk): 现仅 thread 0 顺序扫 vocab（<<<1,1>>>），大词表 decode 性能差。
     //   改：每 thread 维护 local top-k -> block merge；或 CUB select-k / fused mask+softmax+sample
     //   （对齐 vLLM Triton / SGLang FlashInfer）。k==1 已用 sampler_greedy_kernel 并行 argmax。
@@ -118,7 +118,7 @@ static __global__ void sampler_top_k_kernel(const float *logits, int vocab_size,
         const float max_logit = sm_logits[0];
         float sum = 0.f;
         for (int i = 0; i < top_k; ++i) {
-            sm_logits[i] = expf(sm_logits[i] - max_logit);
+            sm_logits[i] = expf((sm_logits[i] - max_logit) / temperature);
             sum += sm_logits[i];
         }
         if (sum <= 0.f) {
@@ -144,8 +144,13 @@ static __global__ void sampler_top_k_kernel(const float *logits, int vocab_size,
     }
 }
 
-static int sampler_check_args(const float *d_logits, int vocab_size, int top_k, int *d_out_token) {
+static int sampler_check_args(const float *d_logits, int vocab_size, int top_k, float temperature,
+                              int *d_out_token) {
     if (d_logits == nullptr || d_out_token == nullptr || vocab_size <= 0 || top_k <= 0) {
+        return -1;
+    }
+    if (temperature <= 0.f) {
+        std::fprintf(stderr, "sampler_top_k_device: temperature must be positive\n");
         return -1;
     }
     if (top_k > SAMPLER_MAX_TOP_K) {
@@ -157,8 +162,8 @@ static int sampler_check_args(const float *d_logits, int vocab_size, int top_k, 
 }
 
 extern "C" int sampler_top_k_device(void *stream, const float *d_logits, int vocab_size, int top_k,
-                                    uint64_t seed, int *d_out_token) {
-    if (sampler_check_args(d_logits, vocab_size, top_k, d_out_token) != 0) {
+                                    float temperature, uint64_t seed, int *d_out_token) {
+    if (sampler_check_args(d_logits, vocab_size, top_k, temperature, d_out_token) != 0) {
         return -1;
     }
     cudaStream_t s = static_cast<cudaStream_t>(stream);
@@ -168,7 +173,8 @@ extern "C" int sampler_top_k_device(void *stream, const float *d_logits, int voc
     } else {
         const int k = top_k > vocab_size ? vocab_size : top_k;
         // TODO(perf-topk): launch config <<<1,1>>>；见 sampler_top_k_kernel 内注释
-        sampler_top_k_kernel<<<1, 1, 0, s>>>(d_logits, vocab_size, k, seed, d_out_token);
+        sampler_top_k_kernel<<<1, 1, 0, s>>>(d_logits, vocab_size, k, temperature, seed,
+                                             d_out_token);
     }
     LAUNCH_CHECK();
     CUDA_CHECK(cudaStreamSynchronize(s));
@@ -176,8 +182,8 @@ extern "C" int sampler_top_k_device(void *stream, const float *d_logits, int voc
 }
 
 extern "C" int sampler_top_k_host(const float *logits_host, int vocab_size, int top_k,
-                                  uint64_t seed) {
-    if (logits_host == nullptr || vocab_size <= 0 || top_k <= 0) {
+                                  float temperature, uint64_t seed) {
+    if (logits_host == nullptr || vocab_size <= 0 || top_k <= 0 || temperature <= 0.f) {
         return -1;
     }
 
@@ -191,7 +197,8 @@ extern "C" int sampler_top_k_host(const float *logits_host, int vocab_size, int 
     CUDA_CHECK(cudaMemcpy(d_logits, logits_host, static_cast<size_t>(vocab_size) * sizeof(float),
                           cudaMemcpyHostToDevice));
 
-    if (sampler_top_k_device(nullptr, d_logits, vocab_size, top_k, seed, d_out_token) != 0) {
+    if (sampler_top_k_device(nullptr, d_logits, vocab_size, top_k, temperature, seed,
+                             d_out_token) != 0) {
         cudaFree(d_logits);
         cudaFree(d_out_token);
         return -1;

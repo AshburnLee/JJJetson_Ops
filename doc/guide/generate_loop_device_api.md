@@ -2,7 +2,7 @@
 
 C 头文件：`src/engine/generate_loop.h`，实现：`src/engine/generate_loop.cpp`。Python 模块：`generate_loop_me`。
 
-**四模块边界、GenerateLoop 在 lifecycle 里的位置**见 [`../design/phase2_lifecycle.md`](../design/phase2_lifecycle.md) 第 4 节。Engine 单步 forward 语义见 [`inference_engine_device_api.md`](inference_engine_device_api.md)。本文说明：**在已有 Engine session 上，如何把 prompt 跑成一串新 token**，以及 Sampler 各策略的契约（含尚未实现的 temperature / top-k / top-p）。
+**四模块边界、GenerateLoop 在 lifecycle 里的位置**见 [`../design/phase2_lifecycle.md`](../design/phase2_lifecycle.md) 第 4 节。Engine 单步 forward 语义见 [`inference_engine_device_api.md`](inference_engine_device_api.md)。本文说明：**在已有 Engine session 上，如何把 prompt 跑成一串新 token**，以及 Sampler 各策略的契约（temperature / top-k 已实现；top-p 规划）。
 
 ---
 
@@ -35,7 +35,7 @@ GenerateLoop 只借用 `InferenceEngine*`；session 里 KV 的增长、reset、d
 
 **Step B — 第一个新 token**
 
-`next = sampler_greedy_host(logits_last, vocab_size)`，写入 `out[0]`。
+`sampler_top_k_device` 在 GPU 末列 logits 上采样（默认 `top_k=1` greedy），写入 `out[0]`。
 
 **Step C — decode 第 1 次（T=1）**
 
@@ -67,42 +67,33 @@ decode 时 `T=1`，末列即唯一列，prefill 与 decode 路径统一走 [末�
 
 ## Sampler API
 
-Sampler 当前全部在 **host** 上运行（logits 已在 skeleton 期 D2H）。输入都是长度 `vocab_size` 的 `float` 向量；输出为 token id，失败返回 `-1`。
+Sampler 在 **GPU 末列 logits** 上运行（`sampler_top_k_device`）；Python `sampler_top_k_host` 仅为测试 wrapper（H2D -> device -> token）。
 
-### `sampler_greedy_host`（已实现）
+### greedy（`top_k == 1`，已实现）
 
-对 logits 做 argmax，取最大值对应的 vocab 下标。
+`top_k == 1` 时走 `sampler_greedy_kernel` 并行 argmax；不单独暴露 `sampler_greedy_host`。
+由 `generate_loop_me.generate(..., top_k=1)` 或 `sampler_top_k_host(..., top_k=1)` 使用。
 
-~~~c
-int sampler_greedy_host(const float *logits, int vocab_size);
-~~~
+**测试**：`tests/test_generate_loop.py`；单步 logits 对比见 `tests/test_inference_engine_forward_token.py`。
 
-Python 不单独暴露；由 `generate_loop_me.generate` 内部使用。
+### temperature（已实现，并入 `sampler_top_k_*`）
 
-**测试**：`tests/test_generate_loop.py`（间接覆盖）；单步 logits 对比见 `tests/test_inference_engine_forward_token.py`。
-
-### `sampler_temperature_host`（规划，未实现）
-
-对 logits 除以 `temperature`，再 softmax + 按概率采样（或 greedy 当 `temperature->0`）。
-规划签名（实现前可能微调）：
-
-~~~c
-// temperature <= 0 视为非法；=1 等价于原始分布
-int sampler_temperature_host(const float *logits, int vocab_size, float temperature,
-                             uint64_t seed);
-~~~
-
-roadmap 模块 4 细节独立条目；实现时需补 host 单测 + generate 参数透传。
-
-### `sampler_top_k_host` / `sampler_top_k_device`（已实现）
-
-CUDA 算子：`src/cuda/sampler_top_k.{h,cu}`。在 **device logits [vocab]** 上做 top-k + softmax 采样；`top_k == 1` 走并行 greedy kernel。
+对 top-k 候选 logits 在 softmax 前除以 `temperature`；`top_k == 1`（greedy）时 T 无效果。
+**语义**见 [`sampler-temperature.md`](sampler-temperature.md)。
 
 ~~~c
 int sampler_top_k_device(void *stream, const float *d_logits, int vocab_size, int top_k,
-                         uint64_t seed, int *d_out_token);
-int sampler_top_k_host(const float *logits_host, int vocab_size, int top_k, uint64_t seed);
+                         float temperature, uint64_t seed, int *d_out_token);
+int sampler_top_k_host(const float *logits_host, int vocab_size, int top_k, float temperature,
+                       uint64_t seed);
 ~~~
+
+Python：`generate_loop_me.sampler_top_k_host(logits, top_k, seed=0, temperature=1.0)`；
+`generate(..., temperature=1.0)` 透传至每步采样。
+
+### `sampler_top_k_host` / `sampler_top_k_device`（已实现）
+
+CUDA 算子：`src/cuda/sampler_top_k.{h,cu}`。在 **device logits [vocab]** 上做 top-k + softmax/T + 采样；`top_k == 1` 走并行 greedy kernel（忽略 temperature）。
 
 GenerateLoop 过渡路径：`forward_token_step` 在 GPU 末列 logits 上调用 `sampler_top_k_device`，只 D2H **token id**（不再 D2H 整段 vocab）。
 
@@ -125,7 +116,7 @@ int sampler_top_p_host(const float *logits, int vocab_size, float top_p, uint64_
 
 ### 策略组合（规划）
 
-生产常见组合：`temperature` + `top_k` / `top_p`。top-k 已接入 `generate_loop_run`（`top_k` 默认 1）；temperature / top-p 待实现。
+生产常见组合：`temperature` + `top_k` / `top_p`。top-k 与 temperature 已接入 `generate_loop_run`；top-p 待实现。
 
 ---
 
@@ -138,6 +129,7 @@ int generate_loop_run(InferenceEngine *engine,
                       int max_new_tokens,
                       int eos_token_id,
                       int top_k,
+                      float temperature,
                       uint64_t seed,
                       int *out_token_ids,
                       int out_capacity);
@@ -154,7 +146,8 @@ prompt_len        prompt token 个数，必须 > 0
 max_new_tokens    最多生成几个新 token（不含 prompt）
 eos_token_id      >=0 时遇该 id 早停；<0 表示禁用
 top_k             >0；1 为 greedy；>1 为 top-k 采样
-seed              传给 mt19937_64；0 用内部 mix 种子
+temperature       >0；默认 1；top_k>1 时在 softmax 前缩放 logits；top_k==1 时无效果
+seed              传给 device RNG；0 用内部 mix 种子
 out_token_ids     输出缓冲区；至少 max_new_tokens
 out_capacity      容量；须 >= max_new_tokens
 ~~~
@@ -174,7 +167,7 @@ out_capacity      容量；须 >= max_new_tokens
 ## Python API：`generate_loop_me`
 
 ~~~python
-generate(engine_handle, prompt_token_ids, max_new_tokens, eos_token_id=-1, top_k=1, seed=0) -> list[int]
+generate(engine_handle, prompt_token_ids, max_new_tokens, eos_token_id=-1, top_k=1, seed=0, temperature=1.0) -> list[int]
 ~~~
 
 - `prompt_token_ids`：非空 1-D `int32` numpy array；
@@ -239,8 +232,8 @@ GenerateLoop e2e 目前用随机 prompt token id，不依赖真实 tokenizer；�
 骨架期限制：
 
 - `forward_token_step` 每步 device malloc / free；
-- Sampler 已在 GPU 末列 logits 上采样，但 **top_k>1 为 TODO(perf-topk) 单线程 kernel**（见上文）；
-- temperature / top-p 未实现。
+- Sampler 已在 GPU 末列 logits 上采样；**top_k>1 为 TODO(perf-topk) 单线程 kernel**（见上文）；
+- top-p 未实现。
 
 收工方向见 lifecycle 第 4.4 节：`inference_engine_forward_token_last_logits`、session 级 buffer 池、GenerateLoop 只保留循环 + stop、**并行 top-k sampler**。
 

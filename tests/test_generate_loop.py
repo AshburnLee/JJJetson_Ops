@@ -177,6 +177,43 @@ def test_generate_top_k_reproducible() -> None:
         _cleanup(model, engine, fixture_dir)
 
 
+def test_sampler_temperature_default_equals_one() -> None:
+    logits = np.array([0.1, 2.0, 0.5, -1.0, 1.5, 0.0], dtype=np.float32)
+    a = generate_loop_me.sampler_top_k_host(logits, 3, 42)
+    b = generate_loop_me.sampler_top_k_host(logits, 3, 42, temperature=1.0)
+    assert a == b
+    print("sampler_temperature_default_equals_one ok")
+
+
+def test_sampler_temperature_greedy_ignores_temperature() -> None:
+    logits = np.array([-1.0, 3.0, 2.0, 0.5], dtype=np.float32)
+    low_t = generate_loop_me.sampler_top_k_host(logits, 1, 0, temperature=0.5)
+    high_t = generate_loop_me.sampler_top_k_host(logits, 1, 0, temperature=2.0)
+    assert low_t == high_t == 1
+    print("sampler_temperature_greedy_ignores_temperature ok")
+
+
+def test_sampler_temperature_low_near_argmax() -> None:
+    logits = np.array([0.1, 2.0, 0.5, -1.0, 1.5, 0.0], dtype=np.float32)
+    got = generate_loop_me.sampler_top_k_host(logits, 3, 42, temperature=0.01)
+    assert got == 1
+    print("sampler_temperature_low_near_argmax ok")
+
+
+def test_generate_temperature_reproducible() -> None:
+    model, engine, fixture_dir = _setup_engine()
+    try:
+        prompt = np.array([7, 11, 19], dtype=np.int32)
+        out_a = generate_loop_me.generate(engine, prompt, 5, top_k=50, seed=999, temperature=0.8)
+        inference_engine_me.reset_engine(engine)
+        out_b = generate_loop_me.generate(engine, prompt, 5, top_k=50, seed=999, temperature=0.8)
+        assert out_a == out_b
+        assert len(out_a) == 5
+        print("generate_temperature_reproducible ok")
+    finally:
+        _cleanup(model, engine, fixture_dir)
+
+
 if __name__ == "__main__":
     test_generate_loop_binding_prefill_decode()
     test_generate_loop_binding_eos_stop()
@@ -185,3 +222,7 @@ if __name__ == "__main__":
     test_sampler_top_k_one_equals_greedy()
     test_generate_top_k_one_matches_default()
     test_generate_top_k_reproducible()
+    test_sampler_temperature_default_equals_one()
+    test_sampler_temperature_greedy_ignores_temperature()
+    test_sampler_temperature_low_near_argmax()
+    test_generate_temperature_reproducible()
