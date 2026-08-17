@@ -399,11 +399,11 @@ GenerateLoop **借用** `InferenceEngine*`；不 create/destroy Engine、不 own
 - [x] greedy（`top_k==1` via `sampler_top_k_device`）
 - [x] temperature（`sampler_top_k_device` 的 `temperature` 参数 + `generate` 透传）
 - [x] top-k（`sampler_top_k_host` + `generate` 的 `top_k`/`seed`）
-- [ ] top-p
+- [x] top-p（`sampler_top_p_host` + `generate` 的 `top_p`/`temperature`/`top_k`）
 - [x] 短序列 generate e2e + EOS（`tests/test_generate_loop.py`）
 - [x] `doc/guide/generate_loop_device_api.md`
 
-**说明**：temperature / top-k / top-p 的函数签名与组合规则见 API doc [Sampler API] 节（规划条目，实现后勾选）。
+**说明**：temperature / top-k / top-p 的函数签名与组合规则见 API doc [Sampler API] 节。
 
 ### 4.4 生产化（骨架后，roadmap 模块 4 / §2.6）
 
@@ -413,8 +413,9 @@ GenerateLoop **借用** `InferenceEngine*`；不 create/destroy Engine、不 own
 2. BufferPool：`d_token_ids` / `d_logits` / `d_hidden_out` 按 T session 复用
 3. GenerateLoop：仅循环 + stop，无 CUDA glue
 4. Sampler：`sampler_top_k.cu` 中 **TODO(perf-topk)** — `top_k>1` 现 `<<<1,1>>>` 单线程扫 vocab；改并行 top-k + sample（大词表 decode 前）
+5. Sampler：`sampler_top_p.cu` 中 **TODO(perf-topp)** — `top_p<1` 现 `<<<1,1>>>` + O(n^2) 排序 + 每步 temp buffer；改并行 nucleus + sample（大词表 decode 前）
 
-代码内见 `// TODO(生产化)`（`generate_loop.cpp`、`inference_engine.cpp`）与 `// TODO(perf-topk)`（`sampler_top_k.cu`、`generate_loop.cpp`）。
+代码内见 `// TODO(生产化)`（`generate_loop.cpp`、`inference_engine.cpp`）与 `// TODO(perf-topk)`（`sampler_top_k.cu`）、`// TODO(perf-topp)`（`sampler_top_p.cu`、`generate_loop.cpp`）。
 
 ---
 

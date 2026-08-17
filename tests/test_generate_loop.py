@@ -214,6 +214,78 @@ def test_generate_temperature_reproducible() -> None:
         _cleanup(model, engine, fixture_dir)
 
 
+def _nucleus_indices(logits: np.ndarray, top_p: float, temperature: float = 1.0) -> set[int]:
+    scaled = logits.astype(np.float64) / float(temperature)
+    scaled -= np.max(scaled)
+    probs = np.exp(scaled)
+    probs /= np.sum(probs)
+    order = np.argsort(probs)[::-1]
+    cum = 0.0
+    nucleus: list[int] = []
+    for idx in order:
+        nucleus.append(int(idx))
+        cum += float(probs[idx])
+        if cum >= top_p:
+            break
+    return set(nucleus)
+
+
+def test_sampler_top_p_host_in_nucleus() -> None:
+    logits = np.array([0.1, 2.0, 0.5, -1.0, 1.5, 0.0], dtype=np.float32)
+    for top_p in (0.5, 0.9, 1.0):
+        allowed = _nucleus_indices(logits, top_p)
+        for seed in (0, 42, 99):
+            got = generate_loop_me.sampler_top_p_host(logits, top_p, seed)
+            assert got in allowed, f"top_p={top_p} seed={seed} got={got} nucleus={allowed}"
+    print("sampler_top_p_host_in_nucleus ok")
+
+
+def test_sampler_top_p_host_reproducible() -> None:
+    logits = np.array([0.1, 2.0, 0.5, -1.0, 1.5, 0.0], dtype=np.float32)
+    a = generate_loop_me.sampler_top_p_host(logits, 0.9, 42, temperature=0.8)
+    b = generate_loop_me.sampler_top_p_host(logits, 0.9, 42, temperature=0.8)
+    assert a == b
+    print("sampler_top_p_host_reproducible ok")
+
+
+def test_sampler_top_p_low_near_argmax() -> None:
+    logits = np.array([0.1, 2.0, 0.5, -1.0, 1.5, 0.0], dtype=np.float32)
+    got = generate_loop_me.sampler_top_p_host(logits, 0.01, 42, temperature=0.01)
+    assert got == 1
+    print("sampler_top_p_low_near_argmax ok")
+
+
+def test_generate_top_p_reproducible() -> None:
+    model, engine, fixture_dir = _setup_engine()
+    try:
+        prompt = np.array([7, 11, 19], dtype=np.int32)
+        out_a = generate_loop_me.generate(
+            engine, prompt, 5, top_k=50, seed=777, temperature=0.9, top_p=0.95
+        )
+        inference_engine_me.reset_engine(engine)
+        out_b = generate_loop_me.generate(
+            engine, prompt, 5, top_k=50, seed=777, temperature=0.9, top_p=0.95
+        )
+        assert out_a == out_b
+        assert len(out_a) == 5
+        print("generate_top_p_reproducible ok")
+    finally:
+        _cleanup(model, engine, fixture_dir)
+
+
+def test_generate_top_p_one_uses_top_k_path() -> None:
+    model, engine, fixture_dir = _setup_engine()
+    try:
+        prompt = np.array([3, 17, 42], dtype=np.int32)
+        out_top_k = generate_loop_me.generate(engine, prompt, 3, top_k=50, seed=12345)
+        inference_engine_me.reset_engine(engine)
+        out_top_p1 = generate_loop_me.generate(engine, prompt, 3, top_k=50, seed=12345, top_p=1.0)
+        assert out_top_k == out_top_p1
+        print("generate_top_p_one_uses_top_k_path ok")
+    finally:
+        _cleanup(model, engine, fixture_dir)
+
+
 if __name__ == "__main__":
     test_generate_loop_binding_prefill_decode()
     test_generate_loop_binding_eos_stop()
@@ -226,3 +298,8 @@ if __name__ == "__main__":
     test_sampler_temperature_greedy_ignores_temperature()
     test_sampler_temperature_low_near_argmax()
     test_generate_temperature_reproducible()
+    test_sampler_top_p_host_in_nucleus()
+    test_sampler_top_p_host_reproducible()
+    test_sampler_top_p_low_near_argmax()
+    test_generate_top_p_reproducible()
+    test_generate_top_p_one_uses_top_k_path()

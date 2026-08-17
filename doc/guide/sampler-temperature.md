@@ -52,7 +52,7 @@ top_k > 1（先 top-k，再在 k 个 token 上采样） 是 — 只改变 k 个�
 1. **Greedy 太死板**：每步固定 argmax，易重复、循环；对话与创意生成通常需要可控随机性。
 2. **与训练范式一致**：LLM 在整词表分布上训练；推理若永远 argmax，与训练时的采样行为不一致，质量可能下降。
 3. **产品旋钮**：同一模型、同一 prompt，低 T 适合事实/代码（要稳），高 T 适合头脑风暴/故事（要活）。OpenAI `temperature`、vLLM `SamplingParams.temperature` 等同理。
-4. **与 top-k / top-p 组合**：工业常见 `temperature` 调整体 [锐度]，top-k / top-p 再裁掉长尾，避免采到离谱 token。
+4. **与 top-k / top-p 组合**：工业常见 `temperature` 调整体 [锐度]，top-k / top-p 再裁掉长尾，避免采到离谱 token。top-p 见 [`sampler-top-p.md`](sampler-top-p.md)。
 
 ---
 
