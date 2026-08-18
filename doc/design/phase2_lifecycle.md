@@ -75,10 +75,14 @@ API         weight_loader_load_fixture / weight_loader_load_safetensors；
 - [x] load API 声明 + 桩实现（返回 -1）；Python `weight_loader_me`
 
 **实现细节**
-- [x] fixture 路径（`config.txt` + `manifest.txt` + `.f32`）
-- [ ] safetensors 解析 + name→tensor
+- [x] fixture 路径（`config.txt` + `manifest.txt` + `.f32`）；格式说明见 [`doc/guide/fixture_structure.md`](../guide/fixture_structure.md)
+- [ ] **safetensors**（分步；见 roadmap 模块 1）
+  - [x] 1 — Loader 只读格式（解析 `.safetensors` -> `HostTensor`；`safetensors_reader.cpp`；F32 only）
+  - [ ] 2 — fixture roundtrip（fixture 导出 `.safetensors` + load 对比单测）
+  - [ ] 3 — HF 名映射（Llama 类 checkpoint -> 内部 `layer{i}.w_*` 等）
+  - [ ] 4 — 真模型验证（TinyLlama / 小 Llama，或 1~2 layer 切片；非必须全量 7B）
 - [ ] gguf（若目标模型需要）
-- [ ] 加载单测（小 fixture vs numpy/torch）
+- [x] fixture 加载单测（`tests/test_weight_loader.py`）
 
 ---
 
@@ -433,7 +437,7 @@ GenerateLoop **借用** `InferenceEngine*`；不 create/destroy Engine、不 own
 2. **TransformerModel** — 容器 + embed/lm_head + fixture H2D 拷贝
 3. **InferenceEngine** — session + N-layer forward + prefill/decode
 4. **Sampler / GenerateLoop** — 闭合 token 环
-5. **WeightLoader** — safetensors 生产格式
+5. **WeightLoader** — safetensors（1 只读格式 -> 2 fixture roundtrip -> 3 HF 名映射 -> 4 真模型验证）
 6. **并行**：MoE、Graph、量化
 
 **API 契约**（收工前）：[`../guide/inference_engine_device_api.md`](../guide/inference_engine_device_api.md)（Engine 为主；Loader/Model load API 可同文档分节）。

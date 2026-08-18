@@ -101,7 +101,7 @@ PYBIND11_MODULE(weight_loader_me, m) {
             WeightLoadResult result{};
             weight_load_result_init(&result);
             if (weight_loader_load_safetensors(path.c_str(), &result) != 0) {
-                throw std::runtime_error("weight_loader_load_safetensors not implemented");
+                throw std::runtime_error("weight_loader_load_safetensors failed");
             }
             py::dict py_result = weight_load_result_to_py(result);
             weight_load_result_destroy(&result);

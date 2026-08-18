@@ -8,6 +8,7 @@ add_library(kv_cache_model OBJECT
 
 add_library(weight_loader_model OBJECT
   model_config.cpp
+  safetensors_reader.cpp
   weight_loader.cpp
 )
 

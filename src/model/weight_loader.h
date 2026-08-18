@@ -35,11 +35,14 @@ void weight_load_result_destroy(WeightLoadResult *result);
 
 const HostTensor *weight_load_result_find(const WeightLoadResult *result, const char *name);
 
-// 骨架 API：读路径 👉 填充 out；0 成功，-1 失败。
-// fixture 目录：config.txt（ModelConfig key=value）+ manifest.txt（name ndim dims... relpath）+
-// *.f32
+// path 是一个目录。打开其中的 config.txt（例如 hidden_size=128），写入 out->config；
+// 再按 manifest.txt 逐行找 .f32 文件，每行形如 [embed 2 128 256 weights/embed.f32]，
+// 把 float 读进 out->tensors[]。目录不对或缺文件则返回 -1。
 int weight_loader_load_fixture(const char *path, WeightLoadResult *out);
 
+// path 是一个 .safetensors 文件。读 8 字节头长 + JSON，把每个 F32 tensor 拷到 out->tensors[]
+// （名字用 JSON 里的 key，例如 embed、layer0.w_q，不会改成 HF 原名）。
+// 若同目录还有 config.txt，顺带写入 out->config；没有则 config 保持全 0。
 int weight_loader_load_safetensors(const char *path, WeightLoadResult *out);
 
 #ifdef __cplusplus

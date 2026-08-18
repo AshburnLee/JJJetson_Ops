@@ -6,7 +6,7 @@ import tempfile
 import numpy as np
 import weight_loader_me
 
-from fixture_utils import write_weight_fixture
+from fixture_utils import write_safetensors_file, write_weight_fixture
 
 HIDDEN_SIZE = 128
 INTERMEDIATE_SIZE = 256
@@ -98,7 +98,49 @@ def test_load_fixture_roundtrip():
         os.rmdir(fixture_dir)
 
 
+def test_load_safetensors_read_format():
+    tensors = {
+        "embed": np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
+        "layer0.w_q": np.array([0.5, -0.25, 1.25, 0.0], dtype=np.float32),
+        "final_norm": np.array([0.1, 0.2, 0.3], dtype=np.float32),
+    }
+    st_path = tempfile.mktemp(suffix=".safetensors")
+    try:
+        write_safetensors_file(st_path, tensors)
+        loaded = weight_loader_me.load_safetensors(st_path)
+        assert loaded["num_tensors"] == len(tensors)
+        for name, expected in tensors.items():
+            got = np.asarray(loaded["tensors"][name], dtype=np.float32)
+            if not np.array_equal(got, expected):
+                raise AssertionError(f"safetensors tensor mismatch: {name}")
+        print("load_safetensors_read_format ok")
+    finally:
+        if os.path.exists(st_path):
+            os.remove(st_path)
+
+
+def test_load_safetensors_with_optional_config():
+    tensors = {"embed": np.array([[1.0, 2.0]], dtype=np.float32)}
+    tmp_dir = tempfile.mkdtemp(prefix="jj_st_cfg_")
+    st_path = os.path.join(tmp_dir, "weights.safetensors")
+    try:
+        write_safetensors_file(st_path, tensors)
+        write_weight_fixture(tmp_dir, _tiny_config(), {})
+        loaded = weight_loader_me.load_safetensors(st_path)
+        assert loaded["num_tensors"] == 1
+        cfg = loaded["config"]
+        assert cfg["hidden_size"] == HIDDEN_SIZE
+        assert cfg["num_layers"] == 1
+        print("load_safetensors_with_optional_config ok")
+    finally:
+        for fname in os.listdir(tmp_dir):
+            os.remove(os.path.join(tmp_dir, fname))
+        os.rmdir(tmp_dir)
+
+
 if __name__ == "__main__":
     test_model_config_validate_ok()
     test_model_config_validate_rejects_bad_heads()
     test_load_fixture_roundtrip()
+    test_load_safetensors_read_format()
+    test_load_safetensors_with_optional_config()

@@ -1,5 +1,7 @@
 #include "weight_loader.h"
 
+#include "safetensors_reader.h"
+
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
@@ -346,11 +348,58 @@ int weight_loader_load_fixture(const char *path, WeightLoadResult *out) {
     return 0;
 }
 
+// WeightLoader 生产入口：读单个 .safetensors，拼成与 load_fixture 相同形状的 WeightLoadResult。
+//
+// Big picture 里它在哪？
+//   Python weight_loader_me.load_safetensors -> [本函数] -> safetensors_read_file -> out->tensors[]
+//   -> 调用方 H2D（transformer_model_load_weights 等）；本函数不碰 GPU
+//   与 weight_loader_load_fixture 对照：fixture 读目录里 manifest + 分散 .f32；本函数读单文件二进制
+//   safetensors 本身不带 ModelConfig；config 靠同目录 config.txt 补（可选）
+//   图纸：doc/design/phase2_lifecycle.md §1（WeightLoader safetensors 步骤 1）
+//
+// 函数内部顺序（逐步）：
+//   例：path=/tmp/w.safetensors，内含 embed shape [2,2]、layer0.w_q shape [4]（F32）；
+//       同目录可有 config.txt（hidden_size=128 等 11 项）
+//   step 1. 清空 out，确认 path 是普通文件（不是目录）
+//   step 2. safetensors_read_file(path) -> out->tensors / out->num_tensors（名称为 JSON key，无 HF
+//   映射） step 3. 若 dirname(path)/config.txt 存在则 parse_config_file -> out->config；否则 config
+//   保持全 0 step 4. 返回 0；任一步失败则 destroy(out) 或留 out 空并返回 -1
+//
+// 调用契约：out 由调用方事先可含旧数据，本函数会先 destroy；tensors 内存归 out，须
+// weight_load_result_destroy
 int weight_loader_load_safetensors(const char *path, WeightLoadResult *out) {
+    // step 0：参数与输出复位
     if (path == nullptr || out == nullptr) {
         return -1;
     }
-    (void)path;
-    // safetensors 解析在后续细节阶段实现。
-    return -1;
+
+    weight_load_result_destroy(out);
+    weight_load_result_init(out);
+
+    // step 1：path 必须是存在的普通文件
+    const fs::path file_path(path);
+    if (!fs::is_regular_file(file_path)) {
+        return -1;
+    }
+
+    // step 2：解析 safetensors -> HostTensor 表
+    HostTensor *tensors = nullptr;
+    int num_tensors = 0;
+    if (safetensors_read_file(path, &tensors, &num_tensors) != 0) {
+        return -1;
+    }
+    out->tensors = tensors;
+    out->num_tensors = num_tensors;
+
+    // step 3：同目录可选 config.txt（有则必填齐 11 项）
+    const fs::path config_path = file_path.parent_path() / "config.txt";
+    if (fs::is_regular_file(config_path)) {
+        ModelConfig cfg{};
+        if (parse_config_file(config_path, &cfg) != 0) {
+            weight_load_result_destroy(out);
+            return -1;
+        }
+        out->config = cfg;
+    }
+    return 0;
 }
