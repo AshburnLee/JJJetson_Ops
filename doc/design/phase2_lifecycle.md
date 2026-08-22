@@ -78,7 +78,7 @@ API         weight_loader_load_fixture / weight_loader_load_safetensors；
 - [x] fixture 路径（`config.txt` + `manifest.txt` + `.f32`）；格式说明见 [`doc/guide/fixture_structure.md`](../guide/fixture_structure.md)
 - [ ] **safetensors**（分步；见 roadmap 模块 1）
   - [x] 1 — Loader 只读格式（解析 `.safetensors` -> `HostTensor`；`safetensors_reader.cpp`；F32 only）
-  - [ ] 2 — fixture roundtrip（fixture 导出 `.safetensors` + load 对比单测）
+  - [x] 2 — fixture roundtrip（fixture 导出 `.safetensors` + `test_fixture_safetensors_roundtrip`）
   - [ ] 3 — HF 名映射（Llama 类 checkpoint -> 内部 `layer{i}.w_*` 等）
   - [ ] 4 — 真模型验证（TinyLlama / 小 Llama，或 1~2 layer 切片；非必须全量 7B）
 - [ ] gguf（若目标模型需要）

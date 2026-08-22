@@ -154,6 +154,23 @@ layer{i}.w_post_attention_layernorm [H]
 
 ---
 
+## fixture 与 safetensors roundtrip（步骤 2）
+
+fixture 目录和 `.safetensors` 是两种存法，内部 tensor 名与 layout 相同（都是 Model 内部名 + f32 row-major）。
+
+步骤 2 验证整条链：
+
+~~~
+write_weight_fixture(dir)     # fixture 落盘
+export_fixture_dir_to_safetensors(dir, weights.safetensors)
+load_fixture(dir)             # 基准
+load_safetensors(weights.safetensors)   # 须与基准逐 tensor 一致
+~~~
+
+实现：`tests/fixture_utils.py` 的 `export_fixture_dir_to_safetensors`；单测 `tests/test_weight_loader.py::test_fixture_safetensors_roundtrip`（1-layer 完整 12 张 tensor）。
+
+---
+
 ## 和 safetensors 路径的区别（交叉引用）
 
 | 入口 | path 类型 | 权重在哪 | config 在哪 |

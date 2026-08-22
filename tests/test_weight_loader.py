@@ -6,7 +6,11 @@ import tempfile
 import numpy as np
 import weight_loader_me
 
-from fixture_utils import write_safetensors_file, write_weight_fixture
+from fixture_utils import (
+    export_fixture_dir_to_safetensors,
+    write_safetensors_file,
+    write_weight_fixture,
+)
 
 HIDDEN_SIZE = 128
 INTERMEDIATE_SIZE = 256
@@ -54,22 +58,7 @@ def test_model_config_validate_rejects_bad_heads():
 
 
 def test_load_fixture_roundtrip():
-    np.random.seed(SEED)
-    tensors = {
-        "layer0.w_q": np.random.randn(HIDDEN_SIZE, Q_DIM).astype(np.float32),
-        "layer0.w_k": np.random.randn(HIDDEN_SIZE, KV_DIM).astype(np.float32),
-        "layer0.w_v": np.random.randn(HIDDEN_SIZE, KV_DIM).astype(np.float32),
-        "layer0.w_o": np.random.randn(Q_DIM, HIDDEN_SIZE).astype(np.float32),
-        "layer0.w_gate": np.random.randn(HIDDEN_SIZE, INTERMEDIATE_SIZE).astype(np.float32),
-        "layer0.w_up": np.random.randn(HIDDEN_SIZE, INTERMEDIATE_SIZE).astype(np.float32),
-        "layer0.w_down": np.random.randn(INTERMEDIATE_SIZE, HIDDEN_SIZE).astype(np.float32),
-        "layer0.w_input_layernorm": np.random.randn(HIDDEN_SIZE).astype(np.float32),
-        "layer0.w_post_attention_layernorm": np.random.randn(HIDDEN_SIZE).astype(np.float32),
-        "embed": np.random.randn(VOCAB_SIZE, HIDDEN_SIZE).astype(np.float32),
-        "lm_head": np.random.randn(HIDDEN_SIZE, VOCAB_SIZE).astype(np.float32),
-        "final_norm": np.random.randn(HIDDEN_SIZE).astype(np.float32),
-    }
-
+    tensors = _one_layer_tensors()
     fixture_dir = tempfile.mkdtemp(prefix="jj_weight_fixture_")
     try:
         # 实时写入 配置和二进制权重文件
@@ -138,9 +127,72 @@ def test_load_safetensors_with_optional_config():
         os.rmdir(tmp_dir)
 
 
+def _one_layer_tensors() -> dict[str, np.ndarray]:
+    np.random.seed(SEED)
+    return {
+        "layer0.w_q": np.random.randn(HIDDEN_SIZE, Q_DIM).astype(np.float32),
+        "layer0.w_k": np.random.randn(HIDDEN_SIZE, KV_DIM).astype(np.float32),
+        "layer0.w_v": np.random.randn(HIDDEN_SIZE, KV_DIM).astype(np.float32),
+        "layer0.w_o": np.random.randn(Q_DIM, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_gate": np.random.randn(HIDDEN_SIZE, INTERMEDIATE_SIZE).astype(np.float32),
+        "layer0.w_up": np.random.randn(HIDDEN_SIZE, INTERMEDIATE_SIZE).astype(np.float32),
+        "layer0.w_down": np.random.randn(INTERMEDIATE_SIZE, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_input_layernorm": np.random.randn(HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_post_attention_layernorm": np.random.randn(HIDDEN_SIZE).astype(np.float32),
+        "embed": np.random.randn(VOCAB_SIZE, HIDDEN_SIZE).astype(np.float32),
+        "lm_head": np.random.randn(HIDDEN_SIZE, VOCAB_SIZE).astype(np.float32),
+        "final_norm": np.random.randn(HIDDEN_SIZE).astype(np.float32),
+    }
+
+
+def _assert_loaded_tensors_match(expected: dict[str, np.ndarray], loaded: dict, label: str) -> None:
+    if len(loaded) != len(expected):
+        raise AssertionError(
+            f"{label}: tensor count mismatch got={len(loaded)} expected={len(expected)}"
+        )
+    for name, exp in expected.items():
+        got = np.asarray(loaded[name], dtype=np.float32)
+        if not np.array_equal(got, exp):
+            raise AssertionError(f"{label}: tensor mismatch: {name}")
+
+
+def test_fixture_safetensors_roundtrip():
+    """fixture 目录 -> 导出 .safetensors -> load_safetensors 与 load_fixture 逐 tensor 一致。"""
+    tensors = _one_layer_tensors()
+    fixture_dir = tempfile.mkdtemp(prefix="jj_fixture_st_roundtrip_")
+    st_path = os.path.join(fixture_dir, "weights.safetensors")
+    try:
+        write_weight_fixture(fixture_dir, _tiny_config(), tensors)
+
+        from_fixture = weight_loader_me.load_fixture(fixture_dir)
+        export_fixture_dir_to_safetensors(fixture_dir, st_path)
+        from_st = weight_loader_me.load_safetensors(st_path)
+
+        assert from_fixture["num_tensors"] == len(tensors)
+        assert from_st["num_tensors"] == len(tensors)
+        _assert_loaded_tensors_match(tensors, from_fixture["tensors"], "load_fixture")
+        _assert_loaded_tensors_match(tensors, from_st["tensors"], "load_safetensors")
+
+        # safetensors 与同目录 config.txt：load_safetensors 应带上 ModelConfig
+        for key, value in _tiny_config().items():
+            got = from_st["config"][key]
+            if isinstance(value, float):
+                if not np.isclose(got, value, rtol=0.0, atol=1e-9):
+                    raise AssertionError(f"config mismatch: {key} got={got} expected={value}")
+            elif got != value:
+                raise AssertionError(f"config mismatch: {key} got={got} expected={value}")
+
+        print("fixture_safetensors_roundtrip ok")
+    finally:
+        for fname in os.listdir(fixture_dir):
+            os.remove(os.path.join(fixture_dir, fname))
+        os.rmdir(fixture_dir)
+
+
 if __name__ == "__main__":
     test_model_config_validate_ok()
     test_model_config_validate_rejects_bad_heads()
     test_load_fixture_roundtrip()
     test_load_safetensors_read_format()
     test_load_safetensors_with_optional_config()
+    test_fixture_safetensors_roundtrip()

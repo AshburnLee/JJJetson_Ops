@@ -99,3 +99,28 @@ def write_weight_fixture(
     with open(os.path.join(dir_path, "manifest.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(manifest_lines))
         f.write("\n")
+
+
+# 测试 helper：从已写好的 fixture 目录导出 .safetensors（safetensors 步骤 2 roundtrip）。
+#
+# Big picture 里它在哪？
+#   write_weight_fixture 写出目录后，本函数用 load_fixture 读回 host tensor，再 write_safetensors_file 写单文件。
+#   单测再 load_safetensors 读回，与 load_fixture 结果逐 tensor 对比。
+#   图纸：doc/guide/fixture_structure.md；phase2 safetensors 步骤 2。
+#
+# 函数内部顺序（逐步）：
+#   例：fixture_dir 含 config.txt + manifest.txt + layer0_w_q.f32 等
+#   step 1. weight_loader_me.load_fixture(fixture_dir) 按 manifest 读 .f32
+#   step 2. 把 loaded["tensors"] 转成 numpy dict
+#   step 3. write_safetensors_file(out_path, tensors)
+#
+# 调用契约：fixture_dir 须能被 load_fixture 成功读取；out_path 可为 fixture_dir 内或外路径
+def export_fixture_dir_to_safetensors(fixture_dir: str, out_path: str) -> None:
+    import weight_loader_me
+
+    # step 1：从 fixture 目录读出 host 权重
+    loaded = weight_loader_me.load_fixture(fixture_dir)
+    tensors = {name: np.asarray(arr, dtype=np.float32) for name, arr in loaded["tensors"].items()}
+
+    # step 2：写成 safetensors 单文件
+    write_safetensors_file(out_path, tensors)
