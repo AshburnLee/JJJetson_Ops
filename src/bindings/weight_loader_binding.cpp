@@ -108,4 +108,20 @@ PYBIND11_MODULE(weight_loader_me, m) {
             return py_result;
         },
         py::arg("path"));
+
+    m.def(
+        "load_safetensors_hf_llama",
+        [](const std::string &path) {
+            WeightLoadResult result{};
+            weight_load_result_init(&result);
+            if (weight_loader_load_safetensors_hf_llama(path.c_str(), &result) != 0) {
+                throw std::runtime_error("weight_loader_load_safetensors_hf_llama failed");
+            }
+            py::dict py_result = weight_load_result_to_py(result);
+            weight_load_result_destroy(&result);
+            return py_result;
+        },
+        py::arg("path"),
+        "Load HF Llama-layout safetensors: map tensor names and transpose 2D weights to internal "
+        "layout");
 }

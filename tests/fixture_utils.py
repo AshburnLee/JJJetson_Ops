@@ -124,3 +124,48 @@ def export_fixture_dir_to_safetensors(fixture_dir: str, out_path: str) -> None:
 
     # step 2：写成 safetensors 单文件
     write_safetensors_file(out_path, tensors)
+
+
+# HF Llama checkpoint key（PyTorch Linear [out,in]）-> 写 safetensors 单测用（步骤 3）。
+_HF_LLAMA_TRANSPOSE_SUFFIXES = frozenset({"w_q", "w_k", "w_v", "w_o", "w_gate", "w_up", "w_down"})
+
+
+def internal_name_to_hf_llama_key(name: str) -> str:
+    if name == "embed":
+        return "model.embed_tokens.weight"
+    if name == "final_norm":
+        return "model.norm.weight"
+    if name == "lm_head":
+        return "lm_head.weight"
+    if not name.startswith("layer") or "." not in name:
+        raise KeyError(f"unsupported internal tensor name: {name}")
+    layer_idx, suffix = name.split(".", 1)
+    layer_num = layer_idx.removeprefix("layer")
+    layer_keys = {
+        "w_q": f"model.layers.{layer_num}.self_attn.q_proj.weight",
+        "w_k": f"model.layers.{layer_num}.self_attn.k_proj.weight",
+        "w_v": f"model.layers.{layer_num}.self_attn.v_proj.weight",
+        "w_o": f"model.layers.{layer_num}.self_attn.o_proj.weight",
+        "w_gate": f"model.layers.{layer_num}.mlp.gate_proj.weight",
+        "w_up": f"model.layers.{layer_num}.mlp.up_proj.weight",
+        "w_down": f"model.layers.{layer_num}.mlp.down_proj.weight",
+        "w_input_layernorm": f"model.layers.{layer_num}.input_layernorm.weight",
+        "w_post_attention_layernorm": (f"model.layers.{layer_num}.post_attention_layernorm.weight"),
+    }
+    if suffix not in layer_keys:
+        raise KeyError(f"unsupported layer suffix: {suffix}")
+    return layer_keys[suffix]
+
+
+def internal_tensors_to_hf_llama_layout(tensors: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """内部 fixture layout -> HF safetensors JSON key + PyTorch Linear 矩阵方向。"""
+    hf: dict[str, np.ndarray] = {}
+    for name, arr in tensors.items():
+        key = internal_name_to_hf_llama_key(name)
+        data = np.asarray(arr, dtype=np.float32)
+        suffix = name.split(".")[-1] if "." in name else name
+        if suffix in _HF_LLAMA_TRANSPOSE_SUFFIXES or name == "lm_head":
+            hf[key] = np.ascontiguousarray(data.T)
+        else:
+            hf[key] = np.ascontiguousarray(data)
+    return hf

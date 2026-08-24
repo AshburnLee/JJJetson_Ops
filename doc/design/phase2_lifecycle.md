@@ -80,7 +80,7 @@ API         weight_loader_load_fixture / weight_loader_load_safetensors；
   - **定位**：safetensors 是真实模型权重的目标格式；当前完成了可读 safetensors + 可验证（步骤 1/2）。真实推理场景需从 HF safetensors + config 加载实际权重（步骤 3/4）
   - [x] 1 — Loader 只读格式（解析 `.safetensors` -> `HostTensor`；`safetensors_reader.cpp`；F32 only）
   - [x] 2 — fixture roundtrip（fixture 导出 `.safetensors` + `test_fixture_safetensors_roundtrip`）
-  - [ ] 3 — HF 名映射（Llama 类 checkpoint -> 内部 `layer{i}.w_*` 等）
+  - [x] 3 — HF 名映射（`hf_llama_weight_map.cpp` + `load_safetensors_hf_llama`；见 [`doc/guide/hf_llama_weight_map.md`](../guide/hf_llama_weight_map.md)）
   - [ ] 4 — 真模型验证（TinyLlama / 小 Llama，或 1~2 layer 切片；非必须全量 7B）
 - [ ] gguf（若目标模型需要）
 - [x] fixture 加载单测（`tests/test_weight_loader.py`）

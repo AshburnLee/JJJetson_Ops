@@ -48,6 +48,9 @@ int weight_loader_load_fixture(const char *path, WeightLoadResult *out);
 // 模块 1）。
 int weight_loader_load_safetensors(const char *path, WeightLoadResult *out);
 
+// load_safetensors + HF Llama 名映射与 2D 转置（hf_llama_weight_map.cpp）。
+int weight_loader_load_safetensors_hf_llama(const char *path, WeightLoadResult *out);
+
 #ifdef __cplusplus
 }
 #endif

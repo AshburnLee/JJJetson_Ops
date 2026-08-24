@@ -1,0 +1,54 @@
+# HF Llama 权重名映射（safetensors 步骤 3）
+
+C 实现：`src/model/hf_llama_weight_map.cpp`。Loader 入口：`weight_loader_load_safetensors_hf_llama`（Python `weight_loader_me.load_safetensors_hf_llama`）。
+
+**前提**：目标模型族为 **HF Llama 系**（Pre-LN、GQA、SwiGLU），与 Phase 1/2 layer 链一致。
+
+---
+
+## 做什么
+
+读入 HF 风格 safetensors 后：
+
+1. **改名**：JSON key -> 内部 `layer{i}.w_*` / `embed` / `final_norm` / `lm_head`
+2. **2D 转置**：HF PyTorch Linear 权重 `[out, in]` -> 内部 row-major `[in, out]`（与 fixture / `linear_forward_device` 一致）
+3. **1D RMSNorm**：shape 不变，只改名
+
+`load_safetensors`（无 `_hf_llama`）仍保留 JSON key 原样，供步骤 1/2 单测。
+
+---
+
+## 映射表（Llama dense）
+
+~~~
+HF key                                              internal name
+---------------------------------------------------------------------------
+model.embed_tokens.weight                           embed
+model.norm.weight                                   final_norm
+lm_head.weight                                      lm_head              (+ transpose 2D)
+model.layers.{i}.self_attn.q_proj.weight            layer{i}.w_q         (+ transpose)
+model.layers.{i}.self_attn.k_proj.weight            layer{i}.w_k         (+ transpose)
+model.layers.{i}.self_attn.v_proj.weight            layer{i}.w_v         (+ transpose)
+model.layers.{i}.self_attn.o_proj.weight            layer{i}.w_o         (+ transpose)
+model.layers.{i}.mlp.gate_proj.weight               layer{i}.w_gate      (+ transpose)
+model.layers.{i}.mlp.up_proj.weight                 layer{i}.w_up        (+ transpose)
+model.layers.{i}.mlp.down_proj.weight               layer{i}.w_down      (+ transpose)
+model.layers.{i}.input_layernorm.weight             layer{i}.w_input_layernorm
+model.layers.{i}.post_attention_layernorm.weight    layer{i}.w_post_attention_layernorm
+~~~
+
+未识别 key：stderr 警告并跳过（tied 时无 `lm_head.weight` 属正常）。
+
+---
+
+## 单测（无需下载真模型）
+
+`tests/fixture_utils.py`：`internal_tensors_to_hf_llama_layout` 把内部 fixture 转成 HF key + layout。
+
+`tests/test_weight_loader.py`：`test_hf_llama_safetensors_name_map` — 写 HF 风格 safetensors，`load_safetensors_hf_llama` 后与 `load_fixture` 逐 tensor 一致。
+
+---
+
+## 下一步（步骤 4）
+
+TinyLlama / 1–2 layer HF safetensors + `config.txt`，接 `transformer_model_load_weights` 做真权重 e2e。

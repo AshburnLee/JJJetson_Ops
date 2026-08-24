@@ -1,5 +1,6 @@
 #include "weight_loader.h"
 
+#include "hf_llama_weight_map.h"
 #include "safetensors_reader.h"
 
 #include <cctype>
@@ -400,6 +401,17 @@ int weight_loader_load_safetensors(const char *path, WeightLoadResult *out) {
             return -1;
         }
         out->config = cfg;
+    }
+    return 0;
+}
+
+int weight_loader_load_safetensors_hf_llama(const char *path, WeightLoadResult *out) {
+    if (weight_loader_load_safetensors(path, out) != 0) {
+        return -1;
+    }
+    if (hf_llama_map_weight_load_result(out) != 0) {
+        weight_load_result_destroy(out);
+        return -1;
     }
     return 0;
 }

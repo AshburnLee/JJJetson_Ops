@@ -8,6 +8,7 @@ import weight_loader_me
 
 from fixture_utils import (
     export_fixture_dir_to_safetensors,
+    internal_tensors_to_hf_llama_layout,
     write_safetensors_file,
     write_weight_fixture,
 )
@@ -189,6 +190,30 @@ def test_fixture_safetensors_roundtrip():
         os.rmdir(fixture_dir)
 
 
+def test_hf_llama_safetensors_name_map():
+    """HF Llama 风格 safetensors key + layout -> load_safetensors_hf_llama 与内部 fixture 一致。"""
+    tensors = _one_layer_tensors()
+    tmp_dir = tempfile.mkdtemp(prefix="jj_hf_llama_map_")
+    # model.safetensors 不必事先放在仓库里；下面 write_safetensors_file 会按 HF 名/layout 运行时写出
+    st_path = os.path.join(tmp_dir, "model.safetensors")
+    try:
+        write_weight_fixture(tmp_dir, _tiny_config(), tensors)
+        baseline = weight_loader_me.load_fixture(tmp_dir)
+
+        hf_tensors = internal_tensors_to_hf_llama_layout(tensors)
+        write_safetensors_file(st_path, hf_tensors)
+        mapped = weight_loader_me.load_safetensors_hf_llama(st_path)
+
+        assert mapped["num_tensors"] == len(tensors)
+        _assert_loaded_tensors_match(tensors, mapped["tensors"], "load_safetensors_hf_llama")
+        _assert_loaded_tensors_match(tensors, baseline["tensors"], "load_fixture baseline")
+        print("hf_llama_safetensors_name_map ok")
+    finally:
+        for fname in os.listdir(tmp_dir):
+            os.remove(os.path.join(tmp_dir, fname))
+        os.rmdir(tmp_dir)
+
+
 if __name__ == "__main__":
     test_model_config_validate_ok()
     test_model_config_validate_rejects_bad_heads()
@@ -196,3 +221,4 @@ if __name__ == "__main__":
     test_load_safetensors_read_format()
     test_load_safetensors_with_optional_config()
     test_fixture_safetensors_roundtrip()
+    test_hf_llama_safetensors_name_map()
