@@ -77,6 +77,7 @@ API         weight_loader_load_fixture / weight_loader_load_safetensors；
 **实现细节**
 - [x] fixture 路径（`config.txt` + `manifest.txt` + `.f32`）；格式说明见 [`doc/guide/fixture_structure.md`](../guide/fixture_structure.md)
 - [ ] **safetensors**（分步；见 roadmap 模块 1）
+  - **定位**：safetensors 是真实模型权重的目标格式；当前完成了可读 safetensors + 可验证（步骤 1/2）。真实推理场景需从 HF safetensors + config 加载实际权重（步骤 3/4）
   - [x] 1 — Loader 只读格式（解析 `.safetensors` -> `HostTensor`；`safetensors_reader.cpp`；F32 only）
   - [x] 2 — fixture roundtrip（fixture 导出 `.safetensors` + `test_fixture_safetensors_roundtrip`）
   - [ ] 3 — HF 名映射（Llama 类 checkpoint -> 内部 `layer{i}.w_*` 等）

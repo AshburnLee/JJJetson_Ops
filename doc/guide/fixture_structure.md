@@ -4,6 +4,8 @@ C 头文件：`src/model/weight_loader.h`。Loader API：`weight_loader_load_fix
 
 **生命周期总图**仍以 [`../design/phase2_lifecycle.md`](../design/phase2_lifecycle.md) §1 为准。本文只回答一件事：你传给 `path` 的 **fixture 目录里到底有什么**，以及 Loader / Model 按什么约定读它。
 
+**fixture 是什么**：测试用的权重目录，由 `write_weight_fixture()` 等在运行时生成；**格式和真 checkpoint 一样，内容是假的实验数据。**
+
 仓库里**没有**提交现成的 fixture 目录；测试和本地实验都是运行时写临时目录，或自己按下面格式拼。
 
 ---
@@ -179,6 +181,8 @@ load_safetensors(weights.safetensors)   # 须与基准逐 tensor 一致
 | `load_safetensors` | **单个 `.safetensors` 文件** | 文件内 JSON header + blob | 同目录可选 `config.txt` |
 
 safetensors 步骤 1 只读 F32 blob，tensor 名仍是文件内 JSON key；HF 名映射是后续 roadmap 步骤。fixture 目录格式与 safetensors **无关**，是开发/单测用的明文 layout。
+
+**safetensors 定位**：safetensors 是真实模型权重的目标格式；当前完成了可读 safetensors + 可验证（步骤 1/2，主要在单测）。真实推理场景需从 HF safetensors + config 加载实际权重（步骤 3/4 完成后接 Model H2D；见 `weight_loader.h` 中 `load_safetensors` 注释）。
 
 ---
 
