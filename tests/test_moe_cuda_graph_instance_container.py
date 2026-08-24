@@ -75,7 +75,7 @@ def test_moe_cuda_graph_instance_container():
     finally:
         moe_cuda_graph_instance_container_me.destroy_container(container)
 
-    print("Passed")
+    print("Passed test_moe_cuda_graph_instance_container")
 
 
 if __name__ == "__main__":

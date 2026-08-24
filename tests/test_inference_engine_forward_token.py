@@ -46,7 +46,7 @@ def test_engine_forward_token_one_layer_prefill() -> None:
         ref = _logits_ref(token_ids, tensors, 1, 0, kv)
         max_abs = np.max(np.abs(logits_out - ref))
         assert np.allclose(logits_out, ref, atol=1e-4, rtol=1e-4), f"max_abs_diff={max_abs:e}"
-        print("forward_token_one_layer_prefill ok")
+        print("Passed test_engine_forward_token_one_layer_prefill")
     finally:
         tief._cleanup(model, engine, fixture_dir)
 
@@ -66,7 +66,7 @@ def test_engine_forward_token_two_layer_prefill() -> None:
         ref = _logits_ref(token_ids, tensors, 2, 0, kv)
         max_abs = np.max(np.abs(logits_out - ref))
         assert np.allclose(logits_out, ref, atol=1e-4, rtol=1e-4), f"max_abs_diff={max_abs:e}"
-        print("forward_token_two_layer_prefill ok")
+        print("Passed test_engine_forward_token_two_layer_prefill")
     finally:
         tief._cleanup(model, engine, fixture_dir)
 
@@ -98,7 +98,7 @@ def test_engine_forward_token_prefill_decode_and_reset() -> None:
         inference_engine_me.reset_engine(engine)
         assert inference_engine_me.kv_cache_len(engine) == 0
         assert inference_engine_me.next_pos(engine) == 0
-        print("forward_token_prefill_decode_reset ok")
+        print("Passed test_engine_forward_token_prefill_decode_and_reset")
     finally:
         tief._cleanup(model, engine, fixture_dir)
 

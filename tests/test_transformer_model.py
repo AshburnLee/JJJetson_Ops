@@ -33,7 +33,7 @@ def test_create_destroy():
     try:
         assert transformer_model_me.get_num_layers(handle) == NUM_LAYERS
         assert transformer_model_me.is_tied_embeddings(handle) is False
-        print("create_destroy ok")
+        print("Passed test_create_destroy")
     finally:
         transformer_model_me.destroy_model(handle)
 
@@ -42,7 +42,7 @@ def test_tied_embeddings():
     handle = transformer_model_me.create_model(**_create_cfg(tie_word_embeddings=1))
     try:
         assert transformer_model_me.is_tied_embeddings(handle) is True
-        print("tied_embeddings ok")
+        print("Passed test_tied_embeddings")
     finally:
         transformer_model_me.destroy_model(handle)
 

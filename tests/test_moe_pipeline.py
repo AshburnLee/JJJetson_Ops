@@ -153,7 +153,7 @@ def test_moe_pipeline():
             f"({num_tokens}, {top_k}, {hidden_size}, {intermediate_size}, {num_experts})"
         )
 
-    print("Passed")
+    print("Passed test_moe_pipeline")
 
 
 if __name__ == "__main__":

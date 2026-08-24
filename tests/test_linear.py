@@ -35,7 +35,7 @@ def run_linear_case(name: str, in_features: int, out_features: int, input_np: np
 
     ok = utils.compare_np_torch(output_np, torch.from_numpy(torch_np), atol=1e-4, rtol=1e-4)
     assert ok, f"{name} linear output differs from reference"
-    print(f"{name} passed")
+    print(f"Passed linear_{name}")
 
 
 def test_linear():
@@ -57,7 +57,7 @@ def test_linear():
     run_linear_case("gate_proj", HIDDEN_SIZE, INTERMEDIATE_SIZE, hidden_np)
     run_linear_case("up_proj", HIDDEN_SIZE, INTERMEDIATE_SIZE, hidden_np)
     run_linear_case("down_proj", INTERMEDIATE_SIZE, HIDDEN_SIZE, ffn_mid_np)
-    print("Passed")
+    print("Passed test_linear")
 
 
 if __name__ == "__main__":

@@ -38,7 +38,7 @@ def test_inference_engine_lifecycle() -> None:
             inference_engine_me.reset_engine(engine)
             assert inference_engine_me.kv_cache_len(engine) == 0
             assert inference_engine_me.next_pos(engine) == 0
-            print("lifecycle ok")
+            print("Passed test_inference_engine_lifecycle")
         finally:
             inference_engine_me.destroy_engine(engine)
     finally:
@@ -51,7 +51,7 @@ def test_inference_engine_single_layer_kv() -> None:
         engine = inference_engine_me.create_engine(model)
         try:
             assert inference_engine_me.kv_cache_num_layers(engine) == 1
-            print("single_layer_kv ok")
+            print("Passed test_inference_engine_single_layer_kv")
         finally:
             inference_engine_me.destroy_engine(engine)
     finally:

@@ -51,7 +51,7 @@ def test_rms_norm_fused_add():
         residual_me, torch.from_numpy(ref_residual), atol=1e-5, rtol=1e-5
     )
     assert ok_input and ok_res, "rms_norm_fused_add output differs from reference"
-    print("Passed")
+    print("Passed test_rms_norm_fused_add")
 
 
 if __name__ == "__main__":

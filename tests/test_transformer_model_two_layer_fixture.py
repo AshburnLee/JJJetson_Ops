@@ -149,7 +149,7 @@ def test_two_layer_fixture_layout_roundtrip() -> None:
         if np.array_equal(w_q0, w_q1):
             raise AssertionError("layer0.w_q and layer1.w_q must differ")
 
-        print("two_layer_fixture_layout_roundtrip ok")
+        print("Passed test_two_layer_fixture_layout_roundtrip")
     finally:
         transformer_model_me.destroy_model(handle)
         _cleanup_fixture_dir(fixture_dir)
@@ -168,7 +168,7 @@ def test_two_layer_fixture_missing_layer_rejected() -> None:
             transformer_model_me.load_weights_from_fixture(handle, fixture_dir)
         except RuntimeError:
             assert not transformer_model_me.is_weights_loaded(handle)
-            print("missing layer1 weight rejected ok")
+            print("Passed test_two_layer_fixture_missing_layer_rejected")
             return
         raise AssertionError("expected RuntimeError when layer1.w_q missing")
     finally:

@@ -49,7 +49,7 @@ def test_moe_combine_sota():
 
         assert np.allclose(y, y_ref, rtol=1e-5, atol=1e-4)
 
-    print("Passed")
+    print("Passed test_moe_combine_sota")
 
 
 if __name__ == "__main__":

@@ -120,7 +120,7 @@ def test_all():
     assert np.allclose(scale_fp32, scale_ref, atol=1e-5)
     assert np.allclose(sum_fp32, sum_ref, atol=1e-2)
 
-    print("Passed.")
+    print("Passed test_all")
 
 
 if __name__ == "__main__":

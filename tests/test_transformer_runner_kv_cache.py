@@ -63,7 +63,7 @@ def test_transformer_runner_kv_cache_prefill_decode() -> None:
         assert transformer_runner_me.kv_cache_len(runner) == num_prefill + 1
     finally:
         transformer_runner_me.destroy_runner(runner)
-    print("Passed")
+    print("Passed test_transformer_runner_kv_cache_prefill_decode")
 
 
 def test_transformer_runner_kv_cache_reset() -> None:
@@ -85,7 +85,7 @@ def test_transformer_runner_kv_cache_reset() -> None:
         assert transformer_runner_me.kv_cache_len(runner) == num_prefill
     finally:
         transformer_runner_me.destroy_runner(runner)
-    print("reset Passed")
+    print("Passed test_transformer_runner_kv_cache_reset")
 
 
 if __name__ == "__main__":

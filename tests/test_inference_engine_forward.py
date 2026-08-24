@@ -165,7 +165,7 @@ def test_engine_forward_one_layer_prefill() -> None:
         ref = _chain_layers_ref(hidden, tensors, 1, 0, kv)
         max_abs = np.max(np.abs(out - ref))
         assert np.allclose(out, ref, atol=1e-4, rtol=1e-4), f"max_abs_diff={max_abs:e}"
-        print("one_layer_prefill ok")
+        print("Passed test_engine_forward_one_layer_prefill")
     finally:
         _cleanup(model, engine, fixture_dir)
 
@@ -186,7 +186,7 @@ def test_engine_forward_two_layer_prefill() -> None:
         ref = _chain_layers_ref(hidden, tensors, 2, 0, kv)
         max_abs = np.max(np.abs(out - ref))
         assert np.allclose(out, ref, atol=1e-4, rtol=1e-4), f"max_abs_diff={max_abs:e}"
-        print("two_layer_prefill ok")
+        print("Passed test_engine_forward_two_layer_prefill")
     finally:
         _cleanup(model, engine, fixture_dir)
 
@@ -211,7 +211,7 @@ def test_engine_prefill_decode_and_reset() -> None:
         inference_engine_me.reset_engine(engine)
         assert inference_engine_me.kv_cache_len(engine) == 0
         assert inference_engine_me.next_pos(engine) == 0
-        print("prefill_decode_reset ok")
+        print("Passed test_engine_prefill_decode_and_reset")
     finally:
         _cleanup(model, engine, fixture_dir)
 

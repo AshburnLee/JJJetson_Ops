@@ -12,7 +12,7 @@ def test_fa_two_pass():
     dst = fc.run_launcher(fa_me.launch_fa_two_pass, Q, K, V, 1.0)
     fc.assert_dst_close("two_pass", dst, dst_ref)
 
-    print("Passed")
+    print("Passed test_fa_two_pass")
 
 
 if __name__ == "__main__":

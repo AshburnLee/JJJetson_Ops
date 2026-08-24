@@ -26,7 +26,7 @@ def test_prefill():
     assert check_all_tokens(input_np, output_np, pos_np, verbose=False), (
         "rope forward_host prefill differs from NumPy reference"
     )
-    print("Prefill (forward_host) passed")
+    print("Passed test_prefill")
 
 
 def test_decode():
@@ -47,7 +47,7 @@ def test_decode():
         check_single_token(input_np, output_np, pos_np, h, 0, verbose=False) for h in range(ROPE_H)
     )
     assert all_ok, "rope forward_host decode differs from NumPy reference"
-    print("Decode (forward_host) passed")
+    print("Passed test_decode")
 
 
 if __name__ == "__main__":

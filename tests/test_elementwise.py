@@ -24,7 +24,7 @@ def run_case(op_name: str, a_np: np.ndarray, b_np: np.ndarray):
     ref_np = OPS[op_name](a_np, b_np)
     ok = utils.compare_np_torch(out_np, torch.from_numpy(ref_np), atol=1e-6, rtol=1e-6)
     assert ok, f"elementwise {op_name} differs from reference"
-    print(f"elementwise {op_name} passed")
+    print(f"Passed elementwise_{op_name}")
 
 
 def test_elementwise_flat():
@@ -36,6 +36,7 @@ def test_elementwise_flat():
 
     for op_name in OPS:
         run_case(op_name, a_np, b_np)
+    print("Passed test_elementwise_flat")
 
 
 def test_residual_add_hidden_layout():
@@ -53,7 +54,7 @@ def test_residual_add_hidden_layout():
     ref_np = residual_np + subblock_np
     ok = utils.compare_np_torch(out_np, torch.from_numpy(ref_np), atol=1e-6, rtol=1e-6)
     assert ok, "residual add (hidden layout) differs from reference"
-    print("residual add hidden layout passed")
+    print("Passed test_residual_add_hidden_layout")
 
 
 if __name__ == "__main__":

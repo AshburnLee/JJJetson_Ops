@@ -8,7 +8,7 @@ C 实现：`src/model/hf_llama_weight_map.cpp`。Loader 入口：`weight_loader_
 
 ## 做什么
 
-读入 HF 风格 safetensors 后：
+将 HF 模型中的 weight 名映射为该推理引擎中的对应名称；读入 HF 风格 safetensors 后：
 
 1. **改名**：JSON key -> 内部 `layer{i}.w_*` / `embed` / `final_norm` / `lm_head`
 2. **2D 转置**：HF PyTorch Linear 权重 `[out, in]` -> 内部 row-major `[in, out]`（与 fixture / `linear_forward_device` 一致）

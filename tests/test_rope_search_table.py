@@ -12,7 +12,7 @@ def test_all():
     assert check_all_tokens(input_np, output_np, pos_np, verbose=False), (
         "rope_search_table output differs from NumPy reference"
     )
-    print("Passed")
+    print("Passed test_all")
 
 
 if __name__ == "__main__":

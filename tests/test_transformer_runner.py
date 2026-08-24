@@ -276,7 +276,7 @@ def test_transformer_runner():
     )
     ok = utils.compare_np_torch(output_me, torch.from_numpy(ref_np), atol=1e-4, rtol=1e-4)
     assert ok, "transformer_runner output differs from chained Pre-LN + residual ref"
-    print("Passed")
+    print("Passed test_transformer_runner")
 
 
 if __name__ == "__main__":

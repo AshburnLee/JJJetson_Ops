@@ -84,7 +84,7 @@ def test_forward_device_prefill_matches_ref() -> None:
     )
     ok = utils.compare_np_torch(out, torch.from_numpy(ref), atol=1e-4, rtol=1e-4)
     assert ok, "forward_device prefill differs from chain ref"
-    print("prefill vs ref Passed")
+    print("Passed test_forward_device_prefill_matches_ref")
 
 
 def _weights_dict_to_ref_args(weights: dict) -> tuple:
@@ -130,7 +130,7 @@ def test_forward_device_decode_matches_kv_ref() -> None:
 
     ok = utils.compare_np_torch(out_decode, torch.from_numpy(ref_decode), atol=1e-4, rtol=1e-4)
     assert ok, "decode: runner vs KV-cache ref (FA num_kv_tokens=L+T) mismatch"
-    print("decode vs KV ref Passed")
+    print("Passed test_forward_device_decode_matches_kv_ref")
 
 
 def test_forward_device_prefill_decode() -> None:
@@ -167,7 +167,7 @@ def test_forward_device_prefill_decode() -> None:
     finally:
         transformer_runner_me.destroy_runner(runner_dev)
         transformer_runner_me.destroy_runner(runner_host)
-    print("prefill+decode Passed")
+    print("Passed test_forward_device_prefill_decode")
 
 
 if __name__ == "__main__":

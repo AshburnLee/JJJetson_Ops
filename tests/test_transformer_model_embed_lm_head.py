@@ -77,7 +77,7 @@ def _lm_head_ref(
     return logits
 
 
-def _run_embed_lm_head_test(tie_word_embeddings: int) -> None:
+def _run_embed_lm_head_test(tie_word_embeddings: int, test_name: str) -> None:
     cfg = _tiny_config(tie_word_embeddings)
     tensors = _fixture_tensors(tie_word_embeddings)
     token_ids = np.array([3, 17, 42, 99], dtype=np.int32)
@@ -102,8 +102,7 @@ def _run_embed_lm_head_test(tie_word_embeddings: int) -> None:
         if not np.allclose(logits, ref_logits, rtol=1e-4, atol=1e-4):
             raise AssertionError("lm_head_forward_host mismatch")
 
-        label = "tied" if tie_word_embeddings else "untied"
-        print(f"embed + lm_head ({label}) ok")
+        print(f"Passed {test_name}")
     finally:
         transformer_model_me.destroy_model(handle)
         for fname in os.listdir(fixture_dir):
@@ -112,11 +111,11 @@ def _run_embed_lm_head_test(tie_word_embeddings: int) -> None:
 
 
 def test_embed_lm_head_untied():
-    _run_embed_lm_head_test(tie_word_embeddings=0)
+    _run_embed_lm_head_test(tie_word_embeddings=0, test_name="test_embed_lm_head_untied")
 
 
 def test_embed_lm_head_tied():
-    _run_embed_lm_head_test(tie_word_embeddings=1)
+    _run_embed_lm_head_test(tie_word_embeddings=1, test_name="test_embed_lm_head_tied")
 
 
 if __name__ == "__main__":

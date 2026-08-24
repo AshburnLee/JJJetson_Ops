@@ -101,7 +101,7 @@ def test_moe_pipeline_sota():
             f"max_abs={np.max(np.abs(y_gpu - y_ref))}"
         )
 
-    print("Passed")
+    print("Passed test_moe_pipeline_sota")
 
 
 if __name__ == "__main__":

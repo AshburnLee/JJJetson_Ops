@@ -68,7 +68,7 @@ def test_load_weights_from_fixture():
         got_w_q = transformer_model_me.read_layer_w_q_host(handle, 0, HIDDEN_SIZE, Q_DIM)
         if not np.array_equal(got_w_q, tensors["layer0.w_q"]):
             raise AssertionError("d_w_q mismatch after H2D")
-        print("load_weights_from_fixture ok")
+        print("Passed test_load_weights_from_fixture")
     finally:
         transformer_model_me.destroy_model(handle)
         for fname in os.listdir(fixture_dir):
@@ -86,7 +86,7 @@ def test_load_weights_immutable():
         try:
             transformer_model_me.load_weights_from_fixture(handle, fixture_dir)
         except RuntimeError:
-            print("double load rejected (immutable)")
+            print("Passed test_load_weights_immutable")
             return
         raise AssertionError("expected RuntimeError on second load")
     finally:

@@ -104,7 +104,7 @@ def test_generate_loop_binding_prefill_decode() -> None:
         assert len(out) == max_new
         assert all(isinstance(t, int) for t in out)
         assert inference_engine_me.kv_cache_len(engine) == len(prompt) + max_new - 1
-        print("generate_loop_binding_prefill_decode ok")
+        print("Passed test_generate_loop_binding_prefill_decode")
     finally:
         _cleanup(model, engine, fixture_dir)
 
@@ -121,7 +121,7 @@ def test_generate_loop_binding_eos_stop() -> None:
         assert len(out) == 1
         assert out[0] == eos_id
         assert inference_engine_me.kv_cache_len(engine) == len(prompt)
-        print("generate_loop_binding_eos_stop ok")
+        print("Passed test_generate_loop_binding_eos_stop")
     finally:
         _cleanup(model, engine, fixture_dir)
 
@@ -133,7 +133,7 @@ def test_sampler_top_k_host_in_top_set() -> None:
         for seed in (0, 42, 99):
             got = generate_loop_me.sampler_top_k_host(logits, top_k, seed)
             assert got in top_indices, f"top_k={top_k} seed={seed} got={got} top={top_indices}"
-    print("sampler_top_k_host_in_top_set ok")
+    print("Passed test_sampler_top_k_host_in_top_set")
 
 
 def test_sampler_top_k_host_reproducible() -> None:
@@ -141,13 +141,13 @@ def test_sampler_top_k_host_reproducible() -> None:
     a = generate_loop_me.sampler_top_k_host(logits, 3, 42)
     b = generate_loop_me.sampler_top_k_host(logits, 3, 42)
     assert a == b
-    print("sampler_top_k_host_reproducible ok")
+    print("Passed test_sampler_top_k_host_reproducible")
 
 
 def test_sampler_top_k_one_equals_greedy() -> None:
     logits = np.array([-1.0, 3.0, 2.0, 0.5], dtype=np.float32)
     assert generate_loop_me.sampler_top_k_host(logits, 1, 0) == 1
-    print("sampler_top_k_one_equals_greedy ok")
+    print("Passed test_sampler_top_k_one_equals_greedy")
 
 
 def test_generate_top_k_one_matches_default() -> None:
@@ -158,7 +158,7 @@ def test_generate_top_k_one_matches_default() -> None:
         inference_engine_me.reset_engine(engine)
         out_top1 = generate_loop_me.generate(engine, prompt, 3, top_k=1, seed=0)
         assert out_default == out_top1
-        print("generate_top_k_one_matches_default ok")
+        print("Passed test_generate_top_k_one_matches_default")
     finally:
         _cleanup(model, engine, fixture_dir)
 
@@ -172,7 +172,7 @@ def test_generate_top_k_reproducible() -> None:
         out_b = generate_loop_me.generate(engine, prompt, 5, top_k=50, seed=12345)
         assert out_a == out_b
         assert len(out_a) == 5
-        print("generate_top_k_reproducible ok")
+        print("Passed test_generate_top_k_reproducible")
     finally:
         _cleanup(model, engine, fixture_dir)
 
@@ -182,7 +182,7 @@ def test_sampler_temperature_default_equals_one() -> None:
     a = generate_loop_me.sampler_top_k_host(logits, 3, 42)
     b = generate_loop_me.sampler_top_k_host(logits, 3, 42, temperature=1.0)
     assert a == b
-    print("sampler_temperature_default_equals_one ok")
+    print("Passed test_sampler_temperature_default_equals_one")
 
 
 def test_sampler_temperature_greedy_ignores_temperature() -> None:
@@ -190,14 +190,14 @@ def test_sampler_temperature_greedy_ignores_temperature() -> None:
     low_t = generate_loop_me.sampler_top_k_host(logits, 1, 0, temperature=0.5)
     high_t = generate_loop_me.sampler_top_k_host(logits, 1, 0, temperature=2.0)
     assert low_t == high_t == 1
-    print("sampler_temperature_greedy_ignores_temperature ok")
+    print("Passed test_sampler_temperature_greedy_ignores_temperature")
 
 
 def test_sampler_temperature_low_near_argmax() -> None:
     logits = np.array([0.1, 2.0, 0.5, -1.0, 1.5, 0.0], dtype=np.float32)
     got = generate_loop_me.sampler_top_k_host(logits, 3, 42, temperature=0.01)
     assert got == 1
-    print("sampler_temperature_low_near_argmax ok")
+    print("Passed test_sampler_temperature_low_near_argmax")
 
 
 def test_generate_temperature_reproducible() -> None:
@@ -209,7 +209,7 @@ def test_generate_temperature_reproducible() -> None:
         out_b = generate_loop_me.generate(engine, prompt, 5, top_k=50, seed=999, temperature=0.8)
         assert out_a == out_b
         assert len(out_a) == 5
-        print("generate_temperature_reproducible ok")
+        print("Passed test_generate_temperature_reproducible")
     finally:
         _cleanup(model, engine, fixture_dir)
 
@@ -237,7 +237,7 @@ def test_sampler_top_p_host_in_nucleus() -> None:
         for seed in (0, 42, 99):
             got = generate_loop_me.sampler_top_p_host(logits, top_p, seed)
             assert got in allowed, f"top_p={top_p} seed={seed} got={got} nucleus={allowed}"
-    print("sampler_top_p_host_in_nucleus ok")
+    print("Passed test_sampler_top_p_host_in_nucleus")
 
 
 def test_sampler_top_p_host_reproducible() -> None:
@@ -245,14 +245,14 @@ def test_sampler_top_p_host_reproducible() -> None:
     a = generate_loop_me.sampler_top_p_host(logits, 0.9, 42, temperature=0.8)
     b = generate_loop_me.sampler_top_p_host(logits, 0.9, 42, temperature=0.8)
     assert a == b
-    print("sampler_top_p_host_reproducible ok")
+    print("Passed test_sampler_top_p_host_reproducible")
 
 
 def test_sampler_top_p_low_near_argmax() -> None:
     logits = np.array([0.1, 2.0, 0.5, -1.0, 1.5, 0.0], dtype=np.float32)
     got = generate_loop_me.sampler_top_p_host(logits, 0.01, 42, temperature=0.01)
     assert got == 1
-    print("sampler_top_p_low_near_argmax ok")
+    print("Passed test_sampler_top_p_low_near_argmax")
 
 
 def test_generate_top_p_reproducible() -> None:
@@ -268,7 +268,7 @@ def test_generate_top_p_reproducible() -> None:
         )
         assert out_a == out_b
         assert len(out_a) == 5
-        print("generate_top_p_reproducible ok")
+        print("Passed test_generate_top_p_reproducible")
     finally:
         _cleanup(model, engine, fixture_dir)
 
@@ -281,7 +281,7 @@ def test_generate_top_p_one_uses_top_k_path() -> None:
         inference_engine_me.reset_engine(engine)
         out_top_p1 = generate_loop_me.generate(engine, prompt, 3, top_k=50, seed=12345, top_p=1.0)
         assert out_top_k == out_top_p1
-        print("generate_top_p_one_uses_top_k_path ok")
+        print("Passed test_generate_top_p_one_uses_top_k_path")
     finally:
         _cleanup(model, engine, fixture_dir)
 

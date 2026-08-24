@@ -47,7 +47,7 @@ def test_transpose():
     print_col_major_3d(dst_me, "dst_me")
 
     ok = utils.compare_np_torch(dst_np, dst_torch, atol=1e-3, rtol=1e-3)
-    print("Passed" if ok else "Failed")
+    print("Passed test_transpose" if ok else "Failed test_transpose")
 
 
 if __name__ == "__main__":

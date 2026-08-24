@@ -99,9 +99,9 @@ def test_continue():
             print(f"Mismatch: {src_dtype} -> {dst_dtype}")
 
     if all_ok:
-        print("Passed")
+        print("Passed test_continue")
     else:
-        print("Failed")
+        print("Failed test_continue")
 
 
 def test_w_padding():
@@ -171,9 +171,9 @@ def test_w_padding():
 
     ok = torch.allclose(res_me, dst_ref, rtol=1e-5, atol=1e-5)
     if ok:
-        print("Passed")
+        print("Passed test_w_padding")
     else:
-        print("Failed")
+        print("Failed test_w_padding")
 
 
 def test_large_scale_padding_to_continue():
@@ -218,9 +218,9 @@ def test_large_scale_padding_to_continue():
 
     ok = np.allclose(dst_np, expected_dst, rtol=1e-5, atol=1e-5)
     if ok:
-        print("Passed")
+        print("Passed test_large_scale_padding_to_continue")
     else:
-        print("Failed")
+        print("Failed test_large_scale_padding_to_continue")
 
 
 if __name__ == "__main__":

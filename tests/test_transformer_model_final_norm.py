@@ -84,7 +84,7 @@ def test_final_norm_forward_host():
         ref = _rms_norm_ref(hidden_in, tensors["final_norm"], EPS)
         if not np.allclose(got, ref, rtol=1e-5, atol=1e-5):
             raise AssertionError("final_norm_forward_host mismatch")
-        print("final_norm_forward_host ok")
+        print("Passed test_final_norm_forward_host")
     finally:
         transformer_model_me.destroy_model(handle)
         for fname in os.listdir(fixture_dir):

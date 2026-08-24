@@ -46,7 +46,7 @@ def test_fa_one_pass():
         print("max abs diff exp_val:", np.max(np.abs(exp_val_out - exp_val_ref)))
         fc.assert_dst_close("one_pass_debug_ml", dst_dbg, dst_ref)
 
-    print("Passed")
+    print("Passed test_fa_one_pass")
 
 
 if __name__ == "__main__":

@@ -160,7 +160,7 @@ def test_gated_unary():
     dst_me = torch.from_numpy(dst_np)
     torch.testing.assert_close(dst_me, dst_ref, rtol=1e-3, atol=1e-3)
     assert dst_me.shape == dst_ref.shape
-    print("Passed")
+    print("Passed test_gated_unary")
 
 
 def demo_relu_gated_simple():

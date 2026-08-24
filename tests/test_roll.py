@@ -29,9 +29,9 @@ def test_roll():
     # 逐元素比较
     ok = utils.compare_np_torch(dst, dst_ref)
     if ok:
-        print("Passed")
+        print("Passed test_roll")
     else:
-        print("Failed")
+        print("Failed test_roll")
 
 
 if __name__ == "__main__":

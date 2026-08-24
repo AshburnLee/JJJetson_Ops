@@ -52,7 +52,7 @@ def test_layer_norm():
     ok_np = utils.compare_np_torch(output_np, torch.from_numpy(ref_np), atol=1e-5, rtol=1e-5)
     ok_torch = utils.compare_np_torch(output_np, torch.from_numpy(torch_out), atol=1e-5, rtol=1e-5)
     assert ok_np and ok_torch, "layer_norm output differs from reference"
-    print("Passed")
+    print("Passed test_layer_norm")
 
 
 if __name__ == "__main__":

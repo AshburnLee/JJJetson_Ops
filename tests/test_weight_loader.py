@@ -44,7 +44,7 @@ def _tiny_config() -> dict:
 def test_model_config_validate_ok():
     cfg = _tiny_config()
     assert weight_loader_me.validate_config(**cfg)
-    print("validate_config ok")
+    print("Passed test_model_config_validate_ok")
 
 
 def test_model_config_validate_rejects_bad_heads():
@@ -53,7 +53,7 @@ def test_model_config_validate_rejects_bad_heads():
     try:
         weight_loader_me.validate_config(**cfg)
     except ValueError:
-        print("validate_config rejects bad head_dim")
+        print("Passed test_model_config_validate_rejects_bad_heads")
         return
     raise AssertionError("expected ValueError for invalid head_dim")
 
@@ -81,7 +81,7 @@ def test_load_fixture_roundtrip():
             got = np.asarray(loaded["tensors"][name], dtype=np.float32)
             if not np.array_equal(got, expected):
                 raise AssertionError(f"tensor mismatch: {name}")
-        print("load_fixture roundtrip ok")
+        print("Passed test_load_fixture_roundtrip")
     finally:
         for fname in os.listdir(fixture_dir):
             os.remove(os.path.join(fixture_dir, fname))
@@ -103,7 +103,7 @@ def test_load_safetensors_read_format():
             got = np.asarray(loaded["tensors"][name], dtype=np.float32)
             if not np.array_equal(got, expected):
                 raise AssertionError(f"safetensors tensor mismatch: {name}")
-        print("load_safetensors_read_format ok")
+        print("Passed test_load_safetensors_read_format")
     finally:
         if os.path.exists(st_path):
             os.remove(st_path)
@@ -121,7 +121,7 @@ def test_load_safetensors_with_optional_config():
         cfg = loaded["config"]
         assert cfg["hidden_size"] == HIDDEN_SIZE
         assert cfg["num_layers"] == 1
-        print("load_safetensors_with_optional_config ok")
+        print("Passed test_load_safetensors_with_optional_config")
     finally:
         for fname in os.listdir(tmp_dir):
             os.remove(os.path.join(tmp_dir, fname))
@@ -183,32 +183,72 @@ def test_fixture_safetensors_roundtrip():
             elif got != value:
                 raise AssertionError(f"config mismatch: {key} got={got} expected={value}")
 
-        print("fixture_safetensors_roundtrip ok")
+        print("Passed test_fixture_safetensors_roundtrip")
     finally:
         for fname in os.listdir(fixture_dir):
             os.remove(os.path.join(fixture_dir, fname))
         os.rmdir(fixture_dir)
 
 
+# safetensors 步骤 3 单测：HF Llama 风格 key + 矩阵方向，经映射后应与内部 fixture 一致。
+#
+# Big picture 里它在哪？
+#   验证 hf_llama_weight_map / load_safetensors_hf_llama：HF 名（如 model.layers.0.self_attn.q_proj.weight）
+#   和 PyTorch Linear [out,in] 布局，能否还原成内部 layer0.w_q 等 + fixture row-major layout。
+#   基准是同一批 tensor 走 write_weight_fixture + load_fixture；不要求下载真 HF 模型。
+#   设计文档：doc/guide/hf_llama_weight_map.md
+#
+# 函数内部顺序（逐步）：
+#   例：_one_layer_tensors() 共 12 张（embed、layer0.w_q … lm_head、final_norm）
+#   step 1. 临时目录写 fixture + load_fixture 当基准
+#   step 2. internal_tensors_to_hf_llama_layout 转成 HF key/layout，write_safetensors_file 写出 model.safetensors
+#   step 3. load_safetensors_hf_llama 读回，与基准、原始 tensors 逐张对比
+#   step 4. finally 删临时目录
+#
+# 调用契约：model.safetensors 运行时生成，仓库里无需事先保存；须已 build weight_loader_me
 def test_hf_llama_safetensors_name_map():
-    """HF Llama 风格 safetensors key + layout -> load_safetensors_hf_llama 与内部 fixture 一致。"""
+    # step 0：1-layer 内部 tensor + 临时目录
     tensors = _one_layer_tensors()
     tmp_dir = tempfile.mkdtemp(prefix="jj_hf_llama_map_")
     # model.safetensors 不必事先放在仓库里；下面 write_safetensors_file 会按 HF 名/layout 运行时写出
     st_path = os.path.join(tmp_dir, "model.safetensors")
     try:
+        # step 1：fixture 基准
         write_weight_fixture(tmp_dir, _tiny_config(), tensors)
         baseline = weight_loader_me.load_fixture(tmp_dir)
 
+        # step 2：写 HF 风格 safetensors
         hf_tensors = internal_tensors_to_hf_llama_layout(tensors)
         write_safetensors_file(st_path, hf_tensors)
+
+        # step 3：映射读回并对比
         mapped = weight_loader_me.load_safetensors_hf_llama(st_path)
+
+        for label, loaded in (
+            ("baseline (load_fixture)", baseline),
+            ("mapped (load_safetensors_hf_llama)", mapped),
+        ):
+            print(f"--- {label} ---")
+            print(f"  num_tensors={loaded['num_tensors']}")
+            cfg = loaded["config"]
+            print(
+                f"  config: hidden_size={cfg['hidden_size']} num_layers={cfg['num_layers']} "
+                f"vocab_size={cfg['vocab_size']} tie_word_embeddings={cfg['tie_word_embeddings']}"
+            )
+            for name in sorted(loaded["tensors"].keys()):
+                arr = np.asarray(loaded["tensors"][name], dtype=np.float32)
+                flat = arr.ravel()
+                print(
+                    f"  {name}: shape={tuple(arr.shape)} "
+                    f"min={flat.min():.6f} max={flat.max():.6f} first8={flat[:8]}"
+                )
 
         assert mapped["num_tensors"] == len(tensors)
         _assert_loaded_tensors_match(tensors, mapped["tensors"], "load_safetensors_hf_llama")
         _assert_loaded_tensors_match(tensors, baseline["tensors"], "load_fixture baseline")
-        print("hf_llama_safetensors_name_map ok")
+        print("Passed test_hf_llama_safetensors_name_map")
     finally:
+        # step 4：清理临时文件
         for fname in os.listdir(tmp_dir):
             os.remove(os.path.join(tmp_dir, fname))
         os.rmdir(tmp_dir)

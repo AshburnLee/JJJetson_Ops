@@ -28,7 +28,7 @@ def test_rms_norm():
 
     ok = utils.compare_np_torch(output_np, torch.from_numpy(ref_np), atol=1e-5, rtol=1e-5)
     assert ok, "rms_norm output differs from reference"
-    print("Passed")
+    print("Passed test_rms_norm")
 
 
 if __name__ == "__main__":

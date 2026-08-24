@@ -13,9 +13,9 @@ def test_all():
 
     all_ok = check_all_tokens(input_np, output_np, pos_np)
     if all_ok:
-        print("Passed")
+        print("Passed test_all")
     else:
-        print("Failed")
+        print("Failed test_all")
     assert all_ok, "test_all: one or more (head, token) checks failed"
 
 
@@ -40,6 +40,8 @@ def test_rope_small():
     print("\noutput (per token):")
     for t in range(T):
         print(f"token {t} output:", output_np[:, 0, t, 0])
+
+    print("Passed test_rope_small")
 
 
 if __name__ == "__main__":

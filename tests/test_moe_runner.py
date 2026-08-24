@@ -106,7 +106,7 @@ def test_moe_runner():
     finally:
         moe_runner_me.destroy_runner(runner)
 
-    print("Passed")
+    print("Passed test_moe_runner")
 
 
 if __name__ == "__main__":

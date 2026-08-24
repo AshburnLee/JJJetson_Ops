@@ -11,7 +11,7 @@ def test_fa_double_buffer() -> None:
     dst = fc.run_launcher(fa_me.launch_fa_double_buffer, Q, K, V, 1.0)
     dst_ref = fc.fa_ref_dst_only(Q, K, V)
     fc.assert_dst_close(f"double_buffer seed={seed}", dst, dst_ref)
-    print("Passed")
+    print("Passed test_fa_double_buffer")
 
 
 if __name__ == "__main__":

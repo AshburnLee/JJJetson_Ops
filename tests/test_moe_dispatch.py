@@ -68,7 +68,7 @@ def test_moe_dispatch():
             t = int(source_token[p])
             assert np.allclose(permuted[p], x[t], rtol=1e-5, atol=1e-5)
 
-    print("Passed")
+    print("Passed test_moe_dispatch")
 
 
 if __name__ == "__main__":

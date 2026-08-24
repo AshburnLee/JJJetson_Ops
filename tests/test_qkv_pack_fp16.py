@@ -21,7 +21,7 @@ def pack_ref(src: np.ndarray, head_dim: int, num_tokens: int, num_heads: int) ->
     return out
 
 
-def _test_pack(num_heads: int, label: str) -> None:
+def _test_pack(num_heads: int, test_name: str) -> None:
     feat_dim = HEAD_DIM * num_heads
     np.random.seed(SEED + num_heads)
     src = np.asfortranarray(np.random.randn(feat_dim, NUM_TOKENS, 1, 1).astype(np.float32))
@@ -32,16 +32,16 @@ def _test_pack(num_heads: int, label: str) -> None:
     ref = pack_ref(src, HEAD_DIM, NUM_TOKENS, num_heads)
     dst_f16 = dst.view(np.float16).reshape(ref.shape, order="F")
     ok = utils.compare_np_torch(dst_f16, torch.from_numpy(ref.astype(np.float32)), atol=0, rtol=0)
-    assert ok, f"qkv_pack_fp16 {label} mismatch"
-    print(f"{label} Passed")
+    assert ok, f"{test_name} mismatch"
+    print(f"Passed {test_name}")
 
 
 def test_qkv_pack_fp16_q_heads() -> None:
-    _test_pack(NUM_Q_HEADS, "Q heads")
+    _test_pack(NUM_Q_HEADS, "test_qkv_pack_fp16_q_heads")
 
 
 def test_qkv_pack_fp16_kv_heads() -> None:
-    _test_pack(NUM_KV_HEADS, "KV heads")
+    _test_pack(NUM_KV_HEADS, "test_qkv_pack_fp16_kv_heads")
 
 
 if __name__ == "__main__":

@@ -57,7 +57,7 @@ def test_moe_top_k():
             print(f"  max weight diff: {diff.max().item():.2e}")
         assert weights_ok and ids_ok, "Test failed!"
 
-    print("\nAll tests passed")
+    print("Passed test_moe_top_k")
 
 
 def debug():
