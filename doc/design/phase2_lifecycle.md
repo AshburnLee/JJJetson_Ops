@@ -65,8 +65,8 @@ Phase 1 `TransformerRunner` 保留为单层测试基准；生产由 Engine 替�
 输入        文件路径（safetensors / gguf / fixture 目录）
 输出        ModelConfig 校验过的 tensor 表；供 Model H2D
 生命周期    无持久 GPU 对象；单次 load 调用栈
-API         weight_loader_load_fixture / weight_loader_load_safetensors；
-            weight_load_result_*
+API         weight_loader_load_fixture / weight_loader_load_safetensors /
+            weight_loader_load_safetensors_hf_llama；weight_load_result_*
 ~~~
 
 **骨架（已实现）**
@@ -77,11 +77,13 @@ API         weight_loader_load_fixture / weight_loader_load_safetensors；
 **实现细节**
 - [x] fixture 路径（`config.txt` + `manifest.txt` + `.f32`）；格式说明见 [`doc/guide/fixture_structure.md`](../guide/fixture_structure.md)
 - [ ] **safetensors**（分步；见 roadmap 模块 1）
-  - **定位**：safetensors 是真实模型权重的目标格式；当前完成了可读 safetensors + 可验证（步骤 1/2）。真实推理场景需从 HF safetensors + config 加载实际权重（步骤 3/4）
+  - **定位**：safetensors 是真实模型权重的目标格式；当前完成了可读 safetensors + 可验证（步骤 1/2）。真实推理场景需从 HF safetensors + config 加载实际权重（步骤 3/4）。Orin 显存不够全量 TinyLlama F32，用 1~2 layer 切片
   - [x] 1 — Loader 只读格式（解析 `.safetensors` -> `HostTensor`；`safetensors_reader.cpp`；F32 only）
   - [x] 2 — fixture roundtrip（fixture 导出 `.safetensors` + `test_fixture_safetensors_roundtrip`）
   - [x] 3 — HF 名映射（`hf_llama_weight_map.cpp` + `load_safetensors_hf_llama`；见 [`doc/guide/hf_llama_weight_map.md`](../guide/hf_llama_weight_map.md)）
-  - [ ] 4 — 真模型验证（TinyLlama / 小 Llama，或 1~2 layer 切片；非必须全量 7B）
+  - [ ] 4 — 真模型验证（TinyLlama / 1~2 layer 切片）
+        验收：`load_safetensors_hf_llama` 内部名；`config.json` 或 `config.txt` -> ModelConfig；
+        Model `load_weights_from_safetensors_hf_llama`；Engine 短 prefill
 - [ ] gguf（若目标模型需要）
 - [x] fixture 加载单测（`tests/test_weight_loader.py`）
 
@@ -301,7 +303,9 @@ cuda 算子保持 dumb、好单测：给指针就能跑，不依赖 `Transformer
 - [x] `ModelConfig` POD + 校验（`model_config.h`）
 - [x] `transformer_model_create` / `destroy`（骨架：GPU 权重容器 + RopeCosSinCache）
 - [x] `TransformerLayerWeights[N]` / `d_embed` / `d_lm_head` / `d_w_final_norm` 分配；tied 可选
-- [x] Loader host 权重 H2D 拷贝（`transformer_model_load_weights`；fixture 名 `layer{i}.w_*` / `embed` / `final_norm`）
+- [x] Loader host 权重 H2D 拷贝（`transformer_model_load_weights`；内部名 `layer{i}.w_*` / `embed` / `final_norm`）
+  - fixture：`load_weights_from_fixture`
+  - HF Llama safetensors：`load_weights_from_safetensors_hf_llama`（步骤 4）
 - [x] embed / lm_head device 算子（或 gather GEMM）+ `forward_host` 单测
 - [x] final norm device（`rms_norm_forward_device` 薄封装）+ `forward_host` 单测
 - [x] 2-layer fixture 权重 layout 单测（`tests/test_transformer_model_two_layer_fixture.py`）

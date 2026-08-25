@@ -1,11 +1,20 @@
 """InferenceEngine token forward: forward_token_host prefill/decode vs ref."""
 
+import os
+import tempfile
+
 import inference_engine_me
 import numpy as np
+import transformer_model_me
 
 import test_inference_engine_forward as tief
 import test_transformer_model_embed_lm_head as tme
 import test_transformer_runner as tr
+from fixture_utils import (
+    internal_tensors_to_hf_llama_layout,
+    write_hf_llama_config_json,
+    write_safetensors_file,
+)
 
 HIDDEN_SIZE = tief.HIDDEN_SIZE
 VOCAB_SIZE = tief.VOCAB_SIZE
@@ -103,7 +112,45 @@ def test_engine_forward_token_prefill_decode_and_reset() -> None:
         tief._cleanup(model, engine, fixture_dir)
 
 
+# safetensors 步骤 4：HF Llama safetensors 路径进 Engine，短 prefill 与内部 tensor ref 一致。
+#
+# 例：1-layer、T=13 个随机 token；不写 config.txt，只写 config.json，走 Model
+#     load_weights_from_safetensors_hf_llama。
+def test_engine_forward_token_hf_llama_safetensors() -> None:
+    np.random.seed(SEED + 3)
+    cfg = tief._config(1)
+    tensors = tief._fixture_tensors(1)
+    tmp_dir = tempfile.mkdtemp(prefix="jj_engine_hf_st_")
+    st_path = os.path.join(tmp_dir, "model.safetensors")
+    model = transformer_model_me.create_model(**cfg)
+    engine = None
+    try:
+        write_safetensors_file(st_path, internal_tensors_to_hf_llama_layout(tensors))
+        write_hf_llama_config_json(os.path.join(tmp_dir, "config.json"), cfg)
+        transformer_model_me.load_weights_from_safetensors_hf_llama(model, st_path)
+        engine = inference_engine_me.create_engine(model)
+
+        token_ids = np.random.randint(0, VOCAB_SIZE, size=NUM_PREFILL, dtype=np.int32)
+        logits_out = np.zeros((VOCAB_SIZE, NUM_PREFILL), dtype=np.float32, order="F")
+        inference_engine_me.forward_token_host(engine, NUM_PREFILL, 0, token_ids, logits_out)
+        assert inference_engine_me.kv_cache_len(engine) == NUM_PREFILL
+
+        kv = [tr.KvCacheRef(HEAD_DIM, MAX_SEQ_LEN, NUM_KV_HEADS)]
+        ref = _logits_ref(token_ids, tensors, 1, 0, kv)
+        max_abs = np.max(np.abs(logits_out - ref))
+        assert np.allclose(logits_out, ref, atol=1e-4, rtol=1e-4), f"max_abs_diff={max_abs:e}"
+        print("Passed test_engine_forward_token_hf_llama_safetensors")
+    finally:
+        if engine is not None:
+            inference_engine_me.destroy_engine(engine)
+        transformer_model_me.destroy_model(model)
+        for fname in os.listdir(tmp_dir):
+            os.remove(os.path.join(tmp_dir, fname))
+        os.rmdir(tmp_dir)
+
+
 if __name__ == "__main__":
     test_engine_forward_token_one_layer_prefill()
     test_engine_forward_token_two_layer_prefill()
     test_engine_forward_token_prefill_decode_and_reset()
+    test_engine_forward_token_hf_llama_safetensors()

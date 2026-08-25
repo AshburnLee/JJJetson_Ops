@@ -1,9 +1,13 @@
 #include "hf_llama_weight_map.h"
 
+#include "model_config.h"
+
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -240,6 +244,82 @@ static bool internal_name_seen(const std::vector<std::string> &names, const char
     return false;
 }
 
+static void skip_json_ws(const std::string &text, size_t *pos) {
+    while (*pos < text.size() && std::isspace(static_cast<unsigned char>(text[*pos])) != 0) {
+        ++(*pos);
+    }
+}
+
+// 在 JSON 文本里找 "key": ，返回冒号后面第一个非空白字符的下标；找不到返回 npos。
+static size_t find_json_colon_value(const std::string &text, const char *key) {
+    const std::string quoted = std::string("\"") + key + "\"";
+    size_t search = 0;
+    while (search < text.size()) {
+        const size_t hit = text.find(quoted, search);
+        if (hit == std::string::npos) {
+            return std::string::npos;
+        }
+        size_t pos = hit + quoted.size();
+        skip_json_ws(text, &pos);
+        if (pos < text.size() && text[pos] == ':') {
+            ++pos;
+            skip_json_ws(text, &pos);
+            return pos;
+        }
+        search = hit + 1;
+    }
+    return std::string::npos;
+}
+
+static int parse_json_int_at(const std::string &text, size_t pos, int *out) {
+    if (pos >= text.size()) {
+        return -1;
+    }
+    char *end = nullptr;
+    const long value = std::strtol(text.c_str() + pos, &end, 10);
+    if (end == text.c_str() + pos) {
+        return -1;
+    }
+    *out = static_cast<int>(value);
+    return 0;
+}
+
+static int parse_json_float_at(const std::string &text, size_t pos, float *out) {
+    if (pos >= text.size()) {
+        return -1;
+    }
+    char *end = nullptr;
+    const float value = std::strtof(text.c_str() + pos, &end);
+    if (end == text.c_str() + pos) {
+        return -1;
+    }
+    *out = value;
+    return 0;
+}
+
+static int parse_json_bool_at(const std::string &text, size_t pos, int *out) {
+    if (pos >= text.size()) {
+        return -1;
+    }
+    if (text.compare(pos, 4, "true") == 0) {
+        *out = 1;
+        return 0;
+    }
+    if (text.compare(pos, 5, "false") == 0) {
+        *out = 0;
+        return 0;
+    }
+    return parse_json_int_at(text, pos, out);
+}
+
+static int require_json_int(const std::string &text, const char *key, int *out) {
+    const size_t pos = find_json_colon_value(text, key);
+    if (pos == std::string::npos) {
+        return -1;
+    }
+    return parse_json_int_at(text, pos, out);
+}
+
 } // namespace
 
 extern "C" int hf_llama_map_weight_load_result(WeightLoadResult *result) {
@@ -310,5 +390,104 @@ extern "C" int hf_llama_map_weight_load_result(WeightLoadResult *result) {
     }
     result->tensors = out_array;
     result->num_tensors = static_cast<int>(mapped.size());
+    return 0;
+}
+
+// 读 HF Llama config.json -> ModelConfig。
+//
+// Big picture 里它在哪？
+//   weight_loader_load_safetensors 同目录没有 config.txt 时调用。字段名是 HF 的
+//   num_hidden_layers / num_attention_heads，不是内部 hidden_size 那套 11 项 key。
+//   图纸：doc/guide/hf_llama_weight_map.md 步骤 4。
+//
+// 函数内部顺序（逐步）：
+//   例：{"hidden_size":2048,"num_attention_heads":32,"num_hidden_layers":1,
+//        "intermediate_size":5632,"vocab_size":32000,"max_position_embeddings":2048,
+//        "rms_norm_eps":1e-5,"num_key_value_heads":4,"tie_word_embeddings":true}
+//   step 1. 整文件读成字符串
+//   step 2. 必填：hidden_size、intermediate_size、num_hidden_layers、num_attention_heads、
+//           vocab_size、max_position_embeddings、rms_norm_eps
+//   step 3. 选填：num_key_value_heads（缺则 = num_q_heads）、head_dim（缺则 2048/32=64）、
+//           rope_theta（缺则 10000）、tie_word_embeddings（缺则 0）
+//   step 4. model_config_validate
+//
+// 调用契约：path 须是普通文件；切片后 num_hidden_layers 必须等于 safetensors 里实际层数
+extern "C" int hf_llama_parse_config_json(const char *path, ModelConfig *cfg) {
+    if (path == nullptr || cfg == nullptr) {
+        return -1;
+    }
+
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        return -1;
+    }
+    std::ostringstream oss;
+    oss << in.rdbuf();
+    const std::string text = oss.str();
+    if (text.empty()) {
+        return -1;
+    }
+
+    ModelConfig parsed{};
+    if (require_json_int(text, "hidden_size", &parsed.hidden_size) != 0) {
+        return -1;
+    }
+    if (require_json_int(text, "intermediate_size", &parsed.intermediate_size) != 0) {
+        return -1;
+    }
+    if (require_json_int(text, "num_hidden_layers", &parsed.num_layers) != 0) {
+        return -1;
+    }
+    if (require_json_int(text, "num_attention_heads", &parsed.num_q_heads) != 0) {
+        return -1;
+    }
+    if (require_json_int(text, "vocab_size", &parsed.vocab_size) != 0) {
+        return -1;
+    }
+    if (require_json_int(text, "max_position_embeddings", &parsed.max_seq_len) != 0) {
+        return -1;
+    }
+
+    const size_t eps_pos = find_json_colon_value(text, "rms_norm_eps");
+    if (eps_pos == std::string::npos ||
+        parse_json_float_at(text, eps_pos, &parsed.rms_norm_epsilon) != 0) {
+        return -1;
+    }
+
+    const size_t kv_pos = find_json_colon_value(text, "num_key_value_heads");
+    if (kv_pos == std::string::npos) {
+        parsed.num_kv_heads = parsed.num_q_heads;
+    } else if (parse_json_int_at(text, kv_pos, &parsed.num_kv_heads) != 0) {
+        return -1;
+    }
+
+    const size_t head_pos = find_json_colon_value(text, "head_dim");
+    if (head_pos == std::string::npos) {
+        if (parsed.num_q_heads <= 0 || parsed.hidden_size % parsed.num_q_heads != 0) {
+            return -1;
+        }
+        parsed.head_dim = parsed.hidden_size / parsed.num_q_heads;
+    } else if (parse_json_int_at(text, head_pos, &parsed.head_dim) != 0) {
+        return -1;
+    }
+
+    const size_t rope_pos = find_json_colon_value(text, "rope_theta");
+    if (rope_pos == std::string::npos) {
+        parsed.freq_base = 10000.f;
+    } else if (parse_json_float_at(text, rope_pos, &parsed.freq_base) != 0) {
+        return -1;
+    }
+
+    const size_t tie_pos = find_json_colon_value(text, "tie_word_embeddings");
+    if (tie_pos == std::string::npos) {
+        parsed.tie_word_embeddings = 0;
+    } else if (parse_json_bool_at(text, tie_pos, &parsed.tie_word_embeddings) != 0) {
+        return -1;
+    }
+
+    if (model_config_validate(&parsed) != 0) {
+        return -1;
+    }
+    *cfg = parsed;
     return 0;
 }

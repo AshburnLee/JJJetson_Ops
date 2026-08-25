@@ -38,7 +38,7 @@ kv_cache_create(max_seq, head_dim, num_kv_heads, num_layers=1)
 ~~~
 
 - GPU 上预分配 K/V 各一块：`[head_dim, max_seq, num_kv_heads, 1]` float（col-major）。
-- 同时分配 Runner 级 **`d_k_fa_fp16` / `d_v_fa_fp16`**，长度按 `max_seq`（供 FA 读「历史 + 本步」）。
+- 同时分配 Runner 级 **`d_k_fa_fp16` / `d_v_fa_fp16`**，长度按 `max_seq`（供 FA 读 [历史 + 本步]）。
 - 此时 **`cache_len = 0`**，cache 里尚无有效 token。
 
 ### forward 一步（layer 内 + layer 外）
@@ -88,7 +88,7 @@ Decode (T=1, pos=[13]):
   advance →  cache_len = 14
 ~~~
 
-decode 时 **Q 的 T=1**，但 **K/V 的 FA 输入长度 = cache_len + T**，即「全部历史 + 当前 token」。
+decode 时 **Q 的 T=1**，但 **K/V 的 FA 输入长度 = cache_len + T**，即 [全部历史 + 当前 token]。
 
 ### 新 request / 新对话
 

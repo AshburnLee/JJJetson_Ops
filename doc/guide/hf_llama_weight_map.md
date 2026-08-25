@@ -47,8 +47,46 @@ model.layers.{i}.post_attention_layernorm.weight    layer{i}.w_post_attention_la
 
 `tests/test_weight_loader.py`：`test_hf_llama_safetensors_name_map` — 写 HF 风格 safetensors，`load_safetensors_hf_llama` 后与 `load_fixture` 逐 tensor 一致。
 
+`tests/test_transformer_model_load_weights.py`：`test_load_weights_from_safetensors_hf_llama` — 同一套 HF 文件走 Model H2D。
+
+`tests/test_inference_engine_forward_token.py`：`test_engine_forward_token_hf_llama_safetensors` — Engine 短 prefill，与内部 tensor ref 对比。
+
 ---
 
-## 下一步（步骤 4）
+切片前先读本地 checkpoint：`doc/guide/understand_safetensors.md`。
 
-TinyLlama / 1–2 layer HF safetensors + `config.txt`，接 `transformer_model_load_weights` 做真权重 e2e。
+## 步骤 4：真模型 / 切片
+
+Orin 全局显存大约 4GB。TinyLlama-1.1B 若转成 F32 全量约 4GB+，**放不下**。开发期只切 **1~2 层**。
+
+Loader 只读 **F32** safetensors。HF 仓库里常见 BF16/FP16，导出时必须先转成 F32。
+
+### 目录（导出脚本写出）
+
+~~~
+slice_dir/
+  model.safetensors     # HF key，F32；只含 layer0..N-1 + embed + norm + lm_head(若 untied)
+  config.txt            # 本引擎 11 项 ModelConfig；num_layers = 切片层数
+  config.json           # HF 字段名；num_hidden_layers = 切片层数（无 config.txt 时 Loader 读这个）
+~~~
+
+`config.txt` 优先于 `config.json`。
+
+### 导出
+
+先自己把完整 HF 目录下到本地（`config.json` + `model.safetensors`）。脚本只切片，不下载。
+
+~~~
+python tests/export_hf_llama_slice.py --src /path/to/TinyLlama --out-dir /path/to/slice --num-layers 2
+~~~
+
+`--src` 必须是本地目录。切片不要提交进 git。
+
+Orin 上建议加上 `--max-seq-len 256`（短 prefill 够用，KV 更小）。
+
+有切片后：
+
+~~~
+export JJ_HF_LLAMA_SLICE_DIR=/home/junhui/workspace/moe/JJJetson_Ops/tmp/tinyllama_2layer
+./run_tests.sh --suite test_hf_llama_real_slice.py
+~~~

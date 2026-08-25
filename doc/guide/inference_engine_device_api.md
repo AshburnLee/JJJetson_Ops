@@ -277,7 +277,16 @@ Engine 文档以 session 为主；上游只需知道：
 把 checkpoint 读成 host 上的 name->tensor，**不参与 GPU session**。
 
 **Model**（`transformer_model_me`）
-`create_model` 分配 GPU 权重容器；`load_weights_from_fixture` 做 H2D。
+`create_model` 分配 GPU 权重容器；H2D 有两条入口：
+
+~~~cpp
+load_weights_from_fixture(model, fixture_dir)
+    Loader: load_fixture -> transformer_model_load_weights
+
+load_weights_from_safetensors_hf_llama(model, path/to/model.safetensors)
+    Loader: load_safetensors_hf_llama -> transformer_model_load_weights
+    同目录需 config.txt，或 HF config.json（切片后 num_hidden_layers 须等于实际层数）
+~~~
 embed / lm_head / final_norm / 各层权重都挂在 Model 上；Engine forward 时按 `layer_idx` 向 Model 要指针。
 
 典型 ownership：`Loader` 输出 host 数据 -> `Model` 拥有 GPU 权重 -> `Engine` 引用 Model + 拥有 KV -> `GenerateLoop` 引用 Engine -> 销毁顺序反过来。

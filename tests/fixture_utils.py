@@ -169,3 +169,34 @@ def internal_tensors_to_hf_llama_layout(tensors: Mapping[str, np.ndarray]) -> di
         else:
             hf[key] = np.ascontiguousarray(data)
     return hf
+
+
+# 测试 helper：把内部 ModelConfig dict 写成同目录 config.txt（11 项 key=value）。
+def write_model_config_txt(dir_path: str, config: Mapping[str, float | int]) -> None:
+    os.makedirs(dir_path, exist_ok=True)
+    with open(os.path.join(dir_path, "config.txt"), "w", encoding="utf-8") as f:
+        for key, value in config.items():
+            f.write(f"{key}={value}\n")
+
+
+# 测试 helper：内部 ModelConfig dict -> HF Llama config.json 字段名。
+#
+# 例：config num_layers=1, num_q_heads=4, head_dim=32, hidden_size=128
+#     写出 num_hidden_layers=1, num_attention_heads=4, head_dim=32, hidden_size=128
+def write_hf_llama_config_json(path: str, config: Mapping[str, float | int]) -> None:
+    hf = {
+        "hidden_size": int(config["hidden_size"]),
+        "intermediate_size": int(config["intermediate_size"]),
+        "num_hidden_layers": int(config["num_layers"]),
+        "num_attention_heads": int(config["num_q_heads"]),
+        "num_key_value_heads": int(config["num_kv_heads"]),
+        "head_dim": int(config["head_dim"]),
+        "vocab_size": int(config["vocab_size"]),
+        "max_position_embeddings": int(config["max_seq_len"]),
+        "rope_theta": float(config["freq_base"]),
+        "rms_norm_eps": float(config["rms_norm_epsilon"]),
+        "tie_word_embeddings": bool(int(config["tie_word_embeddings"])),
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(hf, f, indent=2)
+        f.write("\n")

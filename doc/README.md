@@ -31,7 +31,8 @@ API 契约、算子 device API、集成数据流、walkthrough 示例。
 
 | [inference_engine_device_api.md](guide/inference_engine_device_api.md) | InferenceEngine C/Python API + prefill/decode + token/hidden 路径 |
 | [fixture_structure.md](guide/fixture_structure.md) | Weight fixture 目录：`config.txt` / `manifest.txt` / `.f32` 格式与 tensor 命名 |
-| [hf_llama_weight_map.md](guide/hf_llama_weight_map.md) | HF Llama safetensors 名映射 + 2D 转置（步骤 3） |
+| [hf_llama_weight_map.md](guide/hf_llama_weight_map.md) | HF Llama safetensors 名映射 + 2D 转置；步骤 4 切片 / Model 加载 |
+| [understand_safetensors.md](guide/understand_safetensors.md) | 读本地 HF checkpoint：config.json；safetensors 为何 safe、文件三截宏观切片 |
 | [generate_loop_device_api.md](guide/generate_loop_device_api.md) | GenerateLoop + Sampler（CUDA top-k/top-p/temperature） |
 | [sampler-temperature.md](guide/sampler-temperature.md) | Sampler temperature：控制什么、为何需要、与 top_k 关系 |
 | [sampler-top-p.md](guide/sampler-top-p.md) | Sampler top-p（nucleus）：在干什么、与 top_k/temperature 组合 |

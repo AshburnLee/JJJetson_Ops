@@ -9,6 +9,7 @@ import weight_loader_me
 from fixture_utils import (
     export_fixture_dir_to_safetensors,
     internal_tensors_to_hf_llama_layout,
+    write_hf_llama_config_json,
     write_safetensors_file,
     write_weight_fixture,
 )
@@ -254,6 +255,44 @@ def test_hf_llama_safetensors_name_map():
         os.rmdir(tmp_dir)
 
 
+# safetensors 步骤 4：没有 config.txt 时，同目录 HF config.json 应填出合法 ModelConfig。
+#
+# 例：config.json 有 hidden_size=128、num_attention_heads=4，故意不写 head_dim
+#     -> Loader 算出 head_dim=128/4=32，再和内部 fixture tensor 对比。
+def test_hf_llama_config_json():
+    import json
+
+    tensors = _one_layer_tensors()
+    tmp_dir = tempfile.mkdtemp(prefix="jj_hf_llama_cfg_json_")
+    st_path = os.path.join(tmp_dir, "model.safetensors")
+    json_path = os.path.join(tmp_dir, "config.json")
+    try:
+        write_safetensors_file(st_path, internal_tensors_to_hf_llama_layout(tensors))
+        write_hf_llama_config_json(json_path, _tiny_config())
+        with open(json_path, encoding="utf-8") as f:
+            hf_cfg = json.load(f)
+        del hf_cfg["head_dim"]
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(hf_cfg, f)
+
+        mapped = weight_loader_me.load_safetensors_hf_llama(st_path)
+        cfg = mapped["config"]
+        expected = _tiny_config()
+        for key, value in expected.items():
+            got = cfg[key]
+            if isinstance(value, float):
+                if not np.isclose(got, value, rtol=0.0, atol=1e-6):
+                    raise AssertionError(f"config.json mismatch: {key} got={got} expected={value}")
+            elif got != value:
+                raise AssertionError(f"config.json mismatch: {key} got={got} expected={value}")
+        _assert_loaded_tensors_match(tensors, mapped["tensors"], "config.json + hf_llama map")
+        print("Passed test_hf_llama_config_json")
+    finally:
+        for fname in os.listdir(tmp_dir):
+            os.remove(os.path.join(tmp_dir, fname))
+        os.rmdir(tmp_dir)
+
+
 if __name__ == "__main__":
     test_model_config_validate_ok()
     test_model_config_validate_rejects_bad_heads()
@@ -262,3 +301,4 @@ if __name__ == "__main__":
     test_load_safetensors_with_optional_config()
     test_fixture_safetensors_roundtrip()
     test_hf_llama_safetensors_name_map()
+    test_hf_llama_config_json()

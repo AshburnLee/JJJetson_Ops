@@ -355,16 +355,17 @@ int weight_loader_load_fixture(const char *path, WeightLoadResult *out) {
 //   Python weight_loader_me.load_safetensors -> [本函数] -> safetensors_read_file -> out->tensors[]
 //   -> 调用方 H2D（transformer_model_load_weights 等）；本函数不碰 GPU
 //   与 weight_loader_load_fixture 对照：fixture 读目录里 manifest + 分散 .f32；本函数读单文件二进制
-//   safetensors 本身不带 ModelConfig；config 靠同目录 config.txt 补（可选）
-//   图纸：doc/design/phase2_lifecycle.md §1（WeightLoader safetensors 步骤 1）
+//   safetensors 本身不带 ModelConfig；config 靠同目录 config.txt，没有则试 HF config.json
+//   图纸：doc/design/phase2_lifecycle.md §1（WeightLoader safetensors 步骤 1 / 4）
 //
 // 函数内部顺序（逐步）：
 //   例：path=/tmp/w.safetensors，内含 embed shape [2,2]、layer0.w_q shape [4]（F32）；
-//       同目录可有 config.txt（hidden_size=128 等 11 项）
+//       同目录可有 config.txt（hidden_size=128 等 11 项）或 HF config.json
 //   step 1. 清空 out，确认 path 是普通文件（不是目录）
 //   step 2. safetensors_read_file(path) -> out->tensors / out->num_tensors（名称为 JSON key，无 HF
-//   映射） step 3. 若 dirname(path)/config.txt 存在则 parse_config_file -> out->config；否则 config
-//   保持全 0 step 4. 返回 0；任一步失败则 destroy(out) 或留 out 空并返回 -1
+//   映射） step 3. 若 dirname(path)/config.txt 存在则 parse_config_file -> out->config；否则若有
+//   config.json 则 hf_llama_parse_config_json；都没有则 config 保持全 0 step 4. 返回
+//   0；任一步失败则 destroy(out) 或留 out 空并返回 -1
 //
 // 调用契约：out 由调用方事先可含旧数据，本函数会先 destroy；tensors 内存归 out，须
 // weight_load_result_destroy
@@ -392,11 +393,19 @@ int weight_loader_load_safetensors(const char *path, WeightLoadResult *out) {
     out->tensors = tensors;
     out->num_tensors = num_tensors;
 
-    // step 3：同目录可选 config.txt（有则必填齐 11 项）
-    const fs::path config_path = file_path.parent_path() / "config.txt";
-    if (fs::is_regular_file(config_path)) {
+    // step 3：同目录可选 config.txt（有则必填齐 11 项）；没有则试 HF config.json
+    const fs::path config_txt = file_path.parent_path() / "config.txt";
+    const fs::path config_json = file_path.parent_path() / "config.json";
+    if (fs::is_regular_file(config_txt)) {
         ModelConfig cfg{};
-        if (parse_config_file(config_path, &cfg) != 0) {
+        if (parse_config_file(config_txt, &cfg) != 0) {
+            weight_load_result_destroy(out);
+            return -1;
+        }
+        out->config = cfg;
+    } else if (fs::is_regular_file(config_json)) {
+        ModelConfig cfg{};
+        if (hf_llama_parse_config_json(config_json.c_str(), &cfg) != 0) {
             weight_load_result_destroy(out);
             return -1;
         }

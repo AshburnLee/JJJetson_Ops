@@ -2,6 +2,7 @@ build/
 playground/
 profiling/
 python/
+models/
 .ruff_cache/
 .vscode/
 __pycache__/

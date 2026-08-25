@@ -95,6 +95,27 @@ PYBIND11_MODULE(transformer_model_me, m) {
         },
         py::arg("model_handle"), py::arg("fixture_path"));
 
+    // load_safetensors_hf_llama（改名 + 2D 转置 + 读 config）再 H2D；与 fixture 入口共用
+    // transformer_model_load_weights。path 是 .safetensors 文件，不是目录。
+    m.def(
+        "load_weights_from_safetensors_hf_llama",
+        [](uintptr_t model_handle, const std::string &safetensors_path) {
+            TransformerModel *model = reinterpret_cast<TransformerModel *>(model_handle);
+            WeightLoadResult loaded{};
+            weight_load_result_init(&loaded);
+            if (weight_loader_load_safetensors_hf_llama(safetensors_path.c_str(), &loaded) != 0) {
+                throw std::runtime_error("weight_loader_load_safetensors_hf_llama failed");
+            }
+            if (transformer_model_load_weights(model, &loaded) != 0) {
+                weight_load_result_destroy(&loaded);
+                throw std::runtime_error("transformer_model_load_weights failed");
+            }
+            weight_load_result_destroy(&loaded);
+        },
+        py::arg("model_handle"), py::arg("safetensors_path"),
+        "Test wrapper: host I/O around load_safetensors_hf_llama then "
+        "transformer_model_load_weights");
+
     auto read_device_floats = [](const float *d_ptr, const std::vector<ssize_t> &shape) {
         if (d_ptr == nullptr) {
             throw std::runtime_error("null device pointer");

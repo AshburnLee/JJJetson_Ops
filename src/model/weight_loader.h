@@ -42,7 +42,8 @@ int weight_loader_load_fixture(const char *path, WeightLoadResult *out);
 
 // path 是一个 .safetensors 文件。读 8 字节头长 + JSON，把每个 F32 tensor 拷到 out->tensors[]
 // （名字用 JSON 里的 key，例如 embed、layer0.w_q，不会改成 HF 原名）。
-// 若同目录还有 config.txt，顺带写入 out->config；没有则 config 保持全 0。
+// 同目录 config：优先 config.txt（本引擎 11 项）；没有则试 HF config.json
+// （hf_llama_parse_config_json）；都没有则 config 保持全 0。
 // safetensors 是真实模型权重的目标格式；当前完成了可读 safetensors + 可验证（步骤 1/2，单测为主）。
 // 真实推理场景需从 HF safetensors + config 加载实际权重（步骤 3/4 名映射后接 Model H2D；见 roadmap
 // 模块 1）。

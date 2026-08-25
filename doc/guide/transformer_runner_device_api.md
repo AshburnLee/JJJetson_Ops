@@ -216,7 +216,7 @@ Python handle 无 RAII，必须配对 `destroy_runner`。
 
 ## KV cache：float → fp16 layout 索引
 
-实现：`src/cuda/kv_cache.cu`。三块 buffer 角色见 `lifecycle.md`「两块 K/V」表。
+实现：`src/cuda/kv_cache.cu`。三块 buffer 角色见 `lifecycle.md` [两块 K/V] 表。
 
 ### 1. append：workspace flat → cache
 

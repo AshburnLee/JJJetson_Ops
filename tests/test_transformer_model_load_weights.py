@@ -6,7 +6,12 @@ import tempfile
 import numpy as np
 import transformer_model_me
 
-from fixture_utils import write_weight_fixture
+from fixture_utils import (
+    internal_tensors_to_hf_llama_layout,
+    write_hf_llama_config_json,
+    write_safetensors_file,
+    write_weight_fixture,
+)
 
 HIDDEN_SIZE = 128
 INTERMEDIATE_SIZE = 256
@@ -96,6 +101,32 @@ def test_load_weights_immutable():
         os.rmdir(fixture_dir)
 
 
+# safetensors 步骤 4：HF 风格 safetensors + config.json -> Model H2D，与内部 tensor 一致。
+def test_load_weights_from_safetensors_hf_llama():
+    tensors = _fixture_tensors()
+    cfg = _tiny_config()
+    tmp_dir = tempfile.mkdtemp(prefix="jj_model_st_hf_")
+    st_path = os.path.join(tmp_dir, "model.safetensors")
+    handle = transformer_model_me.create_model(**cfg)
+    try:
+        write_safetensors_file(st_path, internal_tensors_to_hf_llama_layout(tensors))
+        write_hf_llama_config_json(os.path.join(tmp_dir, "config.json"), cfg)
+        assert not transformer_model_me.is_weights_loaded(handle)
+        transformer_model_me.load_weights_from_safetensors_hf_llama(handle, st_path)
+        assert transformer_model_me.is_weights_loaded(handle)
+
+        got_w_q = transformer_model_me.read_layer_w_q_host(handle, 0, HIDDEN_SIZE, Q_DIM)
+        if not np.array_equal(got_w_q, tensors["layer0.w_q"]):
+            raise AssertionError("d_w_q mismatch after safetensors H2D")
+        print("Passed test_load_weights_from_safetensors_hf_llama")
+    finally:
+        transformer_model_me.destroy_model(handle)
+        for fname in os.listdir(tmp_dir):
+            os.remove(os.path.join(tmp_dir, fname))
+        os.rmdir(tmp_dir)
+
+
 if __name__ == "__main__":
     test_load_weights_from_fixture()
     test_load_weights_immutable()
+    test_load_weights_from_safetensors_hf_llama()
