@@ -60,7 +60,7 @@ intermediate_size      ->   intermediate_size
 num_hidden_layers      ->   num_layers   （切片时改成 N，例如 2）
 ~~~
 
-切片脚本 `tests/export_hf_llama_slice.py` 读的就是这些字段，再写出切片目录里的 `config.txt`。
+切片脚本 `scripts/export_hf_llama_slice.py` 读的就是这些字段，再写出切片目录里的 `config.txt`。
 
 ---
 
@@ -182,7 +182,7 @@ bos_token_id              ->   （不进 ModelConfig；tokenizer / 调用方使�
 eos_token_id              ->   GenerateLoop 的 eos_token_id 参数
 ~~~
 
-这份 `tmp/hf_src/...` 只有 `config.json` + `model.safetensors`，没有 `tokenizer.json`。真权重测试（`test_hf_llama_real_slice.py`）用的是手写 id `[1, 2, 3, 4]`，不走分词器。
+这份 `tmp/hf_src/...` 只有 `config.json` + `model.safetensors`，没有 `tokenizer.json`。真权重冒烟测试（`test_hf_llama_real_slice_smoke.py`）用的是手写 id `[1, 2, 3, 4]`，不走分词器。
 
 ---
 
@@ -310,7 +310,7 @@ Hugging Face 后来把 safetensors 做成默认权重格式，就是因为这点
 
 这份 TinyLlama 实测：header 长度 **23088 字节（约 22.5KB）**，登记了 **201** 个 tensor。22KB 用 Python 读 JSON 就行，和打开 2GB 完全是两件事。
 
-切片脚本 `export_hf_llama_slice.py` 也是这套：先扫 header 决定留哪些名字，再按偏移去文件里抠那几块，转成 F32 写出去。峰值内存大约一张 embed，不是整模。
+切片脚本 `scripts/export_hf_llama_slice.py` 也是这套：先扫 header 决定留哪些名字，再按偏移去文件里抠那几块，转成 F32 写出去。峰值内存大约一张 embed，不是整模。
 
 自己看 header（在 `JJJetson_Ops` 下）：
 

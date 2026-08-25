@@ -1,17 +1,22 @@
 """从本地 HF Llama checkpoint 导出 1~2 layer F32 safetensors 切片（safetensors 步骤 4）。
 
-本机 Orin 内存/显存大约 4GB，不能把 TinyLlama 全量读进 RAM。本脚本只做切片：
+本机 Orin 内存/显存大约 4GB，不能把 TinyLlama 全量读进 RAM。本脚本只做切片，不是单测：
   1. --src 必须是已经下好的本地 HF 目录（含 config.json + .safetensors）
   2. 按 tensor 流式读出前 N 层，转 F32 后立刻写入切片文件（峰值大约一张 embed，约 256MB）
   3. GPU 只加载切片；下载请自己完成，脚本不联网
 
-用法：
+在 JJJetson_Ops 目录执行：
 
-    python tests/export_hf_llama_slice.py \\
-        --src tmp/hf_src/TinyLlama__TinyLlama-1.1B-Chat-v1.0 \\
-        --out-dir tmp/tinyllama_2layer \\
+    python scripts/export_hf_llama_slice.py \\
+        --src models/hf_src/TinyLlama__TinyLlama-1.1B-Chat-v1.0 \\
+        --out-dir models/tinyllama_2layer \\
         --num-layers 2 \\
         --max-seq-len 256
+
+--out-dir 写出三份文件（不覆盖 --src）：
+    model.safetensors   # 只含前 N 层 + embed / norm / lm_head（若 untied），F32
+    config.txt          # 引擎 11 项 ModelConfig；num_layers = N
+    config.json         # HF 字段名；num_hidden_layers = N
 """
 
 from __future__ import annotations
@@ -25,11 +30,13 @@ from collections.abc import Iterator
 
 import numpy as np
 
-_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+# 本文件在 scripts/，config 写出函数在 tests/fixture_utils.py。
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_TESTS_DIR = os.path.join(_ROOT_DIR, "tests")
 if _TESTS_DIR not in sys.path:
     sys.path.insert(0, _TESTS_DIR)
 
-from fixture_utils import write_hf_llama_config_json, write_model_config_txt
+from fixture_utils import write_hf_llama_config_json, write_model_config_txt  # noqa: E402
 
 _KEEP_EXACT = frozenset(
     {
@@ -53,7 +60,7 @@ def _keep_hf_key(name: str, num_layers: int, keep_lm_head: bool) -> bool:
 
 
 def _require_local_src_dir(src: str) -> str:
-    # 例：src 是 tmp/hf_src/TinyLlama...，里面已有 config.json 和 model.safetensors。
+    # 例：src 是 models/hf_src/TinyLlama...，里面已有 config.json 和 model.safetensors。
     if not os.path.isdir(src):
         raise SystemExit(f"--src must be an existing local HF directory, got {src!r}")
     return os.path.abspath(src)
@@ -240,9 +247,7 @@ def main() -> None:
     print(
         f"kept {len(names)} tensors, wrote {st_path} ({nbytes} bytes), num_layers={args.num_layers}"
     )
-    print(
-        f"set JJ_HF_LLAMA_SLICE_DIR={os.path.abspath(args.out_dir)} to run real-slice Engine test"
-    )
+    print(f"set JJ_HF_LLAMA_SLICE_DIR={os.path.abspath(args.out_dir)} to run real-slice smoke test")
 
 
 if __name__ == "__main__":

@@ -74,19 +74,49 @@ slice_dir/
 
 ### 导出
 
-先自己把完整 HF 目录下到本地（`config.json` + `model.safetensors`）。脚本只切片，不下载。
+先自己把完整 HF 目录下到本地（`config.json` + `model.safetensors`）。脚本只切片，不下载。在 `JJJetson_Ops` 目录：
 
 ~~~
-python tests/export_hf_llama_slice.py --src /path/to/TinyLlama --out-dir /path/to/slice --num-layers 2
+python scripts/export_hf_llama_slice.py \
+  --src models/hf_src/TinyLlama__TinyLlama-1.1B-Chat-v1.0 \
+  --out-dir models/tinyllama_2layer \
+  --num-layers 2 \
+  --max-seq-len 256
 ~~~
 
-`--src` 必须是本地目录。切片不要提交进 git。
+`--src` 必须是本地目录。`models/` 已在 `.gitignore`，切片不要提交进 git。`--max-seq-len 256`：Orin 上短 prefill 够用，KV 更小。
 
-Orin 上建议加上 `--max-seq-len 256`（短 prefill 够用，KV 更小）。
+一次真实运行（TinyLlama-1.1B-Chat，切 2 层）。日志里的 `dtype=BF16` 是**源文件**；写出的切片已转成 F32。21 个 tensor = layer0 的 9 块 + layer1 的 9 块 + embed + norm + lm_head：
+
+~~~
+  slice lm_head.weight shape=[32000, 2048] dtype=BF16
+  slice model.embed_tokens.weight shape=[32000, 2048] dtype=BF16
+  slice model.layers.0.input_layernorm.weight shape=[2048] dtype=BF16
+  slice model.layers.0.mlp.down_proj.weight shape=[2048, 5632] dtype=BF16
+  slice model.layers.0.mlp.gate_proj.weight shape=[5632, 2048] dtype=BF16
+  slice model.layers.0.mlp.up_proj.weight shape=[5632, 2048] dtype=BF16
+  slice model.layers.0.post_attention_layernorm.weight shape=[2048] dtype=BF16
+  slice model.layers.0.self_attn.k_proj.weight shape=[256, 2048] dtype=BF16
+  slice model.layers.0.self_attn.o_proj.weight shape=[2048, 2048] dtype=BF16
+  slice model.layers.0.self_attn.q_proj.weight shape=[2048, 2048] dtype=BF16
+  slice model.layers.0.self_attn.v_proj.weight shape=[256, 2048] dtype=BF16
+  slice model.layers.1.input_layernorm.weight shape=[2048] dtype=BF16
+  slice model.layers.1.mlp.down_proj.weight shape=[2048, 5632] dtype=BF16
+  slice model.layers.1.mlp.gate_proj.weight shape=[5632, 2048] dtype=BF16
+  slice model.layers.1.mlp.up_proj.weight shape=[5632, 2048] dtype=BF16
+  slice model.layers.1.post_attention_layernorm.weight shape=[2048] dtype=BF16
+  slice model.layers.1.self_attn.k_proj.weight shape=[256, 2048] dtype=BF16
+  slice model.layers.1.self_attn.o_proj.weight shape=[2048, 2048] dtype=BF16
+  slice model.layers.1.self_attn.q_proj.weight shape=[2048, 2048] dtype=BF16
+  slice model.layers.1.self_attn.v_proj.weight shape=[256, 2048] dtype=BF16
+  slice model.norm.weight shape=[2048] dtype=BF16
+kept 21 tensors, wrote models/tinyllama_2layer/model.safetensors (876652798 bytes), num_layers=2
+set JJ_HF_LLAMA_SLICE_DIR=.../models/tinyllama_2layer to run real-slice Engine test
+~~~
 
 有切片后：
 
 ~~~
-export JJ_HF_LLAMA_SLICE_DIR=/home/junhui/workspace/moe/JJJetson_Ops/tmp/tinyllama_2layer
-./run_tests.sh --suite test_hf_llama_real_slice.py
+export JJ_HF_LLAMA_SLICE_DIR=/home/junhui/workspace/moe/JJJetson_Ops/models/tinyllama_2layer
+./run_tests.sh --suite test_hf_llama_real_slice_smoke.py
 ~~~
