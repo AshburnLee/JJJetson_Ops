@@ -38,16 +38,13 @@ void fa_double_buffer_launch(cudaStream_t stream, const FaDoubleBufferShape *sha
     const fa_db::FaDoubleBufferKernelParams kparams = fa_make_kernel_params(shape, scale);
     switch (shape->head_dim) {
     case 32:
-        fa_db::fa_double_buffer_launch_templated<32>(stream, d_q, d_k, d_v, d_dst, kparams,
-                                                     shape->num_kv_heads);
+        fa_db::fa_double_buffer_launch_templated<32>(stream, d_q, d_k, d_v, d_dst, kparams);
         break;
     case 64:
-        fa_db::fa_double_buffer_launch_templated<64>(stream, d_q, d_k, d_v, d_dst, kparams,
-                                                     shape->num_kv_heads);
+        fa_db::fa_double_buffer_launch_templated<64>(stream, d_q, d_k, d_v, d_dst, kparams);
         break;
     case 128:
-        fa_db::fa_double_buffer_launch_templated<128>(stream, d_q, d_k, d_v, d_dst, kparams,
-                                                      shape->num_kv_heads);
+        fa_db::fa_double_buffer_launch_templated<128>(stream, d_q, d_k, d_v, d_dst, kparams);
         break;
     default:
         break;
@@ -82,16 +79,25 @@ extern "C" int fa_double_buffer_validate_shape(const FaDoubleBufferShape *shape)
                      shape->num_kv_tokens);
         return -1;
     }
-    if (shape->num_q_heads <= 0 || shape->num_kv_heads <= 0) {
+    if (shape->num_kv_heads <= 0 || shape->num_q_heads <= 0) {
         std::fprintf(stderr, "fa_double_buffer_validate_shape: invalid head counts q=%d kv=%d\n",
                      shape->num_q_heads, shape->num_kv_heads);
         return -1;
     }
-    if (shape->num_q_heads != shape->num_kv_heads * 2) {
+    if (shape->num_q_heads % shape->num_kv_heads != 0) {
         std::fprintf(stderr,
-                     "fa_double_buffer_validate_shape: require num_q_heads==2*num_kv_heads "
-                     "(got q=%d kv=%d)\n",
+                     "fa_double_buffer_validate_shape: num_q_heads must be multiple of "
+                     "num_kv_heads (got q=%d kv=%d)\n",
                      shape->num_q_heads, shape->num_kv_heads);
+        return -1;
+    }
+    // 每 block 固定 2 个 Q，分组 g=q/kv 须为偶数。g=2 即原来的 2:1。
+    const int gqa_g = shape->num_q_heads / shape->num_kv_heads;
+    if (gqa_g < 2 || (gqa_g % 2) != 0) {
+        std::fprintf(stderr,
+                     "fa_double_buffer_validate_shape: GQA group g=q/kv must be even and >=2 "
+                     "(got q=%d kv=%d g=%d)\n",
+                     shape->num_q_heads, shape->num_kv_heads, gqa_g);
         return -1;
     }
     return 0;

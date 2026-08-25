@@ -110,6 +110,20 @@ __global__ void __launch_bounds__(256, 4)
     const int num_q_tokens = params.num_q_tokens;
     const int num_kv_tokens = params.num_kv_tokens;
     const int num_q_heads = params.num_q_heads;
+    const int num_kv_heads = params.num_kv_heads;
+    // WMMA、softmax、双缓冲这些 完全不知道 g。它们只看到：shared 里两行 Q、一份 K/V tile
+    // 所以该 kernel 结构几乎没变
+
+    // 每 block 仍算 2 个 Q。g=q/kv 为偶数。
+    // 例 g=2、blockIdx.x=3 -> pairs=1, kv_h=3, pair=0, q0=6, q1=7（与旧 kv_h*2 相同）
+    // 例 g=8、blockIdx.x=5 -> pairs=4, kv_h=1, pair=1, q0=10, q1=11（KV 头 1 的第二对 Q）
+    const int g = num_q_heads / num_kv_heads;
+    const int pairs = g / 2;
+    const int kv_h = static_cast<int>(blockIdx.x) / pairs;
+    const int pair = static_cast<int>(blockIdx.x) % pairs;
+    const int q0 = kv_h * g + pair * 2;
+    const int q1 = q0 + 1;
+
     const int rows_two_heads = num_q_tokens * 2;
     const int loop_kv = (num_kv_tokens + kKvTokenTile - 1) / kKvTokenTile;
 
@@ -127,10 +141,6 @@ __global__ void __launch_bounds__(256, 4)
     __shared__ float m[kWmmaRows];
     __shared__ float l[kWmmaRows];
     __shared__ alignas(16) float pv_acc[kWmmaRows][C::kAccStride];
-
-    const int kv_h = blockIdx.x;
-    const int q0 = kv_h * 2;
-    const int q1 = q0 + 1;
 
     const half *q0_base = Q + static_cast<size_t>(q0) * num_q_tokens * HEAD_DIM;
     const half *q1_base = Q + static_cast<size_t>(q1) * num_q_tokens * HEAD_DIM;
@@ -315,8 +325,7 @@ __global__ void __launch_bounds__(256, 4)
 template <int HEAD_DIM>
 static void fa_double_buffer_launch_templated(cudaStream_t stream, const half *d_q, const half *d_k,
                                               const half *d_v, float *d_dst,
-                                              const FaDoubleBufferKernelParams &kparams,
-                                              int num_kv_heads) {
+                                              const FaDoubleBufferKernelParams &kparams) {
     cudaFuncAttributes attr{};
     CUDA_CHECK(cudaFuncGetAttributes(&attr, (const void *)fa_kernel_double_buffer<HEAD_DIM>));
     const size_t static_shmem = static_cast<size_t>(attr.sharedSizeBytes);
@@ -340,7 +349,9 @@ static void fa_double_buffer_launch_templated(cudaStream_t stream, const half *d
     }
 
     dim3 threads(32, 8, 1);
-    dim3 blocks(num_kv_heads, 1, 1);
+    // 每 block 2 个 Q；g=2 时 n_blocks==num_kv_heads，与旧 grid 相同。
+    const int n_blocks = kparams.num_q_heads / 2;
+    dim3 blocks(n_blocks, 1, 1);
     fa_kernel_double_buffer<HEAD_DIM>
         <<<blocks, threads, 0, stream>>>(d_q, d_k, d_v, d_dst, kparams);
     LAUNCH_CHECK();

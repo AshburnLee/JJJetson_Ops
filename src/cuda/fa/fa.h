@@ -17,6 +17,7 @@ extern "C" {
 // layout (col-major): Q [head_dim, num_q_tokens, num_q_heads, 1]
 //                     K/V [head_dim, num_kv_tokens, num_kv_heads, 1]
 //                     dst [head_dim, num_q_tokens, num_q_heads, 1] fp32
+// GQA：g = num_q_heads/num_kv_heads 须为偶数且 >=2；每 block 2 个 Q。g=2 与旧 2:1 相同。
 // Q/K/V: fp16 device; stream 为 void*，实现处 static_cast 为 cudaStream_t
 typedef struct FaDoubleBufferShape {
     int head_dim;

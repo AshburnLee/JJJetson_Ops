@@ -62,7 +62,11 @@ def fa_ref(Q: np.ndarray, K: np.ndarray, V: np.ndarray, scale: float = 1.0) -> t
 
     assert K.shape == (head_dim, tok_kv, kv_heads, 1)
     assert V.shape == (head_dim, tok_kv, kv_heads, 1)
-    assert q_heads == kv_heads * 2
+    assert q_heads % kv_heads == 0
+    gqa_g = q_heads // kv_heads
+    assert gqa_g >= 2 and gqa_g % 2 == 0
+    pairs = gqa_g // 2
+    n_blocks = q_heads // 2
 
     dst = np.zeros(dst_shape, dtype=np.float32)
     m_all = np.zeros((kv_heads, rows_two), dtype=np.float32)
@@ -73,9 +77,11 @@ def fa_ref(Q: np.ndarray, K: np.ndarray, V: np.ndarray, scale: float = 1.0) -> t
     scale_new_all = np.zeros((kv_heads, loop_kv, rows_two), dtype=np.float32)
     exp_val_all = np.zeros((kv_heads, loop_kv, rows_two, kv_tile), dtype=np.float32)
 
-    for kv_head in range(kv_heads):
-        q0 = kv_head * 2 + 0
-        q1 = kv_head * 2 + 1
+    for bid in range(n_blocks):
+        kv_head = bid // pairs
+        pair = bid % pairs
+        q0 = kv_head * gqa_g + pair * 2
+        q1 = q0 + 1
         m = np.full((rows_two,), -np.inf, dtype=np.float32)
         ell = np.zeros((rows_two,), dtype=np.float32)
 
@@ -188,8 +194,10 @@ def random_fa_inputs_for_shape(
     kv_heads: int,
     seed: int = 24,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """列主序随机 Q/K/V，shape 由参数指定（q_heads 须为 2*kv_heads）。"""
-    assert q_heads == kv_heads * 2
+    """列主序随机 Q/K/V，shape 由参数指定（q_heads/kv_heads 须为偶数 GQA 分组 g>=2）。"""
+    assert q_heads % kv_heads == 0
+    gqa_g = q_heads // kv_heads
+    assert gqa_g >= 2 and gqa_g % 2 == 0
     np.random.seed(seed)
     q_shape = (head_dim, tok_q, q_heads, 1)
     kv_shape = (head_dim, tok_kv, kv_heads, 1)
