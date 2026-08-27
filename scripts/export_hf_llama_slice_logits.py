@@ -119,7 +119,7 @@ def main() -> None:
     parser.add_argument(
         "--out",
         default="",
-        help="output .npy path; default <slice-dir>/ref_prefill_logits_t1234.npy",
+        help="output .npy path; default <slice-dir>/ref_prefill_logits_t<ids>.npy",
     )
     parser.add_argument(
         "--tokens",
@@ -147,7 +147,9 @@ def main() -> None:
         if tid < 0 or tid >= vocab:
             raise SystemExit(f"token id {tid} out of vocab_size={vocab}")
 
-    out_path = args.out.strip() or os.path.join(slice_dir, "ref_prefill_logits_t1234.npy")
+    # 例：tokens=[1] -> ref_prefill_logits_t1.npy；[1,2,3,4] -> ..._t1234.npy
+    token_tag = "".join(str(t) for t in token_ids)
+    out_path = args.out.strip() or os.path.join(slice_dir, f"ref_prefill_logits_t{token_tag}.npy")
     out_path = os.path.abspath(out_path)
 
     config = LlamaConfig.from_dict(cfg_dict)
@@ -166,7 +168,7 @@ def main() -> None:
 
     ids = torch.tensor([token_ids], dtype=torch.long, device="cpu")
     with torch.no_grad():
-        out = model(input_ids=ids, use_cache=False)
+        out = model(input_ids=ids, use_cache=False, output_hidden_states=True)
     # HF: [batch=1, T, vocab] -> [T, vocab]
     hf_btv = out.logits[0].detach().cpu().numpy()
     engine_logits = _hf_logits_to_engine_layout(hf_btv)
@@ -183,6 +185,46 @@ def main() -> None:
         f"wrote {out_path} shape={engine_logits.shape} order=F "
         f"tokens={token_ids} last_argmax={last_argmax}"
     )
+
+    # embed 探针：HF [T, hidden] -> Engine [hidden, T] col-major，和 logits 同一套转置。
+    with torch.no_grad():
+        hf_emb = model.model.embed_tokens(ids)[0].detach().cpu().numpy()
+    hidden_size = int(cfg_dict["hidden_size"])
+    embed_engine = np.asfortranarray(hf_emb.T.astype(np.float32, copy=False))
+    if embed_engine.shape != (hidden_size, t_len):
+        raise SystemExit(
+            f"embed layout mismatch: dumped {embed_engine.shape}, expected ({hidden_size}, {t_len})"
+        )
+    embed_path = os.path.join(os.path.dirname(out_path), f"ref_embed_t{token_tag}.npy")
+    np.save(embed_path, embed_engine)
+    print(f"wrote {embed_path} shape={embed_engine.shape} order=F")
+
+    # hidden_states[0]=embed；其后每层一块；最后一块是 final RMSNorm 之后（Engine forward_hidden_host 出口）。
+    hs = out.hidden_states
+    print(f"  hf hidden_states count={len(hs)}")
+    hs0 = np.asfortranarray(hs[0][0].detach().cpu().numpy().T.astype(np.float32, copy=False))
+    print(f"  hs[0] vs embed max_abs={float(np.max(np.abs(hs0 - embed_engine))):.6g}")
+    # Engine forward_hidden_host 出口是 final RMSNorm 之后。HF 的最后一块可能是 layer 输出，再过一次 norm。
+    with torch.no_grad():
+        post_norm = model.model.norm(hs[-1]).detach().cpu().numpy()
+    post_norm_h = np.asfortranarray(post_norm[0].T.astype(np.float32, copy=False))
+    last_h = np.asfortranarray(hs[-1][0].detach().cpu().numpy().T.astype(np.float32, copy=False))
+    print(
+        f"  hs[-1] vs model.norm(hs[-1]) max_abs={float(np.max(np.abs(last_h - post_norm_h))):.6g}"
+    )
+    final_h = post_norm_h
+    if final_h.shape != (hidden_size, t_len):
+        raise SystemExit(f"final hidden layout mismatch: {final_h.shape}")
+    final_path = os.path.join(os.path.dirname(out_path), f"ref_hidden_final_t{token_tag}.npy")
+    np.save(final_path, final_h)
+    print(f"wrote {final_path} shape={final_h.shape} order=F")
+    if len(hs) >= 2:
+        layer0_h = np.asfortranarray(
+            hs[1][0].detach().cpu().numpy().T.astype(np.float32, copy=False)
+        )
+        layer0_path = os.path.join(os.path.dirname(out_path), f"ref_hidden_layer0_t{token_tag}.npy")
+        np.save(layer0_path, layer0_h)
+        print(f"wrote {layer0_path} shape={layer0_h.shape} order=F")
 
 
 if __name__ == "__main__":

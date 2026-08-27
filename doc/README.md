@@ -37,6 +37,12 @@ API 契约、算子 device API、集成数据流、walkthrough 示例。
 | [sampler-temperature.md](guide/sampler-temperature.md) | Sampler temperature：控制什么、为何需要、与 top_k 关系 |
 | [sampler-top-p.md](guide/sampler-top-p.md) | Sampler top-p（nucleus）：在干什么、与 top_k/temperature 组合 |
 
+## debug — 排查记录
+
+| 文件 | 内容 |
+|------|------|
+| [debug-e2e.md](debug-e2e.md) | Engine vs HF logits：T=1 / embed / FA 末 tile 切开排查 |
+
 ## reference/ — 参考 / 性能
 
 性能基线、优化点备忘，非 lifecycle 主图纸。
