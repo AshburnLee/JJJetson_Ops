@@ -35,16 +35,48 @@ struct FaDoubleBufferKernelParams {
     float scale;
 };
 
-// 将 K/V tile 从 gmem 搬运到 smem，非异步
+// 本 tile 有几行是真 KV。例：num_kv_tokens=4、tile=32、tile_id=0 -> 4；
+// num_kv_tokens=37、tile_id=1 -> 5。多出来的行只在 smem 里填 0，不要去 gmem 读。
+__device__ __forceinline__ int db_kv_tile_valid_rows(int tile_id, int num_kv_tokens) {
+    const int t0 = tile_id * kKvTokenTile;
+    const int remain = num_kv_tokens - t0;
+    if (remain <= 0) {
+        return 0;
+    }
+    return remain < kKvTokenTile ? remain : kKvTokenTile;
+}
+
+// 末 tile 不满 32 时，把 smem 里多出来的行写成 0。
+// 例：valid_rows=4，行 4..31 清零。softmax 仍会把这些列打成 -inf；
+// 清零是为了 WMMA 不要把 OOB/NaN 的 K 混进合法列的 score。
+template <int HEAD_DIM>
+__device__ void db_zero_kv_tile_pad(half (*dst_rowmajor)[HeadConsts<HEAD_DIM>::kVStride],
+                                    int valid_rows, int tid, int block_threads) {
+    constexpr int kVec = kKvTokenTile * (HEAD_DIM / 2);
+    for (int i = tid; i < kVec; i += block_threads) {
+        const int row = i / (HEAD_DIM / 2);
+        if (row >= valid_rows) {
+            const int j2 = i % (HEAD_DIM / 2);
+            reinterpret_cast<half2 *>(&dst_rowmajor[row][0])[j2] = __half2half2(half(0));
+        }
+    }
+}
+
+// 将 K/V tile 从 gmem 搬运到 smem，非异步。只读 valid_rows 行，其余填 0。
 template <int HEAD_DIM>
 __device__ void db_sync_copy_kv_tile(half (*dst_rowmajor)[HeadConsts<HEAD_DIM>::kVStride],
-                                     const half *g_tile_base, int tid, int block_threads) {
+                                     const half *g_tile_base, int valid_rows, int tid,
+                                     int block_threads) {
     constexpr int kVec = kKvTokenTile * (HEAD_DIM / 2);
     for (int i = tid; i < kVec; i += block_threads) {
         const int row = i / (HEAD_DIM / 2);
         const int j2 = i % (HEAD_DIM / 2);
-        const half2 *src_h2 = reinterpret_cast<const half2 *>(g_tile_base + row * HEAD_DIM);
-        reinterpret_cast<half2 *>(&dst_rowmajor[row][0])[j2] = src_h2[j2];
+        if (row < valid_rows) {
+            const half2 *src_h2 = reinterpret_cast<const half2 *>(g_tile_base + row * HEAD_DIM);
+            reinterpret_cast<half2 *>(&dst_rowmajor[row][0])[j2] = src_h2[j2];
+        } else {
+            reinterpret_cast<half2 *>(&dst_rowmajor[row][0])[j2] = __half2half2(half(0));
+        }
     }
 }
 
@@ -60,12 +92,16 @@ __device__ __forceinline__ void db_cp_async_commit_group() {
 
 template <int HEAD_DIM>
 __device__ void db_issue_async_kv_tile(half (*dst_rowmajor)[HeadConsts<HEAD_DIM>::kVStride],
-                                       const half *g_tile_base, int tid, int block_threads) {
+                                       const half *g_tile_base, int valid_rows, int tid,
+                                       int block_threads) {
     constexpr int kFlatChunks = HeadConsts<HEAD_DIM>::kKvTileNumHalf / 8;
 #pragma unroll 1
     for (int i = tid; i < kFlatChunks; i += block_threads) {
         const int flat8 = i * 8;
         const int r = flat8 / HEAD_DIM;
+        if (r >= valid_rows) {
+            continue;
+        }
         const int c = flat8 % HEAD_DIM;
         half *dst = &dst_rowmajor[r][c];
         const half *src = g_tile_base + static_cast<size_t>(r) * HEAD_DIM + c;
@@ -78,24 +114,27 @@ __device__ void db_issue_async_kv_tile(half (*dst_rowmajor)[HeadConsts<HEAD_DIM>
 
 template <int HEAD_DIM>
 __device__ void db_prologue_load_k_tile(half (*k_buf)[kKvTokenTile][HeadConsts<HEAD_DIM>::kVStride],
-                                        const half *k_tile_base, int tid, int block_threads) {
+                                        const half *k_tile_base, int valid_rows, int tid,
+                                        int block_threads) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
-    db_issue_async_kv_tile<HEAD_DIM>(k_buf[0], k_tile_base, tid, block_threads);
+    db_issue_async_kv_tile<HEAD_DIM>(k_buf[0], k_tile_base, valid_rows, tid, block_threads);
     db_cp_async_commit_group();
     db_cp_async_wait<0>();
+    db_zero_kv_tile_pad<HEAD_DIM>(k_buf[0], valid_rows, tid, block_threads);
 #else
-    db_sync_copy_kv_tile<HEAD_DIM>(k_buf[0], k_tile_base, tid, block_threads);
+    db_sync_copy_kv_tile<HEAD_DIM>(k_buf[0], k_tile_base, valid_rows, tid, block_threads);
 #endif
 }
 
 template <int HEAD_DIM>
 __device__ void db_begin_copy_kv_tile(half (*dst_rowmajor)[HeadConsts<HEAD_DIM>::kVStride],
-                                      const half *g_tile_base, int tid, int block_threads) {
+                                      const half *g_tile_base, int valid_rows, int tid,
+                                      int block_threads) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
-    db_issue_async_kv_tile<HEAD_DIM>(dst_rowmajor, g_tile_base, tid, block_threads);
+    db_issue_async_kv_tile<HEAD_DIM>(dst_rowmajor, g_tile_base, valid_rows, tid, block_threads);
     db_cp_async_commit_group();
 #else
-    db_sync_copy_kv_tile<HEAD_DIM>(dst_rowmajor, g_tile_base, tid, block_threads);
+    db_sync_copy_kv_tile<HEAD_DIM>(dst_rowmajor, g_tile_base, valid_rows, tid, block_threads);
 #endif
 }
 
@@ -189,25 +228,30 @@ __global__ void __launch_bounds__(256, 4)
     const half *k_head = K + static_cast<size_t>(kv_h) * kv_plane_elems;
     const half *v_head = V + static_cast<size_t>(kv_h) * kv_plane_elems;
 
-    db_prologue_load_k_tile<HEAD_DIM>(k_double_buf, k_head, tid, block_threads);
+    const int valid0 = db_kv_tile_valid_rows(0, num_kv_tokens);
+    db_prologue_load_k_tile<HEAD_DIM>(k_double_buf, k_head, valid0, tid, block_threads);
     __syncthreads();
 
     for (int tile_id = 0; tile_id < loop_kv; ++tile_id) {
         const int cb = tile_id & 1;
         half(*k_active)[C::kVStride] = k_double_buf[cb];
+        const int valid_cur = db_kv_tile_valid_rows(tile_id, num_kv_tokens);
 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
         if (tile_id > 0) {
             db_cp_async_wait<0>();
+            db_zero_kv_tile_pad<HEAD_DIM>(k_active, valid_cur, tid, block_threads);
         }
 #endif
         __syncthreads();
 
         const half *v_tile_base = v_head + static_cast<size_t>(tile_id * kKvTokenTile) * HEAD_DIM;
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
-        db_begin_copy_kv_tile<HEAD_DIM>(v_double_buf[cb], v_tile_base, tid, block_threads);
+        db_begin_copy_kv_tile<HEAD_DIM>(v_double_buf[cb], v_tile_base, valid_cur, tid,
+                                        block_threads);
 #else
-        db_sync_copy_kv_tile<HEAD_DIM>(v_double_buf[cb], v_tile_base, tid, block_threads);
+        db_sync_copy_kv_tile<HEAD_DIM>(v_double_buf[cb], v_tile_base, valid_cur, tid,
+                                       block_threads);
 #endif
 
         if (warp_id < 4) {
@@ -232,9 +276,11 @@ __global__ void __launch_bounds__(256, 4)
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
         if (tile_id + 1 < loop_kv) {
             const int nb = cb ^ 1;
+            const int valid_next = db_kv_tile_valid_rows(tile_id + 1, num_kv_tokens);
             const half *k_next =
                 k_head + static_cast<size_t>((tile_id + 1) * kKvTokenTile) * HEAD_DIM;
-            db_begin_copy_kv_tile<HEAD_DIM>(k_double_buf[nb], k_next, tid, block_threads);
+            db_begin_copy_kv_tile<HEAD_DIM>(k_double_buf[nb], k_next, valid_next, tid,
+                                            block_threads);
         }
 #endif
 
@@ -269,6 +315,7 @@ __global__ void __launch_bounds__(256, 4)
         }
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
         db_cp_async_wait<0>();
+        db_zero_kv_tile_pad<HEAD_DIM>(v_double_buf[cb], valid_cur, tid, block_threads);
 #endif
         __syncthreads();
 

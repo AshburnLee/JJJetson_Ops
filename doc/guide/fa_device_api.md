@@ -19,7 +19,7 @@ dst: fp32  [head_dim, num_q_tokens, num_q_heads, 1]
   - `g=2`：与旧 kernel 相同，`grid = num_kv_heads`
   - `g=8`：TinyLlama，每个 KV 头 4 个 block
 - `1 <= num_q_tokens <= 16`
-- `num_kv_tokens >= 1`（末 tile 自动 mask）
+- `num_kv_tokens >= 1`（末 tile 只从 gmem 读有效行，多出来的 smem 填 0，softmax 再 mask；不要读过该 KV 头的分配）
 - Q/K/V fp16；scale 通常为 `1/sqrt(head_dim)`
 
 
