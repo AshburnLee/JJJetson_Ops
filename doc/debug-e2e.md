@@ -149,7 +149,7 @@ FA g=8 tok=1/4/13 vs fa_ref  allclose，无 NaN      末 tile 出界已经堵住
 hidden 两层+norm vs HF       max_abs 仍约 20       差还在 layer 里（RoPE / 和 HF attention）
 ~~~
 
-B 末 tile 已经堵住了。C 还没完，但差十几不是 fp16 毛刺：T=1 时 FA 跟自己的公式已经是 0 误差，embed 也是 bitwise 对齐。剩下是合同问题——同一份 TinyLlama 权重，Engine 按自己的 Transformer 跑，HF 按 Llama 前向跑。下一步不是继续猜 RoPE，而是先做 roadmap **4.1b 二选一**：贴 Llama 合同去改 Engine，或改口不把 HF logits 当黄金标准。未选之前 4.2 先别当绿；**不要**重切模型。
+权重是 TinyLlama 的，我的前向还不是。roadmap 已选 4.1b=A，下一步是 **4.1c**：用现有组件按 TinyLlama 结构搭齐，再交给 Engine 跑。TinyLlama 可以对上了再跑其他模型。
 
 
 ## 你要回头翻的文件

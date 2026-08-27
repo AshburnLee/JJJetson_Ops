@@ -83,7 +83,7 @@ API         weight_loader_load_fixture / weight_loader_load_safetensors /
   - [x] 3 — HF 名映射（`hf_llama_weight_map.cpp` + `load_safetensors_hf_llama`；见 [`doc/guide/hf_llama_weight_map.md`](../guide/hf_llama_weight_map.md)）
   - [ ] 4 — 真模型验证（TinyLlama / 1~2 layer 切片）
         路径（切片 load + Engine 短 prefill smoke）已完成，不能凭此勾项。
-        还缺：roadmap **4.1b 合同二选一**（贴 Llama 前向 vs 改口不当 HF 黄金标准），选完再决定 4.2。排查见 [`doc/debug-e2e.md`](../debug-e2e.md)。具体 4.1 dump / 4.2 / 4.3 见 **jjjetson-ops-roadmap.mdc** 模块 1 步骤 4。
+        还缺：roadmap **4.1c**（已选贴 TinyLlama 结构）：用现有组件按切片 config 搭齐再 Engine 跑，然后才是 4.2。排查见 [`doc/debug-e2e.md`](../debug-e2e.md)。具体 4.1 dump / 4.1c / 4.2 / 4.3 见 **jjjetson-ops-roadmap.mdc** 模块 1 步骤 4。
         ~~~
         同一份切片 model.safetensors（21 个 tensor，F32）
         |
