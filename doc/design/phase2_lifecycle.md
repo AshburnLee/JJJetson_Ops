@@ -82,8 +82,18 @@ API         weight_loader_load_fixture / weight_loader_load_safetensors /
   - [x] 2 — fixture roundtrip（fixture 导出 `.safetensors` + `test_fixture_safetensors_roundtrip`）
   - [x] 3 — HF 名映射（`hf_llama_weight_map.cpp` + `load_safetensors_hf_llama`；见 [`doc/guide/hf_llama_weight_map.md`](../guide/hf_llama_weight_map.md)）
   - [ ] 4 — 真模型验证（TinyLlama / 1~2 layer 切片）
-        验收：`load_safetensors_hf_llama` 内部名；`config.json` 或 `config.txt` -> ModelConfig；
-        Model `load_weights_from_safetensors_hf_llama`；Engine 短 prefill
+        路径（切片 load + Engine 短 prefill smoke）已完成，不能凭此勾项。
+        还缺：同一份 2 层切片 vs HuggingFace logits。具体 4.1 dump / 4.2 对比单测 / 4.3 收口见 **jjjetson-ops-roadmap.mdc** 模块 1 步骤 4。
+        ~~~
+        同一份切片 model.safetensors（21 个 tensor，F32）
+        |
+        +-- HuggingFace 加载 -> 前向 [1,2,3,4] -> 存成 npy（ref）
+        |
+        +-- Engine Loader 加载 -> 前向 [1,2,3,4] -> 得到一张 logits
+                                              |
+                                              v
+                                    只比这两张 logits 表
+        ~~~
 - [ ] gguf（若目标模型需要）
 - [x] fixture 加载单测（`tests/test_weight_loader.py`）
 
