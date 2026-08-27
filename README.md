@@ -53,7 +53,7 @@
 ## 2. Build & run tests
 
 ~~~sh
-# 创建 conda 环境（首次）
+# 创建 conda 环境（首次）。environment.yml 会连带装 requirements.txt 里的 pip 包。
 conda env create --file environment.yml
 conda activate cuda-ops
 

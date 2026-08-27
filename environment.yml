@@ -1,10 +1,18 @@
+# cuda-ops 虚拟环境（conda）。和 requirements.txt 是一对：
+#   conda 侧在本文件，pip 侧在 requirements.txt。
+# 复刻：在 JJJetson_Ops 目录
+#   conda env create --file environment.yml
+# 已有环境补 pip：
+#   conda activate cuda-ops && pip install -r requirements.txt
 name: cuda-ops
 channels:
   - defaults
+  - conda-forge
 dependencies:
   - python=3.12.10
   - pybind11
   - pip
+  - ruff
+  - pre-commit
   - pip:
-      - ruff>=0.8.0
-      - pre-commit>=3.0.0
+      - -r requirements.txt
