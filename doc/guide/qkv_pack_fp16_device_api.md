@@ -43,3 +43,5 @@ flat src：`src_idx = (h * head_dim + d) + t * (head_dim * num_heads)`
 packed dst：`dst_idx = d + t * head_dim + h * head_dim * num_tokens`
 
 与 `fa_double_buffer` / `FaDoubleBufferShape` col-major 一致。
+
+O Linear 的入口是 pack 的逆：`fa_dst_unpack_forward_device` 把 FA dst `[head_dim, T, H]` fp32 拆回 `[H*head_dim, T]`。索引与上面互逆。T=1 时两种 layout 碰巧一样。

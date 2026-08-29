@@ -1,6 +1,8 @@
-# Debug e2e：Engine logits 对不上 HuggingFace
+# Debug e2e：当时 Engine logits 对不上 HuggingFace（4.1c 已经对齐）
 
-我们拿 2 层 TinyLlama 切片、token `[1, 2, 3, 4]` 跑了一遍。Engine 最后一个位置 greedy 出来是 12323，HuggingFace 是 6415，整张 logits 表最大绝对差大概 12.3。你要是把 `atol` 放到 20 让测试变绿，那叫混过去，不是在查。正确做法是把整条链切开，看差是从哪一段开始冒出来的。
+这是排查记录，不是现状。4.1c 之后 T=1/T=4 已经对上 HuggingFace npy，误差是 FA fp16 那种毛刺。当时差十几，做法是把整条链切开，看差是从哪一段开始冒出来的。下面按时间写。
+
+当时拿 2 层 TinyLlama 切片、token `[1, 2, 3, 4]` 跑了一遍。Engine 最后一个位置 greedy 出来是 12323，HuggingFace 是 6415，整张 logits 表最大绝对差大概 12.3。
 
 切片就在 `models/tinyllama_2layer/`，gitignore 了，别提交。HuggingFace 这边用 CPU dump，Engine 走 GPU。Orin 大概 4GB 统一内存，两边一起占会挤爆：先把 HF 结果存成 npy，再单独跑 Engine。
 
@@ -10,7 +12,7 @@
 
 ~~~
 A. Engine 自己跟自己
-   smoke 和 4.2 都得到 argmax=12323
+   当时 smoke 得到 argmax=12323
    这只说明你再跑一次还是这个数，不说明这个数是对的
 
 B. Engine 跟自己写的公式
@@ -59,7 +61,23 @@ python scripts/export_hf_llama_slice_logits.py \
 T=1  engine_argmax=21167  hf=2579  max_abs≈13.6
 ~~~
 
-你看，T=4 差大约 12，T=1 差大约 13，一个量级。缺 causal **不是**这次的主因，先别去改 mask。
+T=4 差大约 12，T=1 差大约 13，当时看起来缺 causal **不是**主因。后来 4.1c 补了 causal + unpack，T=1 仍差 ~13。host 链把 layer0 的 RMSNorm + QKV + RoPE + FA + O 搭起来，和 HF dump 比对：
+
+~~~
+q_rope_t1 max_abs≈6e-7
+k_rope_t1 max_abs≈7e-7
+v_t1      max_abs≈2e-8
+attn_out  max_abs≈5e-6
+~~~
+
+RoPE / 切头 / FA 公式都不是那 13。真正的事是 HF Linear 被 Loader 多转了一次：`linear_forward_device` 读的是 PyTorch `[out, in]`，映射却转成 `[in, out]`，Engine 等于在算 `W^T @ x`。Linear 不再转（只留 lm_head 转置）之后：
+
+~~~
+T=1  engine_argmax=2579  hf=2579  max_abs≈8.8e-4
+T=4  engine_argmax=6415  hf=6415  max_abs≈3.6e-3
+~~~
+
+这是 FA QKV 走 fp16 该有的毛刺，不是再差一个数量级。验收 tol 记成 `1e-2`，旧的 ~13 混不过。
 
 
 ### 第 2 刀：只比 embed，问 Loader 和查表有没有先歪
@@ -116,9 +134,9 @@ TinyLlama 是 `g=8`：4 个 KV 头，每个 KV 头管 8 个 Q。KV 头 3 对应�
 
 仓库里原来那条 `gqa8` 单测把 `tok_kv` 设成 32。32 正好一整个满 tile，根本不会走到 [末 tile 是瘪的] 这条路，所以它一直绿，你一直没看见这病。换成真实长度 4，自己的 `fa_ref` 都对不上。
 
-所以这一刀的病，就一句话：末 tile 不满 32 的时候，kernel 还按 32 行去 global memory 读；最后一个 KV 头没有 [下一块平面] 可借，读出界，Q 24–31 变成 NaN。不是 RoPE 先转错，也不是权重 2D 转置，更不是 4GB 不够。
+所以这一刀的病，就一句话：末 tile 不满 32 的时候，kernel 还按 32 行去 global memory 读；最后一个 KV 头没有 [下一块平面] 可借，读出界，Q 24–31 变成 NaN。不是 RoPE 先转错，更不是 4GB 不够。
 
-注意范围：这是 **B 炸了** 的病因，也就是 FA 跟自己的公式对不上。把它堵住之后，B 绿了，C 还是差十几。Engine 对 HuggingFace 还有下一层的事，别把这一刀说成 [e2e 全修好了]。
+注意范围：这是 **B 炸了** 的病因。堵住之后 B 绿了。C 当时还差十几，那是 Loader 把 Linear 多转了一次，见上面第 1 刀后面的结论。
 
 
 ### 第 4 刀：药
@@ -149,7 +167,7 @@ FA g=8 tok=1/4/13 vs fa_ref  allclose，无 NaN      末 tile 出界已经堵住
 hidden 两层+norm vs HF       max_abs 仍约 20       差还在 layer 里（RoPE / 和 HF attention）
 ~~~
 
-权重是 TinyLlama 的，我的前向还不是。roadmap 已选 4.1b=A，下一步是 **4.1c**：用现有组件按 TinyLlama 结构搭齐，再交给 Engine 跑。TinyLlama 可以对上了再跑其他模型。
+权重是 TinyLlama 的，前向合同已经按 TinyLlama 搭齐（4.1c 过了）。logits 对 HF npy 是 fp16 噪声量级。下一步 4.2 收口。不要重切模型。
 
 
 ## 你要回头翻的文件

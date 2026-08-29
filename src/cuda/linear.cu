@@ -16,6 +16,8 @@ extern "C" void linear_forward_device(void *stream, void *cublas_handle, const f
 
     const float alpha = 1.f;
     const float beta = 0.f;
+    // weight 是 row-major [out, in]，跟 PyTorch nn.Linear.weight 一样。
+    // 例：in=2 out=2，W=[[1, 2], [3, 4]]，x=[1, 1]^T -> y=[3, 7]^T。
     CUBLAS_CHECK(cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N, out_features, num_tokens,
                              in_features, &alpha, weight, in_features, input, in_features, &beta,
                              output, out_features));

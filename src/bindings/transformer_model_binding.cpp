@@ -170,7 +170,7 @@ PYBIND11_MODULE(transformer_model_me, m) {
 
     m.def(
         "read_layer_w_q_host",
-        [&](uintptr_t model_handle, int layer_idx, int hidden_size, int q_dim) {
+        [&](uintptr_t model_handle, int layer_idx, int q_dim, int hidden_size) {
             const TransformerModel *model =
                 reinterpret_cast<const TransformerModel *>(model_handle);
             if (transformer_model_is_weights_loaded(model) != 1) {
@@ -178,9 +178,9 @@ PYBIND11_MODULE(transformer_model_me, m) {
             }
             const TransformerLayerWeights *layer =
                 transformer_model_get_layer_weights(model, layer_idx);
-            return read_device_floats(layer_weight_device_ptr(layer, "w_q"), {hidden_size, q_dim});
+            return read_device_floats(layer_weight_device_ptr(layer, "w_q"), {q_dim, hidden_size});
         },
-        py::arg("model_handle"), py::arg("layer_idx"), py::arg("hidden_size"), py::arg("q_dim"));
+        py::arg("model_handle"), py::arg("layer_idx"), py::arg("q_dim"), py::arg("hidden_size"));
 
     m.def(
         "read_layer_weight_host",

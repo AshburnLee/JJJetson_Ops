@@ -92,7 +92,7 @@ V:  4 头 * 64 =  256 个数   ->  v_proj 权重 HF shape [ 256, 2048]
 O: 拼回 2048               ->  o_proj 权重 HF shape [2048, 2048]
 ~~~
 
-（HF Linear 是 `[out, in]`；引擎内部会再转置成 `[in, out]`，见 `hf_llama_weight_map.md`。）
+（HF Linear 是 `[out, in]`，引擎 Linear 也按这个读，见 `hf_llama_weight_map.md`。只有 lm_head 会转成 `[hidden, vocab]`。）
 
 对应关系：
 

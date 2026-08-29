@@ -1,4 +1,5 @@
 import elementwise_me
+import fa_dst_unpack_me
 import fa_me
 import linear_me
 import numpy as np
@@ -162,9 +163,10 @@ def chain_linear_me_ref_step(
 
     fa_out = np.zeros((HEAD_DIM, num_tokens, NUM_Q_HEADS, 1), dtype=np.float32, order="F")
     fa_scale = 1.0 / (HEAD_DIM**0.5)
-    fa_me.forward_host_shape(q_fp16, k_fp16, v_fp16, fa_out, fa_scale)
-
-    fa_q = fa_out.reshape(Q_DIM, num_tokens, 1, batch, order="F")
+    fa_me.forward_host_shape(q_fp16, k_fp16, v_fp16, fa_out, fa_scale, 1, cache_len_before)
+    flat = np.zeros((Q_DIM, num_tokens), dtype=np.float32, order="F")
+    fa_dst_unpack_me.forward_host(fa_out, flat, HEAD_DIM, num_tokens, NUM_Q_HEADS)
+    fa_q = flat.reshape(Q_DIM, num_tokens, 1, batch, order="F")
     attn_out = np.zeros((HIDDEN_SIZE, num_tokens, 1, batch), dtype=np.float32, order="F")
     linear_me.forward_host(fa_q, w_o, attn_out, Q_DIM, num_tokens, HIDDEN_SIZE)
 

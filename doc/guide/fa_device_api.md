@@ -21,6 +21,11 @@ dst: fp32  [head_dim, num_q_tokens, num_q_heads, 1]
 - `1 <= num_q_tokens <= 16`
 - `num_kv_tokens >= 1`（末 tile 只从 gmem 读有效行，多出来的 smem 填 0，softmax 再 mask；不要读过该 KV 头的分配）
 - Q/K/V fp16；scale 通常为 `1/sqrt(head_dim)`
+- `causal`：0=只 mask pad（`kv_col >= num_kv_tokens`）；1=再 mask `kv_abs > q_abs`（Llama 因果）
+- `q_pos_offset`：Q 第 0 行的绝对位置。`q_abs = q_pos_offset + q_row`
+  - prefill 空 cache：`q_pos_offset=0`，第 0 个 Q 只能看 KV 0，第 3 个能看 0..3
+  - decode：append 之后、advance 之前 `cache_len=L`、本步 T=1 -> `q_pos_offset=L`，历史 0..L 全可见
+- FA dst 是 `[head_dim, T, H]`，O Linear 要 `[H*head_dim, T]`。T=1 碰巧同布局；T>1 必须先 `fa_dst_unpack_forward_device`
 
 
 ## Trick：偶数 g 不必改 WMMA
@@ -65,20 +70,23 @@ WMMA、softmax、双缓冲这些 **完全不知道 g**。它们只看见：share
 ## 数据流
 
 ~~~
-Linear(Q/K/V)  ──► fp16 device Q/K/V
-    │
-    ▼
+Linear(Q/K/V) -> pack fp16
+    |
+    v
 fa_double_buffer_forward_device(stream, &shape, d_q, d_k, d_v, d_dst, scale)
-    │  WMMA + K/V 双缓冲 cp.async；(num_q_heads/2) blocks × 每 block 2 Q-heads
-    ▼
-d_dst (fp32) ──► Linear(O)
+    |  WMMA + K/V 双缓冲；softmax：pad，以及 causal=1 时 kv_abs > q_abs
+    v
+d_dst fp32 [head_dim, T, H]
+    |
+    v
+fa_dst_unpack_forward_device -> [H*head_dim, T] 再进 Linear(O)
 ~~~
 
 ## API
 
 ~~~
 FaDoubleBufferShape
-  head_dim / tokens / heads 结构体
+  head_dim / tokens / heads / causal / q_pos_offset
 
 fa_double_buffer_validate_shape
   host 校验
@@ -88,18 +96,16 @@ fa_double_buffer_forward_device
 
 fa_double_buffer_forward_host
 fa_double_buffer_forward_host_legacy
-  测试 H2D/D2H
+  测试 H2D/D2H（legacy 固定 shape，causal=0）
 
 fa_me.forward_host_shape
-  Python: 从 Q/K/V shape 推断
+  Python: 从 Q/K/V shape 推断；可选 causal、q_pos_offset，默认 0
 
 fa_me.forward_host
   Python: legacy 固定 shape
+
+fa_dst_unpack_forward_device / fa_dst_unpack_me.forward_host
+  FA dst [head_dim, T, H] fp32 -> Linear flat [H*head_dim, T]
 ~~~
 
-Legacy 固定 128×13×16 / KV256 仍可用 `fa_me.launch_fa` / `forward_host`。
-
-## 待办（Runner 接入）
-
-- fp32 Q/K/V 与 Linear 输出对接（cast 或 fp32 路径）
-- KV cache 读写与 decode 变长 seq
+Legacy 固定 128x13x16 / KV256 仍可用 `fa_me.launch_fa` / `forward_host`。生产 Runner/Engine 走 `causal=1`。实验 `launch_*` 不接因果。

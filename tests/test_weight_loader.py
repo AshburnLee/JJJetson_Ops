@@ -132,13 +132,13 @@ def test_load_safetensors_with_optional_config():
 def _one_layer_tensors() -> dict[str, np.ndarray]:
     np.random.seed(SEED)
     return {
-        "layer0.w_q": np.random.randn(HIDDEN_SIZE, Q_DIM).astype(np.float32),
-        "layer0.w_k": np.random.randn(HIDDEN_SIZE, KV_DIM).astype(np.float32),
-        "layer0.w_v": np.random.randn(HIDDEN_SIZE, KV_DIM).astype(np.float32),
-        "layer0.w_o": np.random.randn(Q_DIM, HIDDEN_SIZE).astype(np.float32),
-        "layer0.w_gate": np.random.randn(HIDDEN_SIZE, INTERMEDIATE_SIZE).astype(np.float32),
-        "layer0.w_up": np.random.randn(HIDDEN_SIZE, INTERMEDIATE_SIZE).astype(np.float32),
-        "layer0.w_down": np.random.randn(INTERMEDIATE_SIZE, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_q": np.random.randn(Q_DIM, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_k": np.random.randn(KV_DIM, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_v": np.random.randn(KV_DIM, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_o": np.random.randn(HIDDEN_SIZE, Q_DIM).astype(np.float32),
+        "layer0.w_gate": np.random.randn(INTERMEDIATE_SIZE, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_up": np.random.randn(INTERMEDIATE_SIZE, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_down": np.random.randn(HIDDEN_SIZE, INTERMEDIATE_SIZE).astype(np.float32),
         "layer0.w_input_layernorm": np.random.randn(HIDDEN_SIZE).astype(np.float32),
         "layer0.w_post_attention_layernorm": np.random.randn(HIDDEN_SIZE).astype(np.float32),
         "embed": np.random.randn(VOCAB_SIZE, HIDDEN_SIZE).astype(np.float32),
@@ -195,7 +195,7 @@ def test_fixture_safetensors_roundtrip():
 #
 # Big picture 里它在哪？
 #   验证 hf_llama_weight_map / load_safetensors_hf_llama：HF 名（如 model.layers.0.self_attn.q_proj.weight）
-#   和 PyTorch Linear [out,in] 布局，能否还原成内部 layer0.w_q 等 + fixture row-major layout。
+#   和 PyTorch Linear [out,in] 布局（Linear 不转置；只有 lm_head 转成 [hidden, vocab]）。
 #   基准是同一批 tensor 走 write_weight_fixture + load_fixture；不要求下载真 HF 模型。
 #   设计文档：doc/guide/hf_llama_weight_map.md
 #

@@ -41,13 +41,13 @@ def _fixture_tensors(tie_word_embeddings: int = 0) -> dict[str, np.ndarray]:
     np.random.seed(SEED)
     embed = np.random.randn(VOCAB_SIZE, HIDDEN_SIZE).astype(np.float32)
     tensors = {
-        "layer0.w_q": np.random.randn(HIDDEN_SIZE, Q_DIM).astype(np.float32),
-        "layer0.w_k": np.random.randn(HIDDEN_SIZE, KV_DIM).astype(np.float32),
-        "layer0.w_v": np.random.randn(HIDDEN_SIZE, KV_DIM).astype(np.float32),
-        "layer0.w_o": np.random.randn(Q_DIM, HIDDEN_SIZE).astype(np.float32),
-        "layer0.w_gate": np.random.randn(HIDDEN_SIZE, INTERMEDIATE_SIZE).astype(np.float32),
-        "layer0.w_up": np.random.randn(HIDDEN_SIZE, INTERMEDIATE_SIZE).astype(np.float32),
-        "layer0.w_down": np.random.randn(INTERMEDIATE_SIZE, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_q": np.random.randn(Q_DIM, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_k": np.random.randn(KV_DIM, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_v": np.random.randn(KV_DIM, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_o": np.random.randn(HIDDEN_SIZE, Q_DIM).astype(np.float32),
+        "layer0.w_gate": np.random.randn(INTERMEDIATE_SIZE, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_up": np.random.randn(INTERMEDIATE_SIZE, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_down": np.random.randn(HIDDEN_SIZE, INTERMEDIATE_SIZE).astype(np.float32),
         "layer0.w_input_layernorm": np.random.randn(HIDDEN_SIZE).astype(np.float32),
         "layer0.w_post_attention_layernorm": np.random.randn(HIDDEN_SIZE).astype(np.float32),
         "embed": embed,

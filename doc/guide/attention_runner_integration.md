@@ -60,7 +60,12 @@ kv_cache_create(max_seq, head_dim, num_kv_heads, num_layers=1)
     含义: 读 cache[0:L+T) cast 为 fp16（历史 + 本步）
 
 [5] fa_double_buffer_forward_device -> d_attn_out
-    含义: d_q_fp16 + d_k/v_fa_fp16；scale=1/sqrt(head_dim)；输出 fp32 进 O Linear
+    含义: d_q_fp16 + d_k/v_fa_fp16；scale=1/sqrt(head_dim)；causal=1
+          q_pos_offset=L（append 前 cache_len）；dst 仍是 [head_dim, T, H]
+
+[5b] fa_dst_unpack_forward_device(d_attn_out -> d_q)
+    含义: FA layout 拆回 Linear flat [H*head_dim, T]，再进 O Linear
+          T=1 时两种 layout 碰巧一样，T>1 不能不拆
 ~~~
 
 **Layer 外**（`transformer_runner_forward_device` / `forward_host` 返回前）：

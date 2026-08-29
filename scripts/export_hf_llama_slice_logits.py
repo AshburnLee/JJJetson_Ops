@@ -226,6 +226,96 @@ def main() -> None:
         np.save(layer0_path, layer0_h)
         print(f"wrote {layer0_path} shape={layer0_h.shape} order=F")
 
+    # layer0、RoPE 之后的 Q。HF 是 [B, H, T, D]，Engine 是 [H*D, T] 列主序。
+    import inspect
+
+    layer0 = model.model.layers[0]
+    attn = layer0.self_attn
+    apply_fn = getattr(inspect.getmodule(type(attn)), "apply_rotary_pos_emb", None)
+    if apply_fn is None:
+        raise SystemExit("cannot find apply_rotary_pos_emb on the HF attention module")
+    num_q_heads = int(cfg_dict["num_attention_heads"])
+    num_kv_heads = int(cfg_dict.get("num_key_value_heads", num_q_heads))
+    head_dim = int(cfg_dict.get("head_dim", hidden_size // num_q_heads))
+    with torch.no_grad():
+        h_norm = layer0.input_layernorm(model.model.embed_tokens(ids))
+        bsz, seqlen, _ = h_norm.shape
+        q = (
+            attn.q_proj(h_norm)
+            .view(bsz, seqlen, num_q_heads, head_dim)
+            .transpose(1, 2)
+            .contiguous()
+        )
+        k = (
+            attn.k_proj(h_norm)
+            .view(bsz, seqlen, num_kv_heads, head_dim)
+            .transpose(1, 2)
+            .contiguous()
+        )
+        v = (
+            attn.v_proj(h_norm)
+            .view(bsz, seqlen, num_kv_heads, head_dim)
+            .transpose(1, 2)
+            .contiguous()
+        )
+        position_ids = torch.arange(seqlen, dtype=torch.long).unsqueeze(0)
+        rotary = getattr(attn, "rotary_emb", None) or getattr(model.model, "rotary_emb", None)
+        if rotary is None:
+            raise SystemExit("cannot find rotary_emb on attn or model.model")
+        try:
+            cos_sin = rotary(v, position_ids=position_ids)
+        except TypeError:
+            try:
+                cos_sin = rotary(v, position_ids)
+            except TypeError:
+                cos_sin = rotary(v, seqlen)
+        if isinstance(cos_sin, tuple) and len(cos_sin) >= 2:
+            cos, sin = cos_sin[0], cos_sin[1]
+        else:
+            raise SystemExit("rotary_emb did not return cos, sin")
+        try:
+            q_rot, k_rot = apply_fn(q, k, cos, sin)
+        except TypeError:
+            q_rot, k_rot = apply_fn(q, k, cos, sin, unsqueeze_dim=1)
+    q_np = q_rot[0].detach().cpu().numpy()
+    q_engine = np.zeros((num_q_heads * head_dim, t_len), dtype=np.float32, order="F")
+    for ti in range(t_len):
+        q_engine[:, ti] = q_np[:, ti, :].reshape(-1)
+    q_path = os.path.join(os.path.dirname(out_path), f"ref_q_rope_t{token_tag}.npy")
+    np.save(q_path, q_engine)
+    print(f"wrote {q_path} shape={q_engine.shape} order=F")
+    k_np = k_rot[0].detach().cpu().numpy()
+    k_engine = np.zeros((num_kv_heads * head_dim, t_len), dtype=np.float32, order="F")
+    for ti in range(t_len):
+        k_engine[:, ti] = k_np[:, ti, :].reshape(-1)
+    k_path = os.path.join(os.path.dirname(out_path), f"ref_k_rope_t{token_tag}.npy")
+    np.save(k_path, k_engine)
+    print(f"wrote {k_path} shape={k_engine.shape} order=F")
+    v_np = v[0].detach().cpu().numpy()
+    v_engine = np.zeros((num_kv_heads * head_dim, t_len), dtype=np.float32, order="F")
+    for ti in range(t_len):
+        v_engine[:, ti] = v_np[:, ti, :].reshape(-1)
+    v_path = os.path.join(os.path.dirname(out_path), f"ref_v_t{token_tag}.npy")
+    np.save(v_path, v_engine)
+    print(f"wrote {v_path} shape={v_engine.shape} order=F")
+    # HF 5.x 的 attn.forward 要 position_embeddings；这里用已经转好的 Q/K/V 自己做一遍 attention。
+    with torch.no_grad():
+        g = num_q_heads // num_kv_heads
+        k_rep = k_rot.repeat_interleave(g, dim=1)
+        v_rep = v.repeat_interleave(g, dim=1)
+        scores = torch.matmul(q_rot, k_rep.transpose(-2, -1)) * (head_dim**-0.5)
+        tq = q_rot.size(2)
+        causal_mask = torch.triu(torch.ones(tq, tq, dtype=torch.bool), diagonal=1)
+        scores = scores.masked_fill(causal_mask, float("-inf"))
+        probs = torch.softmax(scores.float(), dim=-1).to(q_rot.dtype)
+        ctx = torch.matmul(probs, v_rep)
+        ctx = ctx.transpose(1, 2).contiguous().view(bsz, tq, num_q_heads * head_dim)
+        attn_h = torch.nn.functional.linear(ctx, attn.o_proj.weight)[0].detach().cpu().numpy()
+    attn_engine = np.asfortranarray(attn_h.T.astype(np.float32, copy=False))
+    attn_path = os.path.join(os.path.dirname(out_path), f"ref_attn_out_t{token_tag}.npy")
+    np.save(attn_path, attn_engine)
+    print(f"wrote {attn_path} shape={attn_engine.shape} order=F")
+
 
 if __name__ == "__main__":
     main()

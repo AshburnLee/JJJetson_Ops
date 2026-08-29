@@ -20,15 +20,15 @@ KV_DIM = NUM_KV_HEADS * HEAD_DIM
 VOCAB_SIZE = 32000
 MAX_SEQ_LEN = 256
 
-# fixture 与 Loader 约定：row-major，与 test_transformer_model_load_weights 一致
+# fixture 与 Loader 约定：Linear 是 row-major [out, in]，跟 linear_forward_device / PyTorch 一样
 LAYER_WEIGHT_SPECS: list[tuple[str, tuple[int, ...]]] = [
-    ("w_q", (HIDDEN_SIZE, Q_DIM)),
-    ("w_k", (HIDDEN_SIZE, KV_DIM)),
-    ("w_v", (HIDDEN_SIZE, KV_DIM)),
-    ("w_o", (Q_DIM, HIDDEN_SIZE)),
-    ("w_gate", (HIDDEN_SIZE, INTERMEDIATE_SIZE)),
-    ("w_up", (HIDDEN_SIZE, INTERMEDIATE_SIZE)),
-    ("w_down", (INTERMEDIATE_SIZE, HIDDEN_SIZE)),
+    ("w_q", (Q_DIM, HIDDEN_SIZE)),
+    ("w_k", (KV_DIM, HIDDEN_SIZE)),
+    ("w_v", (KV_DIM, HIDDEN_SIZE)),
+    ("w_o", (HIDDEN_SIZE, Q_DIM)),
+    ("w_gate", (INTERMEDIATE_SIZE, HIDDEN_SIZE)),
+    ("w_up", (INTERMEDIATE_SIZE, HIDDEN_SIZE)),
+    ("w_down", (HIDDEN_SIZE, INTERMEDIATE_SIZE)),
     ("w_input_layernorm", (HIDDEN_SIZE,)),
     ("w_post_attention_layernorm", (HIDDEN_SIZE,)),
 ]
@@ -144,8 +144,8 @@ def test_two_layer_fixture_layout_roundtrip() -> None:
             "final_norm",
         )
 
-        w_q0 = _read_layer_weight(handle, 0, "w_q", (HIDDEN_SIZE, Q_DIM))
-        w_q1 = _read_layer_weight(handle, 1, "w_q", (HIDDEN_SIZE, Q_DIM))
+        w_q0 = _read_layer_weight(handle, 0, "w_q", (Q_DIM, HIDDEN_SIZE))
+        w_q1 = _read_layer_weight(handle, 1, "w_q", (Q_DIM, HIDDEN_SIZE))
         if np.array_equal(w_q0, w_q1):
             raise AssertionError("layer0.w_q and layer1.w_q must differ")
 

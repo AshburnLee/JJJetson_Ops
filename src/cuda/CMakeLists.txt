@@ -84,6 +84,10 @@ add_library(qkv_pack_fp16_cuda OBJECT
   qkv_pack_fp16.cu
 )
 
+add_library(fa_dst_unpack_cuda OBJECT
+  fa_dst_unpack.cu
+)
+
 add_library(embed_cuda OBJECT
   embed.cu
 )
@@ -113,6 +117,7 @@ foreach(t gated_unary_cuda
           swiglu_cuda
           elementwise_cuda
           qkv_pack_fp16_cuda
+          fa_dst_unpack_cuda
           embed_cuda
           lm_head_cuda
           sampler_top_k_cuda

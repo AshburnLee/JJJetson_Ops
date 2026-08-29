@@ -43,17 +43,17 @@ def _config(num_layers: int) -> dict:
 def _layer_block_tensors(layer_idx: int, seed: int) -> dict[str, np.ndarray]:
     rng = np.random.default_rng(seed)
     return {
-        f"layer{layer_idx}.w_q": rng.standard_normal((HIDDEN_SIZE, Q_DIM)).astype(np.float32),
-        f"layer{layer_idx}.w_k": rng.standard_normal((HIDDEN_SIZE, KV_DIM)).astype(np.float32),
-        f"layer{layer_idx}.w_v": rng.standard_normal((HIDDEN_SIZE, KV_DIM)).astype(np.float32),
-        f"layer{layer_idx}.w_o": rng.standard_normal((Q_DIM, HIDDEN_SIZE)).astype(np.float32),
-        f"layer{layer_idx}.w_gate": rng.standard_normal((HIDDEN_SIZE, INTERMEDIATE_SIZE)).astype(
+        f"layer{layer_idx}.w_q": rng.standard_normal((Q_DIM, HIDDEN_SIZE)).astype(np.float32),
+        f"layer{layer_idx}.w_k": rng.standard_normal((KV_DIM, HIDDEN_SIZE)).astype(np.float32),
+        f"layer{layer_idx}.w_v": rng.standard_normal((KV_DIM, HIDDEN_SIZE)).astype(np.float32),
+        f"layer{layer_idx}.w_o": rng.standard_normal((HIDDEN_SIZE, Q_DIM)).astype(np.float32),
+        f"layer{layer_idx}.w_gate": rng.standard_normal((INTERMEDIATE_SIZE, HIDDEN_SIZE)).astype(
             np.float32
         ),
-        f"layer{layer_idx}.w_up": rng.standard_normal((HIDDEN_SIZE, INTERMEDIATE_SIZE)).astype(
+        f"layer{layer_idx}.w_up": rng.standard_normal((INTERMEDIATE_SIZE, HIDDEN_SIZE)).astype(
             np.float32
         ),
-        f"layer{layer_idx}.w_down": rng.standard_normal((INTERMEDIATE_SIZE, HIDDEN_SIZE)).astype(
+        f"layer{layer_idx}.w_down": rng.standard_normal((HIDDEN_SIZE, INTERMEDIATE_SIZE)).astype(
             np.float32
         ),
         f"layer{layer_idx}.w_input_layernorm": rng.standard_normal((HIDDEN_SIZE,)).astype(

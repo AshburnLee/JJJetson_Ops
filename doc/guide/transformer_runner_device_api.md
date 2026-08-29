@@ -61,9 +61,10 @@ ctx.d_hidden_in ──D2D──► buffers[T].d_hidden
          │                    ├── append ──► KVCache [L,L+T)       │
          │                    │              (不改 cache_len)       │
          │                    ├── cast ──► d_k/v_fa_fp16 [L+T]     │
-         │                    └── FA(d_q_fp16, d_k/v_fa_fp16)      │
-         │                              ──► d_attn_out              │
-         │                    O Linear + Pre-FFN + SwiGLU FFN      │
+         │                    └── FA(causal=1, q_pos_offset=L)     │
+         │                              -> d_attn_out FA layout     │
+         │                    unpack -> d_q flat -> O Linear        │
+         │                    Pre-FFN + SwiGLU FFN                  │
          │                    Post-FFN add ──► buffers.d_hidden_out│
          └────────────────────┴────────────────────────────────────┘
                               │

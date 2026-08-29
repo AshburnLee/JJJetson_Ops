@@ -26,6 +26,10 @@ typedef struct FaDoubleBufferShape {
     int num_kv_tokens;
     int num_q_heads;
     int num_kv_heads;
+    // 0=只 mask pad；1=Llama 因果：再把 kv_abs > q_abs 打成 -inf
+    int causal;
+    // Q 第 0 行的绝对位置。q_abs = q_pos_offset + q_row
+    int q_pos_offset;
 } FaDoubleBufferShape;
 
 // 校验 shape；0=通过，-1=失败（错误信息写 stderr）

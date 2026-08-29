@@ -410,6 +410,20 @@ target_link_libraries(qkv_pack_fp16_me PRIVATE
 
 set_python_module_props(qkv_pack_fp16_me)
 
+add_library(fa_dst_unpack_me MODULE
+  fa_dst_unpack_binding.cpp
+  $<TARGET_OBJECTS:fa_dst_unpack_cuda>
+)
+
+target_link_libraries(fa_dst_unpack_me PRIVATE
+  pybind11::module
+  ${Python3_LIBRARIES}
+  cuda
+  cudart
+)
+
+set_python_module_props(fa_dst_unpack_me)
+
 add_library(transformer_runner_me MODULE
   transformer_runner_binding.cpp
   $<TARGET_OBJECTS:transformer_engine>
@@ -418,6 +432,7 @@ add_library(transformer_runner_me MODULE
   $<TARGET_OBJECTS:rms_norm_fused_add_cuda>
   $<TARGET_OBJECTS:elementwise_cuda>
   $<TARGET_OBJECTS:qkv_pack_fp16_cuda>
+  $<TARGET_OBJECTS:fa_dst_unpack_cuda>
   $<TARGET_OBJECTS:kv_cache_cuda>
   $<TARGET_OBJECTS:kv_cache_model>
   $<TARGET_OBJECTS:fa_double_buffer_cuda>
@@ -483,6 +498,7 @@ add_library(inference_engine_me MODULE
   $<TARGET_OBJECTS:rms_norm_fused_add_cuda>
   $<TARGET_OBJECTS:elementwise_cuda>
   $<TARGET_OBJECTS:qkv_pack_fp16_cuda>
+  $<TARGET_OBJECTS:fa_dst_unpack_cuda>
   $<TARGET_OBJECTS:fa_double_buffer_cuda>
   $<TARGET_OBJECTS:rope_global_cache_cuda>
 )
@@ -516,6 +532,7 @@ add_library(generate_loop_me MODULE
   $<TARGET_OBJECTS:rms_norm_fused_add_cuda>
   $<TARGET_OBJECTS:elementwise_cuda>
   $<TARGET_OBJECTS:qkv_pack_fp16_cuda>
+  $<TARGET_OBJECTS:fa_dst_unpack_cuda>
   $<TARGET_OBJECTS:fa_double_buffer_cuda>
   $<TARGET_OBJECTS:rope_global_cache_cuda>
 )
@@ -550,6 +567,7 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
             linear_me
             elementwise_me
             qkv_pack_fp16_me
+            fa_dst_unpack_me
             transformer_runner_me
             weight_loader_me
             transformer_model_me

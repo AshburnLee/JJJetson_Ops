@@ -33,6 +33,8 @@ struct FaDoubleBufferKernelParams {
     int num_q_heads;
     int num_kv_heads;
     float scale;
+    int causal;
+    int q_pos_offset;
 };
 
 // 本 tile 有几行是真 KV。例：num_kv_tokens=4、tile=32、tile_id=0 -> 4；
@@ -291,9 +293,15 @@ __global__ void __launch_bounds__(256, 4)
         const int global_kv_col = tile_id * kKvTokenTile + l_id;
 
         for (int r = row_start_w; r < row_end_w; ++r) {
-            float s_val = (global_kv_col < num_kv_tokens)
-                              ? __half2float(s_scores[r][l_id]) * params.scale
-                              : -INFINITY;
+            const int q_row = (r < num_q_tokens) ? r : (r - num_q_tokens);
+            const int q_abs = params.q_pos_offset + q_row;
+            // pad：列已经出了本头的 token 数。causal：看见未来 token 就丢掉。
+            // 例：q_pos_offset=0、q_row=0、num_kv_tokens=4 -> 只留 kv_col=0
+            int keep = (global_kv_col < num_kv_tokens) ? 1 : 0;
+            if (params.causal != 0 && global_kv_col > q_abs) {
+                keep = 0;
+            }
+            float s_val = keep ? __half2float(s_scores[r][l_id]) * params.scale : -INFINITY;
             const float row_max = warp_reduce_xor_max(s_val);
             const float exp_val = expf(s_val - row_max);
             const float row_sum = warp_reduce_xor_sum(exp_val);

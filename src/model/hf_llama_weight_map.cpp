@@ -68,13 +68,13 @@ static int map_layer_suffix(const char *suffix, char *out_internal_suffix, size_
         bool transpose;
     };
     static const Rule kRules[] = {
-        {"self_attn.q_proj.weight", "w_q", true},
-        {"self_attn.k_proj.weight", "w_k", true},
-        {"self_attn.v_proj.weight", "w_v", true},
-        {"self_attn.o_proj.weight", "w_o", true},
-        {"mlp.gate_proj.weight", "w_gate", true},
-        {"mlp.up_proj.weight", "w_up", true},
-        {"mlp.down_proj.weight", "w_down", true},
+        {"self_attn.q_proj.weight", "w_q", false},
+        {"self_attn.k_proj.weight", "w_k", false},
+        {"self_attn.v_proj.weight", "w_v", false},
+        {"self_attn.o_proj.weight", "w_o", false},
+        {"mlp.gate_proj.weight", "w_gate", false},
+        {"mlp.up_proj.weight", "w_up", false},
+        {"mlp.down_proj.weight", "w_down", false},
         {"input_layernorm.weight", "w_input_layernorm", false},
         {"post_attention_layernorm.weight", "w_post_attention_layernorm", false},
     };
@@ -171,7 +171,15 @@ static int host_tensor_clone_1d(const HostTensor *src, HostTensor *dst, const ch
     return 0;
 }
 
-// HF [out, in] row-major -> internal [in, out] row-major
+// 只给 lm_head 用：HF [vocab, hidden] -> 内部 [hidden, vocab]。
+// 例：vocab=2 hidden=3，HF 行主序
+//   [[a, b, c],
+//    [d, e, f]]
+// 转完是
+//   [[a, d],
+//    [b, e],
+//    [c, f]]
+// 即 lm_head[h, v]，给 untied_lm_head_forward_device。
 static int host_tensor_transpose_2d(const HostTensor *src, HostTensor *dst, const char *new_name) {
     if (src->ndim != 2) {
         return -1;

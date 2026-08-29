@@ -44,26 +44,26 @@ def _fixture_tensors(num_layers: int = 1) -> dict[str, np.ndarray]:
     for layer_idx in range(num_layers):
         seed = 200 + layer_idx * 50
         r = np.random.default_rng(seed)
-        tensors[f"layer{layer_idx}.w_q"] = r.standard_normal((HIDDEN_SIZE, Q_DIM)).astype(
+        tensors[f"layer{layer_idx}.w_q"] = r.standard_normal((Q_DIM, HIDDEN_SIZE)).astype(
             np.float32
         )
-        tensors[f"layer{layer_idx}.w_k"] = r.standard_normal((HIDDEN_SIZE, KV_DIM)).astype(
+        tensors[f"layer{layer_idx}.w_k"] = r.standard_normal((KV_DIM, HIDDEN_SIZE)).astype(
             np.float32
         )
-        tensors[f"layer{layer_idx}.w_v"] = r.standard_normal((HIDDEN_SIZE, KV_DIM)).astype(
+        tensors[f"layer{layer_idx}.w_v"] = r.standard_normal((KV_DIM, HIDDEN_SIZE)).astype(
             np.float32
         )
-        tensors[f"layer{layer_idx}.w_o"] = r.standard_normal((Q_DIM, HIDDEN_SIZE)).astype(
+        tensors[f"layer{layer_idx}.w_o"] = r.standard_normal((HIDDEN_SIZE, Q_DIM)).astype(
             np.float32
         )
         tensors[f"layer{layer_idx}.w_gate"] = r.standard_normal(
-            (HIDDEN_SIZE, INTERMEDIATE_SIZE)
+            (INTERMEDIATE_SIZE, HIDDEN_SIZE)
         ).astype(np.float32)
         tensors[f"layer{layer_idx}.w_up"] = r.standard_normal(
-            (HIDDEN_SIZE, INTERMEDIATE_SIZE)
+            (INTERMEDIATE_SIZE, HIDDEN_SIZE)
         ).astype(np.float32)
         tensors[f"layer{layer_idx}.w_down"] = r.standard_normal(
-            (INTERMEDIATE_SIZE, HIDDEN_SIZE)
+            (HIDDEN_SIZE, INTERMEDIATE_SIZE)
         ).astype(np.float32)
         tensors[f"layer{layer_idx}.w_input_layernorm"] = r.standard_normal((HIDDEN_SIZE,)).astype(
             np.float32

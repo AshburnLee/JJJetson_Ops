@@ -41,7 +41,29 @@ def warp_reduce_down_sum_ref(row32: np.ndarray) -> np.float32:
     return np.float32(v[0])
 
 
-def fa_ref(Q: np.ndarray, K: np.ndarray, V: np.ndarray, scale: float = 1.0) -> tuple[Any, ...]:
+def _mask_fa_scores(S: np.ndarray, t0: int, tok_kv: int, causal: int, q_pos_offset: int) -> None:
+    # S: [tok_q, cols]。pad 列、以及 causal 时 kv 比这个 Q 更靠后的列，都打成 -inf。
+    tok_q = S.shape[0]
+    cols = S.shape[1]
+    for c in range(cols):
+        kv_abs = t0 + c
+        if kv_abs >= tok_kv:
+            S[:, c] = -np.inf
+            continue
+        if causal:
+            for q_row in range(tok_q):
+                if kv_abs > q_pos_offset + q_row:
+                    S[q_row, c] = -np.inf
+
+
+def fa_ref(
+    Q: np.ndarray,
+    K: np.ndarray,
+    V: np.ndarray,
+    scale: float = 1.0,
+    causal: int = 0,
+    q_pos_offset: int = 0,
+) -> tuple[Any, ...]:
     """
     与 fa kernel 一致的两遍式参考（col-major）；shape 由 Q/K/V 数组推断。
     返回 (dst, m_all, l_all, S_all, row_sum_all, scale_old_all, scale_new_all, exp_val_all)。
@@ -111,6 +133,8 @@ def fa_ref(Q: np.ndarray, K: np.ndarray, V: np.ndarray, scale: float = 1.0) -> t
                 if t0 + c >= tok_kv:
                     S0[:, c] = -np.inf
                     S1[:, c] = -np.inf
+            _mask_fa_scores(S0, t0, tok_kv, causal, q_pos_offset)
+            _mask_fa_scores(S1, t0, tok_kv, causal, q_pos_offset)
             S = np.concatenate([S0, S1], axis=0) * scale
             S_all[kv_head, tile_id, :, :] = S
             row_max = np.max(S, axis=1)
@@ -145,6 +169,7 @@ def fa_ref(Q: np.ndarray, K: np.ndarray, V: np.ndarray, scale: float = 1.0) -> t
                 for c in range(cols):
                     if t0 + c >= tok_kv:
                         S0[:, c] = -np.inf
+                _mask_fa_scores(S0, t0, tok_kv, causal, q_pos_offset)
                 P0 = np.exp(S0 * scale - m[0:tok_q, None]) / ell[0:tok_q, None]
                 v_tile = V[:, t0:t1, kv_head, 0].astype(np.float32).T
                 if v_tile.shape[0] < cols:
@@ -161,6 +186,7 @@ def fa_ref(Q: np.ndarray, K: np.ndarray, V: np.ndarray, scale: float = 1.0) -> t
                 for c in range(cols):
                     if t0 + c >= tok_kv:
                         S1[:, c] = -np.inf
+                _mask_fa_scores(S1, t0, tok_kv, causal, q_pos_offset)
                 P1 = np.exp(S1 * scale - m[tok_q : 2 * tok_q, None]) / ell[tok_q : 2 * tok_q, None]
                 v_tile = V[:, t0:t1, kv_head, 0].astype(np.float32).T
                 if v_tile.shape[0] < cols:
@@ -175,9 +201,16 @@ def fa_ref(Q: np.ndarray, K: np.ndarray, V: np.ndarray, scale: float = 1.0) -> t
     return dst, m_all, l_all, S_all, row_sum_all, scale_old_all, scale_new_all, exp_val_all
 
 
-def fa_ref_dst_only(Q: np.ndarray, K: np.ndarray, V: np.ndarray, scale: float = 1.0) -> np.ndarray:
+def fa_ref_dst_only(
+    Q: np.ndarray,
+    K: np.ndarray,
+    V: np.ndarray,
+    scale: float = 1.0,
+    causal: int = 0,
+    q_pos_offset: int = 0,
+) -> np.ndarray:
     """仅返回 dst，供 test_fa_tc 等与 debug 无关的用例。"""
-    return fa_ref(Q, K, V, scale)[0]
+    return fa_ref(Q, K, V, scale, causal=causal, q_pos_offset=q_pos_offset)[0]
 
 
 def empty_dst_f(shape: tuple[int, ...] | None = None) -> np.ndarray:
@@ -239,10 +272,11 @@ def run_launcher(
     K: np.ndarray,
     V: np.ndarray,
     scale: float,
+    **kwargs: Any,
 ) -> np.ndarray:
     dst_shape = (Q.shape[0], Q.shape[1], Q.shape[2], 1)
     dst = empty_dst_f(dst_shape)
-    launcher(Q, K, V, dst, scale)
+    launcher(Q, K, V, dst, scale, **kwargs)
     return np.array(dst, copy=True)
 
 

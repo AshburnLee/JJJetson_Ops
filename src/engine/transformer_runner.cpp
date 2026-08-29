@@ -9,6 +9,7 @@
 #include "cuda_utils.h"
 #include "elementwise.h"
 #include "fa.h"
+#include "fa_dst_unpack.h"
 #include "kv_cache.h"
 #include "linear.h"
 #include "qkv_pack_fp16.h"
@@ -244,7 +245,7 @@ extern "C" void transformer_layer_linears_forward_device(
     KV cache append + 读历史 cast + FA Attention（RoPE 后 flat fp32 d_k/d_v）:
     调用前: cache_len = L；d_q_fp16 为本步 Q；d_k/d_v 为本步 [kv_dim, T] fp32
     append 写入 cache [L, L+T)；cast 得到 d_k/v_fa_fp16 [head_dim, L+T, num_kv_heads, 1]
-    FA 调用后: d_attn_out = FA(d_q_fp16, d_k/v_fa_fp16) fp32 [head_dim, T, num_q_heads, 1]
+    FA 调用后: d_attn_out = FA layout [head_dim, T, H]；unpack 进 d_q 再 O Linear
     */
     if (kv_cache == nullptr || d_k_fa_fp16 == nullptr || d_v_fa_fp16 == nullptr) {
         std::fprintf(stderr, "transformer_layer: kv_cache and FA fp16 buffers required\n");
@@ -279,6 +280,8 @@ extern "C" void transformer_layer_linears_forward_device(
     fa_shape.num_kv_tokens = num_kv_tokens;
     fa_shape.num_q_heads = num_q_heads;
     fa_shape.num_kv_heads = num_kv_heads;
+    fa_shape.causal = 1;
+    fa_shape.q_pos_offset = cache_len_before;
     if (fa_double_buffer_validate_shape(&fa_shape) != 0) {
         std::fprintf(stderr, "transformer_layer: fa shape validation failed\n");
         return;
@@ -290,9 +293,17 @@ extern "C" void transformer_layer_linears_forward_device(
         return;
     }
 
+    // FA dst 是 [head_dim, T, H]，O Linear 要 [H*head_dim, T]。T=1 碰巧一样；T>1 必须拆。
+    // 复用 d_q：RoPE 后的 Q 已经 pack 走了。
+    if (fa_dst_unpack_forward_device(stream, buffers->d_attn_out, buffers->d_q, head_dim, T,
+                                     num_q_heads) != 0) {
+        std::fprintf(stderr, "transformer_layer: fa dst unpack failed\n");
+        return;
+    }
+
     // step 4：O Linear
-    linear_forward_device(stream, cublas_handle, buffers->d_attn_out, d_w_o, buffers->d_hidden_mid,
-                          Q, H, T);
+    linear_forward_device(stream, cublas_handle, buffers->d_q, d_w_o, buffers->d_hidden_mid, Q, H,
+                          T);
 
     // step 5：Pre-FFN RMSNorm + SwiGLU FFN
     // Pre-FFN:

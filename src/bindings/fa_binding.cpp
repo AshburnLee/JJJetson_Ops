@@ -66,7 +66,7 @@ void fa_double_buffer_py(py::buffer q, py::buffer k, py::buffer v, py::array_t<f
 }
 
 void fa_double_buffer_shape_py(py::buffer q, py::buffer k, py::buffer v, py::array_t<float> dst,
-                               float scale) {
+                               float scale, int causal, int q_pos_offset) {
     auto q_buf = q.request();
     auto k_buf = k.request();
     auto v_buf = v.request();
@@ -81,6 +81,8 @@ void fa_double_buffer_shape_py(py::buffer q, py::buffer k, py::buffer v, py::arr
     shape.num_q_heads = static_cast<int>(q_buf.shape[2]);
     shape.num_kv_tokens = static_cast<int>(k_buf.shape[1]);
     shape.num_kv_heads = static_cast<int>(k_buf.shape[2]);
+    shape.causal = causal;
+    shape.q_pos_offset = q_pos_offset;
 
     fa_double_buffer_forward_host(
         &shape, static_cast<const uint16_t *>(q_buf.ptr), static_cast<const uint16_t *>(k_buf.ptr),
@@ -148,8 +150,8 @@ PYBIND11_MODULE(fa_me, m) {
           "Test wrapper: legacy fixed shape via fa_double_buffer_forward_host_legacy");
 
     m.def("forward_host_shape", &fa_double_buffer_shape_py, py::arg("q"), py::arg("k"),
-          py::arg("v"), py::arg("dst"), py::arg("scale"),
-          "Test wrapper: infer FaDoubleBufferShape from Q/K/V dims");
+          py::arg("v"), py::arg("dst"), py::arg("scale"), py::arg("causal") = 0,
+          py::arg("q_pos_offset") = 0, "Test wrapper: infer FaDoubleBufferShape from Q/K/V dims");
 
 #if defined(MY_OPS_DEBUG)
     m.def("launch_fa_debug_ml", &fa_debug_py, "One-pass kernel with m/l/S dumps (debug build)",

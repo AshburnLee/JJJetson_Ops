@@ -11,7 +11,7 @@ C 实现：`src/model/hf_llama_weight_map.cpp`。Loader 入口：`weight_loader_
 将 HF 模型中的 weight 名映射为该推理引擎中的对应名称；读入 HF 风格 safetensors 后：
 
 1. **改名**：JSON key -> 内部 `layer{i}.w_*` / `embed` / `final_norm` / `lm_head`
-2. **2D 转置**：HF PyTorch Linear 权重 `[out, in]` -> 内部 row-major `[in, out]`（与 fixture / `linear_forward_device` 一致）
+2. **2D 转置（仅 lm_head）**：HF `lm_head.weight` 是 `[vocab, hidden]`，内部 untied lm_head 是 `[hidden, vocab]`，要转置。q/k/v/o/gate/up/down **不要转**：HF 已经是 PyTorch `[out, in]`，跟 `linear_forward_device` 一样。以前把 Linear 也转成 `[in, out]`，Engine 实际在算 `W^T @ x`。
 3. **1D RMSNorm**：shape 不变，只改名
 
 `load_safetensors`（无 `_hf_llama`）仍保留 JSON key 原样，供步骤 1/2 单测。
@@ -26,13 +26,13 @@ HF key                                              internal name
 model.embed_tokens.weight                           embed
 model.norm.weight                                   final_norm
 lm_head.weight                                      lm_head              (+ transpose 2D)
-model.layers.{i}.self_attn.q_proj.weight            layer{i}.w_q         (+ transpose)
-model.layers.{i}.self_attn.k_proj.weight            layer{i}.w_k         (+ transpose)
-model.layers.{i}.self_attn.v_proj.weight            layer{i}.w_v         (+ transpose)
-model.layers.{i}.self_attn.o_proj.weight            layer{i}.w_o         (+ transpose)
-model.layers.{i}.mlp.gate_proj.weight               layer{i}.w_gate      (+ transpose)
-model.layers.{i}.mlp.up_proj.weight                 layer{i}.w_up        (+ transpose)
-model.layers.{i}.mlp.down_proj.weight               layer{i}.w_down      (+ transpose)
+model.layers.{i}.self_attn.q_proj.weight            layer{i}.w_q
+model.layers.{i}.self_attn.k_proj.weight            layer{i}.w_k
+model.layers.{i}.self_attn.v_proj.weight            layer{i}.w_v
+model.layers.{i}.self_attn.o_proj.weight            layer{i}.w_o
+model.layers.{i}.mlp.gate_proj.weight               layer{i}.w_gate
+model.layers.{i}.mlp.up_proj.weight                 layer{i}.w_up
+model.layers.{i}.mlp.down_proj.weight               layer{i}.w_down
 model.layers.{i}.input_layernorm.weight             layer{i}.w_input_layernorm
 model.layers.{i}.post_attention_layernorm.weight    layer{i}.w_post_attention_layernorm
 ~~~

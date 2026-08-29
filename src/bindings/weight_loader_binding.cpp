@@ -122,6 +122,6 @@ PYBIND11_MODULE(weight_loader_me, m) {
             return py_result;
         },
         py::arg("path"),
-        "Load HF Llama-layout safetensors: map tensor names and transpose 2D weights to internal "
-        "layout");
+        "Load HF Llama-layout safetensors: map tensor names; transpose lm_head only "
+        "(Linear stays PyTorch [out, in])");
 }

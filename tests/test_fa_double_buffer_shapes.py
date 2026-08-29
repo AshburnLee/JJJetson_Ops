@@ -56,6 +56,24 @@ def test_fa_double_buffer_gqa8_tok4() -> None:
     print("Passed test_fa_double_buffer_gqa8_tok4")
 
 
+def test_fa_double_buffer_gqa8_tok4_causal() -> None:
+    # TinyLlama prefill：因果下三角。q_pos_offset=0，第 0 个 Q 只能看 KV 0。
+    head_dim = 64
+    tok_q = 4
+    q_heads = 32
+    kv_heads = 4
+    tok_kv = 4
+    Q, K, V = fc.random_fa_inputs_for_shape(head_dim, tok_q, q_heads, tok_kv, kv_heads, 41)
+    scale = 1.0 / (head_dim**0.5)
+    dst = fc.run_launcher(fa_me.forward_host_shape, Q, K, V, scale, causal=1, q_pos_offset=0)
+    dst_ref = fc.fa_ref_dst_only(Q, K, V, scale, causal=1, q_pos_offset=0)
+    nan_heads = [h for h in range(q_heads) if not np.isfinite(dst[:, :, h, 0]).all()]
+    if nan_heads:
+        raise AssertionError(f"gqa8 causal tok_kv=4 nan_heads={nan_heads}")
+    fc.assert_dst_close("gqa8 tok4 causal", dst, dst_ref)
+    print("Passed test_fa_double_buffer_gqa8_tok4_causal")
+
+
 def test_fa_double_buffer_legacy128() -> None:
     Q, K, V = fc.random_fa_inputs(24)
     dst = fc.run_launcher(fa_me.forward_host_shape, Q, K, V, 1.0)
@@ -68,4 +86,5 @@ if __name__ == "__main__":
     test_fa_double_buffer_head32()
     test_fa_double_buffer_gqa8()
     test_fa_double_buffer_gqa8_tok4()
+    test_fa_double_buffer_gqa8_tok4_causal()
     test_fa_double_buffer_legacy128()

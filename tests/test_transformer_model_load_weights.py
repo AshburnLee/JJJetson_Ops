@@ -45,13 +45,13 @@ def _tiny_config() -> dict:
 def _fixture_tensors() -> dict[str, np.ndarray]:
     np.random.seed(SEED)
     return {
-        "layer0.w_q": np.random.randn(HIDDEN_SIZE, Q_DIM).astype(np.float32),
-        "layer0.w_k": np.random.randn(HIDDEN_SIZE, KV_DIM).astype(np.float32),
-        "layer0.w_v": np.random.randn(HIDDEN_SIZE, KV_DIM).astype(np.float32),
-        "layer0.w_o": np.random.randn(Q_DIM, HIDDEN_SIZE).astype(np.float32),
-        "layer0.w_gate": np.random.randn(HIDDEN_SIZE, INTERMEDIATE_SIZE).astype(np.float32),
-        "layer0.w_up": np.random.randn(HIDDEN_SIZE, INTERMEDIATE_SIZE).astype(np.float32),
-        "layer0.w_down": np.random.randn(INTERMEDIATE_SIZE, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_q": np.random.randn(Q_DIM, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_k": np.random.randn(KV_DIM, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_v": np.random.randn(KV_DIM, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_o": np.random.randn(HIDDEN_SIZE, Q_DIM).astype(np.float32),
+        "layer0.w_gate": np.random.randn(INTERMEDIATE_SIZE, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_up": np.random.randn(INTERMEDIATE_SIZE, HIDDEN_SIZE).astype(np.float32),
+        "layer0.w_down": np.random.randn(HIDDEN_SIZE, INTERMEDIATE_SIZE).astype(np.float32),
         "layer0.w_input_layernorm": np.random.randn(HIDDEN_SIZE).astype(np.float32),
         "layer0.w_post_attention_layernorm": np.random.randn(HIDDEN_SIZE).astype(np.float32),
         "embed": np.random.randn(VOCAB_SIZE, HIDDEN_SIZE).astype(np.float32),
@@ -70,7 +70,7 @@ def test_load_weights_from_fixture():
         transformer_model_me.load_weights_from_fixture(handle, fixture_dir)
         assert transformer_model_me.is_weights_loaded(handle)
 
-        got_w_q = transformer_model_me.read_layer_w_q_host(handle, 0, HIDDEN_SIZE, Q_DIM)
+        got_w_q = transformer_model_me.read_layer_w_q_host(handle, 0, Q_DIM, HIDDEN_SIZE)
         if not np.array_equal(got_w_q, tensors["layer0.w_q"]):
             raise AssertionError("d_w_q mismatch after H2D")
         print("Passed test_load_weights_from_fixture")
@@ -115,7 +115,7 @@ def test_load_weights_from_safetensors_hf_llama():
         transformer_model_me.load_weights_from_safetensors_hf_llama(handle, st_path)
         assert transformer_model_me.is_weights_loaded(handle)
 
-        got_w_q = transformer_model_me.read_layer_w_q_host(handle, 0, HIDDEN_SIZE, Q_DIM)
+        got_w_q = transformer_model_me.read_layer_w_q_host(handle, 0, Q_DIM, HIDDEN_SIZE)
         if not np.array_equal(got_w_q, tensors["layer0.w_q"]):
             raise AssertionError("d_w_q mismatch after safetensors H2D")
         print("Passed test_load_weights_from_safetensors_hf_llama")

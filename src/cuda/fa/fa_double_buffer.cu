@@ -30,6 +30,8 @@ fa_db::FaDoubleBufferKernelParams fa_make_kernel_params(const FaDoubleBufferShap
     kparams.num_q_heads = shape->num_q_heads;
     kparams.num_kv_heads = shape->num_kv_heads;
     kparams.scale = scale;
+    kparams.causal = shape->causal;
+    kparams.q_pos_offset = shape->q_pos_offset;
     return kparams;
 }
 
@@ -98,6 +100,16 @@ extern "C" int fa_double_buffer_validate_shape(const FaDoubleBufferShape *shape)
                      "fa_double_buffer_validate_shape: GQA group g=q/kv must be even and >=2 "
                      "(got q=%d kv=%d g=%d)\n",
                      shape->num_q_heads, shape->num_kv_heads, gqa_g);
+        return -1;
+    }
+    if (shape->causal != 0 && shape->causal != 1) {
+        std::fprintf(stderr, "fa_double_buffer_validate_shape: causal must be 0 or 1 (got %d)\n",
+                     shape->causal);
+        return -1;
+    }
+    if (shape->q_pos_offset < 0) {
+        std::fprintf(stderr, "fa_double_buffer_validate_shape: q_pos_offset=%d invalid\n",
+                     shape->q_pos_offset);
         return -1;
     }
     return 0;

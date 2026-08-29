@@ -127,7 +127,7 @@ def export_fixture_dir_to_safetensors(fixture_dir: str, out_path: str) -> None:
 
 
 # HF Llama checkpoint key（PyTorch Linear [out,in]）-> 写 safetensors 单测用（步骤 3）。
-_HF_LLAMA_TRANSPOSE_SUFFIXES = frozenset({"w_q", "w_k", "w_v", "w_o", "w_gate", "w_up", "w_down"})
+# Linear 内部已经是 PyTorch [out, in]，和 HF 一样。只有 lm_head 内部是 [hidden, vocab]。
 
 
 def internal_name_to_hf_llama_key(name: str) -> str:
@@ -163,8 +163,7 @@ def internal_tensors_to_hf_llama_layout(tensors: Mapping[str, np.ndarray]) -> di
     for name, arr in tensors.items():
         key = internal_name_to_hf_llama_key(name)
         data = np.asarray(arr, dtype=np.float32)
-        suffix = name.split(".")[-1] if "." in name else name
-        if suffix in _HF_LLAMA_TRANSPOSE_SUFFIXES or name == "lm_head":
+        if name == "lm_head":
             hf[key] = np.ascontiguousarray(data.T)
         else:
             hf[key] = np.ascontiguousarray(data)
