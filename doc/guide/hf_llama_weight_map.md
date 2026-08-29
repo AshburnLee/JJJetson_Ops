@@ -114,9 +114,50 @@ kept 21 tensors, wrote models/tinyllama_2layer/model.safetensors (876652798 byte
 set JJ_HF_LLAMA_SLICE_DIR=.../models/tinyllama_2layer to run real-slice Engine test
 ~~~
 
-有切片后：
+有切片后，先确认路径能跑（smoke 只查 load / finite / KV 长度，不比 logits）：
 
 ~~~
 export JJ_HF_LLAMA_SLICE_DIR=/home/junhui/workspace/moe/JJJetson_Ops/models/tinyllama_2layer
 ./run_tests.sh --suite test_hf_llama_real_slice_smoke.py
 ~~~
+
+### dump HF logits（给 Engine 当数值 ref）
+
+脚本：`scripts/export_hf_llama_slice_logits.py`。只读已经切好的 2 层目录，CPU + F32，不进 `run_tests.sh`。不要去加载 `models/hf_src/` 那份 22 层。Orin 大约 4GB，**不要**让 HuggingFace 占 GPU 的同时再跑 Engine。
+
+在 `JJJetson_Ops`、cuda-ops 环境：
+
+~~~
+python scripts/export_hf_llama_slice_logits.py \
+  --slice-dir models/tinyllama_2layer
+
+python scripts/export_hf_llama_slice_logits.py \
+  --slice-dir models/tinyllama_2layer --tokens 1
+~~~
+
+默认 token `[1, 2, 3, 4]`。ref 存成 `.npy`（numpy 的数组文件），在切片目录，不要提交：
+
+~~~
+ref_prefill_logits_t1234.npy    [vocab, 4] 列主序，last_argmax=6415
+ref_prefill_logits_t1.npy       [vocab, 1] 列主序，last_argmax=2579
+~~~
+
+本机没有 `transformers` 就先装再 dump。dump 峰值只应是 2 层切片。
+
+### 对比 suite（Engine vs 上面那张 npy）
+
+同一 env，同一切片目录。测试里不 `import transformers`。无 env 或无 npy 会 skip。
+
+~~~
+export JJ_HF_LLAMA_SLICE_DIR=/home/junhui/workspace/moe/JJJetson_Ops/models/tinyllama_2layer
+./run_tests.sh --suite test_hf_llama_real_slice_logits.py
+~~~
+
+只跑 T=4 那条：
+
+~~~
+./run_tests.sh --suite test_hf_llama_real_slice_logits.py \
+  --case test_hf_llama_real_slice_logits
+~~~
+
+T=4 应对上 last-token argmax=6415。FA 的 QKV 是 fp16，和 HF 全 F32 不会 bitwise 相同；实测 `max_abs` 大约 `3.6e-3`，测试 `atol=rtol=1e-2`。差到十几说明结构又错了（以前 Linear 多转一次就是那种量级），不要把 tol 放到 20。

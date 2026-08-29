@@ -83,7 +83,7 @@ API         weight_loader_load_fixture / weight_loader_load_safetensors /
   - [x] 3 — HF 名映射（`hf_llama_weight_map.cpp` + `load_safetensors_hf_llama`；见 [`doc/guide/hf_llama_weight_map.md`](../guide/hf_llama_weight_map.md)）
   - [ ] 4 — 真模型验证（TinyLlama / 1~2 layer 切片）
         路径（切片 load + Engine 短 prefill smoke）已完成，不能凭此勾项。
-        4.1c 已过（T=1/T=4 vs HF npy 到 fp16 噪声）。下一步 4.2。排查见 [`doc/debug-e2e.md`](../debug-e2e.md)。具体见 **jjjetson-ops-roadmap.mdc** 模块 1 步骤 4。
+        步骤 4 已过。dump / 对比命令见 [`doc/guide/hf_llama_weight_map.md`](../guide/hf_llama_weight_map.md)。排查见 [`doc/debug-e2e.md`](../debug-e2e.md)。
         ~~~
         同一份切片 model.safetensors（21 个 tensor，F32）
         |

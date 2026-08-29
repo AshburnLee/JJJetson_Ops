@@ -167,14 +167,14 @@ FA g=8 tok=1/4/13 vs fa_ref  allclose，无 NaN      末 tile 出界已经堵住
 hidden 两层+norm vs HF       max_abs 仍约 20       差还在 layer 里（RoPE / 和 HF attention）
 ~~~
 
-权重是 TinyLlama 的，前向合同已经按 TinyLlama 搭齐（4.1c 过了）。logits 对 HF npy 是 fp16 噪声量级。下一步 4.2 收口。不要重切模型。
+权重是 TinyLlama 的，前向合同已经按 TinyLlama 搭齐。怎么 dump、怎么跑对比，见 `doc/guide/hf_llama_weight_map.md` 步骤 4。不要重切模型。
 
 
 ## 你要回头翻的文件
 
 ~~~
 scripts/export_hf_llama_slice_logits.py     在 CPU 上让 HF dump logits / embed / hidden
-tests/test_hf_llama_real_slice_logits.py    Engine 探针：T=1 logits、embed、hidden、T=4
+tests/test_hf_llama_real_slice_logits.py    Engine vs HF npy：T=1 / T=4 logits
 tests/test_fa_double_buffer_shapes.py       gqa8 满 tile 回归；tok4 末 tile 探针
 tests/fa_test_common.py                     跟 kernel 同一套公式的 numpy FA（没有 causal）
 src/cuda/fa/fa_double_buffer_kernel.cuh     生产 FA，tile=32；末 tile 只读有效行

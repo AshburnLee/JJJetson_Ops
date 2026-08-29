@@ -1,13 +1,13 @@
-"""可选数值单测：真实 HF Llama 切片 prefill logits vs 4.1 dump 的 npy。
+"""4.2：Engine prefill logits vs 4.1 dump 的 npy（唯一数值基准）。
 
 未设置 JJ_HF_LLAMA_SLICE_DIR、或切片目录里没有 ref npy 时跳过。
 不要 import transformers（dump 已在 scripts/export_hf_llama_slice_logits.py 做完）。
 不要在 Python 里再 load 一份完整权重 numpy：只读 config.txt，H2D 由 C++ Loader 完成。
-不要和 fixture tensor ref 再比一遍；唯一基准是那张 logits npy。
+不要和 fixture tensor ref 再比一遍。
 
 例：token_ids=[1,2,3,4]，npy 与 Engine 都是 [32000, 4]、列主序。
     logits[v, t] 是第 t 个输入位置、词表第 v 维。只比这两张表。
-T=1 / T=4 验收：argmax 一致，max_abs 是 FA fp16 噪声（约 1e-3），不是旧的 ~13。
+T=4 是 4.2 的 gate；T=1 是 4.1c.5 留下的回归。argmax 一致，max_abs 是 FA fp16 噪声（约 1e-3），不是旧的 ~13。
 """
 
 import os
@@ -106,6 +106,7 @@ def test_hf_llama_real_slice_logits_t1() -> None:
 
 
 def test_hf_llama_real_slice_logits() -> None:
+    # 4.2：token [1,2,3,4] vs ref_prefill_logits_t1234.npy。
     _compare_engine_to_npy(_TOKEN_IDS, _REF_NPY, assert_close=True)
 
 

@@ -147,7 +147,8 @@ def main() -> None:
         if tid < 0 or tid >= vocab:
             raise SystemExit(f"token id {tid} out of vocab_size={vocab}")
 
-    # 例：tokens=[1] -> ref_prefill_logits_t1.npy；[1,2,3,4] -> ..._t1234.npy
+    # 切口 0：整网 logits。token 列表写进文件名，例如 [1] -> t1，[1,2,3,4] -> t1234。
+    # 这是改输入的那一刀，不是新的张量站。
     token_tag = "".join(str(t) for t in token_ids)
     out_path = args.out.strip() or os.path.join(slice_dir, f"ref_prefill_logits_t{token_tag}.npy")
     out_path = os.path.abspath(out_path)
@@ -179,6 +180,8 @@ def main() -> None:
         )
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    # 切口 out_path：lm_head 之后。HF [T, vocab] 已转成 Engine [vocab, T] 列主序。
+    # 例：T=2 vocab=3，HF 两行 [[a,b,c],[d,e,f]] -> Engine 三行 [[a,d],[b,e],[c,f]]。
     np.save(out_path, engine_logits)
     last_argmax = int(np.argmax(engine_logits[:, -1]))
     print(
@@ -195,6 +198,8 @@ def main() -> None:
         raise SystemExit(
             f"embed layout mismatch: dumped {embed_engine.shape}, expected ({hidden_size}, {t_len})"
         )
+    # 切口 embed_path：只查 embed 表，不进 layer。HF [T, hidden] -> Engine [hidden, T]。
+    # 例：T=1 hidden=3，HF 一行 [0.1, 0.2, 0.3] -> Engine 一列就是这三个数。
     embed_path = os.path.join(os.path.dirname(out_path), f"ref_embed_t{token_tag}.npy")
     np.save(embed_path, embed_engine)
     print(f"wrote {embed_path} shape={embed_engine.shape} order=F")
@@ -215,6 +220,8 @@ def main() -> None:
     final_h = post_norm_h
     if final_h.shape != (hidden_size, t_len):
         raise SystemExit(f"final hidden layout mismatch: {final_h.shape}")
+    # 切口 final_path：所有层之后再过 model.norm（final RMSNorm）。
+    # HF hidden_states[-1] 是层出口、norm 之前；Engine forward_hidden_host 出口是 norm 之后，所以这里存 post_norm。
     final_path = os.path.join(os.path.dirname(out_path), f"ref_hidden_final_t{token_tag}.npy")
     np.save(final_path, final_h)
     print(f"wrote {final_path} shape={final_h.shape} order=F")
@@ -222,6 +229,7 @@ def main() -> None:
         layer0_h = np.asfortranarray(
             hs[1][0].detach().cpu().numpy().T.astype(np.float32, copy=False)
         )
+        # 切口 layer0_path：第 0 层 decoder 出口（进 layer1 之前）。shape 同 embed：[hidden, T]。
         layer0_path = os.path.join(os.path.dirname(out_path), f"ref_hidden_layer0_t{token_tag}.npy")
         np.save(layer0_path, layer0_h)
         print(f"wrote {layer0_path} shape={layer0_h.shape} order=F")
@@ -281,6 +289,8 @@ def main() -> None:
     q_engine = np.zeros((num_q_heads * head_dim, t_len), dtype=np.float32, order="F")
     for ti in range(t_len):
         q_engine[:, ti] = q_np[:, ti, :].reshape(-1)
+    # 切口 q_path：layer0、RoPE 之后的 Q。HF [H, T, D] 把头拼进一列，变成 Engine [H*D, T]。
+    # 例：H=2 D=2 T=1，头0=[1,2] 头1=[3,4] -> 这一列 [1,2,3,4]。
     q_path = os.path.join(os.path.dirname(out_path), f"ref_q_rope_t{token_tag}.npy")
     np.save(q_path, q_engine)
     print(f"wrote {q_path} shape={q_engine.shape} order=F")
@@ -288,6 +298,7 @@ def main() -> None:
     k_engine = np.zeros((num_kv_heads * head_dim, t_len), dtype=np.float32, order="F")
     for ti in range(t_len):
         k_engine[:, ti] = k_np[:, ti, :].reshape(-1)
+    # 切口 k_path：layer0、RoPE 之后的 K。排法同 Q，只是头数是 KV 头（TinyLlama 4 头，列长 256）。
     k_path = os.path.join(os.path.dirname(out_path), f"ref_k_rope_t{token_tag}.npy")
     np.save(k_path, k_engine)
     print(f"wrote {k_path} shape={k_engine.shape} order=F")
@@ -295,6 +306,7 @@ def main() -> None:
     v_engine = np.zeros((num_kv_heads * head_dim, t_len), dtype=np.float32, order="F")
     for ti in range(t_len):
         v_engine[:, ti] = v_np[:, ti, :].reshape(-1)
+    # 切口 v_path：layer0 的 V。V 不做 RoPE，layout 和 K 一样 [kv_dim, T]。
     v_path = os.path.join(os.path.dirname(out_path), f"ref_v_t{token_tag}.npy")
     np.save(v_path, v_engine)
     print(f"wrote {v_path} shape={v_engine.shape} order=F")
@@ -312,6 +324,7 @@ def main() -> None:
         ctx = ctx.transpose(1, 2).contiguous().view(bsz, tq, num_q_heads * head_dim)
         attn_h = torch.nn.functional.linear(ctx, attn.o_proj.weight)[0].detach().cpu().numpy()
     attn_engine = np.asfortranarray(attn_h.T.astype(np.float32, copy=False))
+    # 切口 attn_path：layer0 的 O Linear 之后、还没加 residual。HF [T, hidden] -> Engine [hidden, T]。
     attn_path = os.path.join(os.path.dirname(out_path), f"ref_attn_out_t{token_tag}.npy")
     np.save(attn_path, attn_engine)
     print(f"wrote {attn_path} shape={attn_engine.shape} order=F")
