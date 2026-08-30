@@ -205,6 +205,7 @@ extern "C" void transformer_layer_linears_forward_device(
     d_residual = z = h                    ← 存 skip，给后面 Pre-FFN 用
     d_hidden   = RMSNorm(h) * w_input      ← 供 Q/K/V Linear
     */
+    // attn：Pre-Attn RMS -> O Linear
     CUDA_CHECK(cudaMemsetAsync(buffers->d_residual, 0, hidden_bytes, s));
     if (rms_norm_fused_add_forward_device(stream, buffers->d_hidden, buffers->d_residual,
                                           d_w_input_layernorm, H, T, rms_norm_epsilon) != 0) {
@@ -319,6 +320,7 @@ extern "C" void transformer_layer_linears_forward_device(
     d_residual   = z = h + attn_out       ← 更新 skip（40c Post-FFN add 还会用）
     d_hidden_mid = RMSNorm(z) * w_post  ← 供 gate/up Linear
     */
+    // ffn：Pre-FFN RMS -> residual add
     if (rms_norm_fused_add_forward_device(stream, buffers->d_hidden_mid, buffers->d_residual,
                                           d_w_post_attention_layernorm, H, T,
                                           rms_norm_epsilon) != 0) {

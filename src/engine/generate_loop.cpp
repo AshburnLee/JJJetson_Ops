@@ -4,6 +4,7 @@
 
 #include "cuda_utils.h"
 #include "inference_engine.h"
+#include "nvtx_range.h"
 #include "sampler_top_k.h"
 #include "sampler_top_p.h"
 #include "transformer_model.h"
@@ -99,12 +100,20 @@ extern "C" int generate_loop_run(InferenceEngine *engine, const int *prompt_toke
         return -1;
     }
 
+    name_engine_thread();
+    NVTX_RANGE("generate");
+
     int num_generated = 0;
     int next_token = 0;
-    if (forward_token_step(engine, prompt_token_ids, prompt_len, 0, vocab_size, top_k, temperature,
-                           top_p, seed, &next_token) != 0) {
-        fprintf(stderr, "generate_loop_run: prefill forward failed\n");
-        return -1;
+    // TODO: d_token_ids、d_logits、d_out_token ,Generate 10 个 token，就是 10 轮 malloc / memcpy /
+    // free session、stream、GPU buffer 是 Engine 的东西，但是malloc/free 却在 loop 中
+    {
+        NVTX_RANGE("prefill");
+        if (forward_token_step(engine, prompt_token_ids, prompt_len, 0, vocab_size, top_k,
+                               temperature, top_p, seed, &next_token) != 0) {
+            fprintf(stderr, "generate_loop_run: prefill forward failed\n");
+            return -1;
+        }
     }
     out_token_ids[num_generated++] = next_token;
     if (eos_token_id >= 0 && next_token == eos_token_id) {
@@ -112,21 +121,24 @@ extern "C" int generate_loop_run(InferenceEngine *engine, const int *prompt_toke
     }
 
     int decode_token = next_token;
-    for (int step = 1; step < max_new_tokens; ++step) {
-        const int cache_len = inference_engine_kv_cache_len(engine);
-        if (cache_len + 1 > max_seq_len) {
-            fprintf(stderr, "generate_loop_run: decode exceeds max_seq_len\n");
-            return -1;
-        }
-        if (forward_token_step(engine, &decode_token, 1, cache_len, vocab_size, top_k, temperature,
-                               top_p, seed, &next_token) != 0) {
-            fprintf(stderr, "generate_loop_run: decode forward failed\n");
-            return -1;
-        }
-        out_token_ids[num_generated++] = next_token;
-        decode_token = next_token;
-        if (eos_token_id >= 0 && next_token == eos_token_id) {
-            break;
+    {
+        NVTX_RANGE("decode");
+        for (int step = 1; step < max_new_tokens; ++step) {
+            const int cache_len = inference_engine_kv_cache_len(engine);
+            if (cache_len + 1 > max_seq_len) {
+                fprintf(stderr, "generate_loop_run: decode exceeds max_seq_len\n");
+                return -1;
+            }
+            if (forward_token_step(engine, &decode_token, 1, cache_len, vocab_size, top_k,
+                                   temperature, top_p, seed, &next_token) != 0) {
+                fprintf(stderr, "generate_loop_run: decode forward failed\n");
+                return -1;
+            }
+            out_token_ids[num_generated++] = next_token;
+            decode_token = next_token;
+            if (eos_token_id >= 0 && next_token == eos_token_id) {
+                break;
+            }
         }
     }
 

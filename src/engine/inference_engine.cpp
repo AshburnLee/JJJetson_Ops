@@ -1,5 +1,6 @@
 #include "inference_engine.h"
 
+#include <cstdio>
 #include <stdio.h>
 #include <unordered_map>
 #include <vector>
@@ -7,6 +8,7 @@
 #include "cublas_utils.cuh"
 #include "cuda_utils.h"
 #include "kv_cache.h"
+#include "nvtx_range.h"
 #include "transformer_model.h"
 #include "transformer_runner.h"
 
@@ -127,6 +129,10 @@ extern "C" InferenceEngine *inference_engine_create(TransformerModel *model, voi
         std::fprintf(stderr, "inference_engine_create: invalid model config\n");
         return nullptr;
     }
+
+    // 最外层组件：Engine session（stream / cublas / KV / FA staging）。不拆子分配。
+    name_engine_thread();
+    NVTX_RANGE("create_engine");
 
     // step 1：Engine 壳，只存 model 引用
     auto *engine = new InferenceEngine{};

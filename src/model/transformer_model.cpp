@@ -9,6 +9,7 @@
 #include "cuda_utils.h"
 #include "embed.h"
 #include "lm_head.h"
+#include "nvtx_range.h"
 #include "rms_norm.h"
 #include "weight_loader.h"
 
@@ -188,7 +189,9 @@ TransformerModel *transformer_model_create(const ModelConfig *cfg) {
         std::fprintf(stderr, "transformer_model_create: invalid ModelConfig\n");
         return nullptr;
     }
-    //
+    // 最外层组件：Model 壳 + 权重槽 + RoPE cache。不拆 rope / 各层 malloc。
+    name_engine_thread();
+    NVTX_RANGE("create_model");
     auto *model = new TransformerModel{};
     model->config = *cfg;
     model->lm_head_tied = (cfg->tie_word_embeddings != 0);
@@ -257,6 +260,8 @@ void transformer_model_destroy(TransformerModel *model) {
     model->d_w_final_norm = nullptr;
 
     delete model;
+    // 整条链路最后一次拆：Engine 已先 destroy，这里权重 / RoPE / embed 也走完了。
+    nvtx_mark_engine_end();
 }
 
 const ModelConfig *transformer_model_get_config(const TransformerModel *model) {
@@ -338,6 +343,8 @@ int transformer_model_load_weights(TransformerModel *model, const WeightLoadResu
         return -1;
     }
 
+    // 最外层步骤：整份权重 H2D。不拆单层 / 单 tensor。
+    NVTX_RANGE("load_weights");
     for (int layer = 0; layer < model->config.num_layers; ++layer) {
         if (load_one_layer_from_result(model, loaded, layer) != 0) {
             return -1;

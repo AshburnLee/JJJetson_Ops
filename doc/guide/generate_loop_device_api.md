@@ -199,6 +199,30 @@ generate(engine_handle, prompt_token_ids, max_new_tokens, eos_token_id=-1, top_k
 
 ---
 
+## NVTX 时间线（`./build_all.sh --nvtx` 后才有事件）
+
+默认编译是空操作。打开 `ENABLE_NVTX` 后，只打最外层组件和最外层步骤，不拆子块
+（不打 `q_linear` / `malloc` / `layer_N` 这类）：
+
+~~~
+create_model          Model 组件：分配权重槽 + RoPE cache
+load_weights          步骤：整份权重 H2D
+create_engine         Engine 组件：stream / cublas / KV / FA staging
+generate              步骤：一次 generate_loop_run
+  prefill             步骤：prompt 一次 forward + sample
+  decode              步骤：后续 T=1 循环
+~~~
+
+第一次 `cudaMalloc` 的 CUDA context 冷启动会算进 `create_model`。
+Python 写 fixture、`import *.so` 不在这棵树上（nsys 自己的 `dlopen`）。
+
+主机侧单线程推 Engine。`ENABLE_NVTX` 打开后，该 OS 线程改名为 `my_engine`（nsys 线程行，不再叫 python）。
+
+第一次进入我们的 C++（通常是 `create_model`）会打一条紫色瞬时 mark `engine_start`，不是 range：这条竖线之后才是业务。
+`destroy_model` 把权重 / RoPE / embed 拆完后打一条橙色瞬时 mark `engine_end`：这条竖线之前是 create -> load -> generate -> destroy，之后是 Python 收尾。
+
+---
+
 ## 与 Engine 的分工（调用关系）
 
 ~~~

@@ -20,6 +20,15 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
+# NVTX 默认关。profile 时：cmake -DENABLE_NVTX=ON 或 ./build_all.sh --nvtx
+option(ENABLE_NVTX "Emit NVTX ranges for nsys timeline" OFF)
+if(ENABLE_NVTX)
+  add_compile_definitions(ENABLE_NVTX=1)
+  message(STATUS "ENABLE_NVTX=ON (nvtxRangePushA/Pop active)")
+else()
+  message(STATUS "ENABLE_NVTX=OFF (NvtxRange is a no-op)")
+endif()
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
 find_package(pybind11 REQUIRED)
 

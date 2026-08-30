@@ -3,10 +3,6 @@
 面向 Jetson Orin，把 推理场景下经过业界验证的 SOTA 推理算子落成端侧、AI 边缘计算性能优异的 CUDA 实现；正确性依托 可对拍的参考与小例，持续用测试补强覆盖。
 
 
-## 0. 真实推理场景下 Op 的性能对比
-
-[WIP]
-
 ## 1. Prerequisites
 ### GPU 规格
 
@@ -61,6 +57,8 @@ conda activate cuda-ops
 ./build_all.sh
 # debug mode：
 ./build_all.sh --debug
+# 打开 NVTX（nsys 标记；默认关）
+./build_all.sh --nvtx
 ~~~
 
 ~~~sh
