@@ -9,9 +9,6 @@
 #include "sampler_top_p.h"
 #include "transformer_model.h"
 
-// TODO(生产化)：骨架期 host <-> GPU 胶水；迁入 inference_engine_forward_token_last_logits，
-//   d_token_ids/d_logits 用 Engine BufferPool 按 T 复用，去掉每步 cudaMalloc（见 roadmap 模块 4
-//   生产化 / Phase 2.6）。
 // TODO(perf-topk)：top_k>1 时 sampler_top_k.cu 为 <<<1,1>>> 单线程扫 vocab。
 // TODO(perf-topp)：top_p<1 时 sampler_top_p.cu 为 <<<1,1>>> + O(n^2) sort + 每步 temp malloc。
 //   大词表 decode 前需并行 kernel；grep TODO(perf-topk) / TODO(perf-topp)。
@@ -25,51 +22,32 @@ static int sample_token_device(void *stream, const float *d_logits_last, int voc
                                 d_out_token);
 }
 
-// H2D token_ids -> forward_token_device -> sampler on末列 logits -> token id
+// last_logits（pool H2D + forward）-> 末列采样 -> D2H token id。不每步 malloc。
+// 例：prefill ids=[3,17,42] T=3；decode ids=[x] T=1 三次，共用 Engine pool。
 static int forward_token_step(InferenceEngine *engine, const int *token_ids_host, int num_tokens,
                               int pos_offset, int vocab_size, int top_k, float temperature,
                               float top_p, uint64_t seed, int *out_token) {
     cudaStream_t stream = static_cast<cudaStream_t>(inference_engine_get_stream(engine));
-    const size_t logits_bytes =
-        static_cast<size_t>(vocab_size) * static_cast<size_t>(num_tokens) * sizeof(float);
 
-    int *d_token_ids = nullptr;
-    float *d_logits = nullptr;
-    int *d_out_token = nullptr;
-
-    CUDA_CHECK(
-        cudaMallocAsync(&d_token_ids, static_cast<size_t>(num_tokens) * sizeof(int), stream));
-    CUDA_CHECK(cudaMallocAsync(&d_logits, logits_bytes, stream));
-    CUDA_CHECK(cudaMallocAsync(&d_out_token, sizeof(int), stream));
-
-    CUDA_CHECK(cudaMemcpyAsync(d_token_ids, token_ids_host,
-                               static_cast<size_t>(num_tokens) * sizeof(int),
-                               cudaMemcpyHostToDevice, stream));
-
-    const int rc = inference_engine_forward_token_device(engine, d_token_ids, d_logits, num_tokens,
-                                                         pos_offset);
-
-    if (rc == 0) {
-        const float *d_logits_last =
-            d_logits + static_cast<size_t>(vocab_size) * static_cast<size_t>(num_tokens - 1);
-        if (sample_token_device(stream, d_logits_last, vocab_size, top_k, temperature, top_p, seed,
-                                d_out_token) != 0) {
-            CUDA_CHECK(cudaFreeAsync(d_token_ids, stream));
-            CUDA_CHECK(cudaFreeAsync(d_logits, stream));
-            CUDA_CHECK(cudaFreeAsync(d_out_token, stream));
-            CUDA_CHECK(cudaStreamSynchronize(stream));
-            return -1;
-        }
-        CUDA_CHECK(
-            cudaMemcpyAsync(out_token, d_out_token, sizeof(int), cudaMemcpyDeviceToHost, stream));
-        CUDA_CHECK(cudaStreamSynchronize(stream));
+    if (inference_engine_forward_token_last_logits(engine, token_ids_host, num_tokens,
+                                                   pos_offset) != 0) {
+        return -1;
     }
 
-    CUDA_CHECK(cudaFreeAsync(d_token_ids, stream));
-    CUDA_CHECK(cudaFreeAsync(d_logits, stream));
-    CUDA_CHECK(cudaFreeAsync(d_out_token, stream));
+    const float *d_logits_last = inference_engine_d_logits_last(engine);
+    int *d_out_token = inference_engine_d_out_token(engine);
+    if (d_logits_last == nullptr || d_out_token == nullptr) {
+        return -1;
+    }
+
+    if (sample_token_device(stream, d_logits_last, vocab_size, top_k, temperature, top_p, seed,
+                            d_out_token) != 0) {
+        return -1;
+    }
+    CUDA_CHECK(
+        cudaMemcpyAsync(out_token, d_out_token, sizeof(int), cudaMemcpyDeviceToHost, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
-    return rc;
+    return 0;
 }
 
 // Module 4 GenerateLoop 入口：在已有 Engine session 上跑 prefill + decode 循环。
@@ -105,8 +83,6 @@ extern "C" int generate_loop_run(InferenceEngine *engine, const int *prompt_toke
 
     int num_generated = 0;
     int next_token = 0;
-    // TODO: d_token_ids、d_logits、d_out_token ,Generate 10 个 token，就是 10 轮 malloc / memcpy /
-    // free session、stream、GPU buffer 是 Engine 的东西，但是malloc/free 却在 loop 中
     {
         NVTX_RANGE("prefill");
         if (forward_token_step(engine, prompt_token_ids, prompt_len, 0, vocab_size, top_k,

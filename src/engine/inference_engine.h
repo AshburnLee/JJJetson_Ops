@@ -43,9 +43,17 @@ void *inference_engine_get_stream(InferenceEngine *engine);
 // embed（可选）-> N x layer -> advance_len(T) -> final_norm -> lm_head（可选 d_logits）
 int inference_engine_forward_device(InferenceEngine *engine, const InferenceForwardCtx *ctx);
 
-// 编排/production：d_token_ids、d_logits 已在 GPU；内部临时分配 d_hidden_out
+// 编排/production：d_token_ids、d_logits 已在 GPU；d_hidden_out 用 session pool
 int inference_engine_forward_token_device(InferenceEngine *engine, const int *d_token_ids,
                                           float *d_logits, int num_tokens, int pos_offset);
+
+// 生产：host token_ids H2D 进 pool，forward，末列 logits 留在 GPU（不每步 malloc）
+int inference_engine_forward_token_last_logits(InferenceEngine *engine, const int *token_ids_host,
+                                               int num_tokens, int pos_offset);
+
+const float *inference_engine_d_logits_last(const InferenceEngine *engine);
+
+int *inference_engine_d_out_token(InferenceEngine *engine);
 
 // 测试：pos_offset 生成本步 d_pos；H2D hidden -> forward_device -> D2H hidden_out
 // _hidden_ 表示：这一步从 hidden 状态进，不走 embed

@@ -122,7 +122,7 @@ Engine 对外有三层 [包装厚度] 不同的入口。名字里带 `_host` 的
 
 你自己在 GPU 上准备好 `d_token_ids` 或 `d_hidden_in`、`d_pos`、`d_hidden_out`、可选 `d_logits`，栈上填一个 `InferenceForwardCtx`，调这一层。
 
-GenerateLoop 的生产路径不走这个直接暴露的 ctx，而是走下面的 `forward_token_device`（内部再调 `forward_device`）。将来 BufferPool 完善后，集成方也应尽量让指针来自 pool，而不是每步 malloc。
+GenerateLoop 的生产路径不走这个直接暴露的 ctx，而是走 `forward_token_last_logits`（内部 `forward_token_device` -> `forward_device`）。token / logits / hidden 来自 create 时的 BufferPool。
 
 ### `inference_engine_forward_hidden_host` — 从 hidden 进，跳过 embed
 
@@ -157,10 +157,18 @@ inference_engine_me.forward_token_host(engine, T, 0, token_ids, logits)
 
 ### `inference_engine_forward_token_device` — token 环的 GPU 侧单步
 
-`d_token_ids`、`d_logits` 已在 device 上；内部临时 malloc `d_hidden_out`，调 `forward_device`。
-`generate_loop.cpp` 里的 `forward_token_step` 走的就是这条（外面再包 H2D/D2H 末列 logits）。骨架期有每步 malloc，生产化会收到 Engine + BufferPool（见 roadmap 模块 4 / Phase 2.6）。
+`d_token_ids`、`d_logits` 已在 device 上；`d_hidden_out` 用 Engine BufferPool（create 时按 max_seq 分配），调 `forward_device`。
+GenerateLoop 不直接调本函数，走下面的 `forward_token_last_logits`（内部再进这里）。
 
-`ENABLE_NVTX` 打开时，本函数钉一块 `forward`（钉在 callee，不钉在某一个调用者）。`forward_token_host` 内部也会走进来，所以 logits 对拍测试时间线上 create_engine 之后能看到它。GenerateLoop 里它嵌在 `prefill` / `decode` 下面。
+`ENABLE_NVTX` 打开时，本函数钉一块 `forward`。
+
+### `inference_engine_forward_token_last_logits` — GenerateLoop 生产步进
+
+host `token_ids` 进，H2D 写入 pool `d_token_ids`，forward 写入 pool `d_logits`。**不每步 malloc**。
+成功后末列在 GPU 上：`d_logits + vocab*(T-1)`，GenerateLoop 在这块上采样。
+
+例：`token_ids_host=[3,17,42]`，T=3，pos=0 -> 一次 H2D 3 个 int，logits 表 `[vocab,3]` 落在 pool 前 3 列。
+随后 decode T=1 三次，仍用同一块 pool，只覆盖第 0 列。
 
 ---
 
@@ -222,8 +230,11 @@ inference_engine_kv_cache_len(engine)     int             当前已 advance 的�
 inference_engine_next_pos(engine)       int             与 L 同步；下一步 decode 的 pos_offset
 inference_engine_forward_device(...)    0 / -1          生产单步 forward
 inference_engine_forward_hidden_host(...) 0 / -1        测试：hidden 进，hidden 出
-inference_engine_forward_token_host(...)  0 / -1        测试：token 进，logits 出
-inference_engine_forward_token_device(...) 0 / -1       GPU token 单步；GenerateLoop 用
+inference_engine_forward_token_host(...)  0 / -1        测试：token 进，logits 出（走 pool）
+inference_engine_forward_token_device(...) 0 / -1       GPU token 单步；hidden 用 pool
+inference_engine_forward_token_last_logits(...) 0 / -1  生产步进：host token -> pool + forward
+inference_engine_d_logits_last(engine)    float*        pool 上末列 logits（采样用）
+inference_engine_d_out_token(engine)      int*          pool 上 1 个 token 槽（采样输出）
 inference_engine_get_model / ...        指针            集成或调试
 ~~~
 
@@ -258,7 +269,7 @@ forward_token_host(engine, T, pos, ids, logits)     forward_token_host          
 
 ## 和 GenerateLoop 怎么配合
 
-[`generate_loop_me.generate`](../../src/bindings/generate_loop_binding.cpp) **不**经过 `inference_engine_me.forward_token_host`。它在 C++ 里循环调用 `forward_token_device`，每步只 D2H **最后一个 token** 的 logits 列做 greedy，并处理 EOS。
+[`generate_loop_me.generate`](../../src/bindings/generate_loop_binding.cpp) **不**经过 `inference_engine_me.forward_token_host`。它在 C++ 里循环调用 `forward_token_last_logits`，在 GPU 末列采样，只 D2H **token id**，并处理 EOS。
 
 关系可以这么记：
 
@@ -267,7 +278,7 @@ forward_token_host(engine, T, pos, ids, logits)     forward_token_host          
 
 两者底层 forward 语义一致；GenerateLoop 不 create/destroy Engine，调用前你必须已有 load 好权重的 Model 和 create 好的 Engine。
 
-生产化之后，GenerateLoop 里的 CUDA glue 会迁入 Engine（`forward_token_last_logits` + BufferPool），GenerateLoop 只剩 [循环 + stop]——届时本文的测试 API 仍会保留，用于单步对齐。
+生产化之后，token/logits/hidden 在 Engine BufferPool（create 一次）。GenerateLoop 仍负责循环 + stop + 采样；采样 / D2H token 迁出 loop 是下一刀。
 
 ---
 

@@ -16,9 +16,17 @@ struct InferenceEngineBufferPool {
     int max_seq_len = 0;
     int head_dim = 0;
     int num_kv_heads = 0;
+    int vocab_size = 0;
+    int hidden_size = 0;
+    int last_num_tokens = 0;
 
     uint16_t *d_k_fa_fp16 = nullptr;
     uint16_t *d_v_fa_fp16 = nullptr;
+
+    int *d_token_ids = nullptr;
+    float *d_logits = nullptr;
+    float *d_hidden_out = nullptr;
+    int *d_out_token = nullptr;
 
     std::unordered_map<int, TransformerLayerLinearDeviceBuffers *> layer_buffers_by_tokens;
     std::unordered_map<int, int *> d_pos_by_tokens;
@@ -61,6 +69,22 @@ static void inference_engine_buffer_pool_destroy(InferenceEngineBufferPool *pool
     if (pool->d_v_fa_fp16 != nullptr) {
         CUDA_CHECK(cudaFree(pool->d_v_fa_fp16));
         pool->d_v_fa_fp16 = nullptr;
+    }
+    if (pool->d_token_ids != nullptr) {
+        CUDA_CHECK(cudaFree(pool->d_token_ids));
+        pool->d_token_ids = nullptr;
+    }
+    if (pool->d_logits != nullptr) {
+        CUDA_CHECK(cudaFree(pool->d_logits));
+        pool->d_logits = nullptr;
+    }
+    if (pool->d_hidden_out != nullptr) {
+        CUDA_CHECK(cudaFree(pool->d_hidden_out));
+        pool->d_hidden_out = nullptr;
+    }
+    if (pool->d_out_token != nullptr) {
+        CUDA_CHECK(cudaFree(pool->d_out_token));
+        pool->d_out_token = nullptr;
     }
 }
 
@@ -115,6 +139,7 @@ static int *inference_engine_d_pos_get(InferenceEngine *engine, int num_tokens, 
 //   step 3) cublasHandle
 //   step 4) KVCache(256, 32, 2, num_layers=2)，cache_len=0
 //   step 5) FA staging：d_k/d_v_fa_fp16 各 32*256*2*sizeof(fp16) bytes
+//   step 6) session token/logits/hidden/out_token：按 max_seq 一次 malloc，decode 复用
 //   OUTPUT：InferenceEngine*，session.next_pos=0；失败返回 nullptr 并释放已分配部分
 //
 // 调用方：Model 须先于 Engine create；Engine destroy 后 Model 才能 destroy。
@@ -158,12 +183,25 @@ extern "C" InferenceEngine *inference_engine_create(TransformerModel *model, voi
     engine->pool.max_seq_len = cfg->max_seq_len;
     engine->pool.head_dim = cfg->head_dim;
     engine->pool.num_kv_heads = cfg->num_kv_heads;
+    engine->pool.vocab_size = cfg->vocab_size;
+    engine->pool.hidden_size = cfg->hidden_size;
+    engine->pool.last_num_tokens = 0;
 
     // step 5：FA fp16 staging（全 layer 共用，尺寸按 max_seq）
     const size_t fa_fp16_bytes = static_cast<size_t>(cfg->head_dim) * cfg->max_seq_len *
                                  cfg->num_kv_heads * sizeof(uint16_t);
     CUDA_CHECK(cudaMalloc(&engine->pool.d_k_fa_fp16, fa_fp16_bytes));
     CUDA_CHECK(cudaMalloc(&engine->pool.d_v_fa_fp16, fa_fp16_bytes));
+
+    // step 6：token / logits / hidden / 采样槽。例：vocab=512, hidden=128, max_seq=256
+    //   d_logits = 512*256*4B；decode T=1 三次都写同一块，不再 cudaMallocAsync。
+    CUDA_CHECK(
+        cudaMalloc(&engine->pool.d_token_ids, static_cast<size_t>(cfg->max_seq_len) * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&engine->pool.d_logits,
+                          inference_col_major_bytes(cfg->vocab_size, cfg->max_seq_len)));
+    CUDA_CHECK(cudaMalloc(&engine->pool.d_hidden_out,
+                          inference_col_major_bytes(cfg->hidden_size, cfg->max_seq_len)));
+    CUDA_CHECK(cudaMalloc(&engine->pool.d_out_token, sizeof(int)));
 
     engine->session.next_pos = 0; // 与 kv cache_len=0 对齐，forward 后推进
     return engine;
@@ -400,9 +438,8 @@ extern "C" int inference_engine_forward_hidden_host(InferenceEngine *engine,
     return rc;
 }
 
-// 编排/production：token embed + N×layer + lm_head；指针均在 GPU（GenerateLoop 等调用）
-// TODO(生产化)：d_hidden_out 从 Engine BufferPool 按 num_tokens 复用，勿每步 cudaMalloc（roadmap
-// §2.6）。
+// 编排/production：token embed + N×layer + lm_head；d_token_ids / d_logits 已在 GPU。
+// d_hidden_out 用 create 时的 pool，不每步 malloc。
 extern "C" int inference_engine_forward_token_device(InferenceEngine *engine,
                                                      const int *d_token_ids, float *d_logits,
                                                      int num_tokens, int pos_offset) {
@@ -414,38 +451,72 @@ extern "C" int inference_engine_forward_token_device(InferenceEngine *engine,
     if (cfg == nullptr) {
         return -1;
     }
+    if (num_tokens > engine->pool.max_seq_len || engine->pool.d_hidden_out == nullptr) {
+        return -1;
+    }
 
-    // 钉在 callee：GenerateLoop 的 prefill/decode、测试的 forward_token_host 都进这里。
-    // 例：token_ids=[1,2,3,4]、pos_offset=0 -> 一块 forward，盖住 embed + N 层 + lm_head。
+    // 钉在 callee：GenerateLoop 的 prefill/decode、测试的 last_logits / forward_token_host
+    // 都进这里。 例：token_ids=[3,17,42]、pos_offset=0 -> 一块 forward，盖住 embed + N 层 +
+    // lm_head。
     NVTX_RANGE("forward");
 
     cudaStream_t stream = engine->stream;
-    const int hidden_size = cfg->hidden_size;
-    const size_t hidden_bytes = inference_col_major_bytes(hidden_size, num_tokens);
-
-    float *d_hidden_out = nullptr;
     int *d_pos = inference_engine_d_pos_get(engine, num_tokens, pos_offset, stream);
-
-    CUDA_CHECK(cudaMallocAsync(&d_hidden_out, hidden_bytes, stream));
 
     InferenceForwardCtx ctx{};
     ctx.num_tokens = num_tokens;
     ctx.stream = stream;
     ctx.d_token_ids = d_token_ids;
-    ctx.d_hidden_out = d_hidden_out;
+    ctx.d_hidden_out = engine->pool.d_hidden_out;
     ctx.d_pos = d_pos;
     ctx.d_logits = d_logits;
 
-    const int rc = inference_engine_forward_device(engine, &ctx);
+    return inference_engine_forward_device(engine, &ctx);
+}
 
-    CUDA_CHECK(cudaFreeAsync(d_hidden_out, stream));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+// host token -> pool H2D -> forward_token_device。末列留在 GPU 给 sampler。
+// 例：prefill [3,17,42] T=3；随后 decode T=1 三次，同一块 pool.d_token_ids / d_logits，无 malloc。
+extern "C" int inference_engine_forward_token_last_logits(InferenceEngine *engine,
+                                                          const int *token_ids_host, int num_tokens,
+                                                          int pos_offset) {
+    if (engine == nullptr || token_ids_host == nullptr || num_tokens <= 0) {
+        return -1;
+    }
+    if (num_tokens > engine->pool.max_seq_len || engine->pool.d_token_ids == nullptr ||
+        engine->pool.d_logits == nullptr) {
+        return -1;
+    }
+
+    cudaStream_t stream = engine->stream;
+    CUDA_CHECK(cudaMemcpyAsync(engine->pool.d_token_ids, token_ids_host,
+                               static_cast<size_t>(num_tokens) * sizeof(int),
+                               cudaMemcpyHostToDevice, stream));
+
+    const int rc = inference_engine_forward_token_device(
+        engine, engine->pool.d_token_ids, engine->pool.d_logits, num_tokens, pos_offset);
+    if (rc == 0) {
+        engine->pool.last_num_tokens = num_tokens;
+    }
     return rc;
 }
 
-// 测试：H2D token_ids -> forward_token_device -> D2H logits [vocab, T] col-major
-// TODO(生产化)：d_token_ids/d_logits 改用 BufferPool，与 GenerateLoop 共用 session buffer（roadmap
-// §2.6）。
+extern "C" const float *inference_engine_d_logits_last(const InferenceEngine *engine) {
+    if (engine == nullptr || engine->pool.d_logits == nullptr ||
+        engine->pool.last_num_tokens <= 0) {
+        return nullptr;
+    }
+    return engine->pool.d_logits + static_cast<size_t>(engine->pool.vocab_size) *
+                                       static_cast<size_t>(engine->pool.last_num_tokens - 1);
+}
+
+extern "C" int *inference_engine_d_out_token(InferenceEngine *engine) {
+    if (engine == nullptr) {
+        return nullptr;
+    }
+    return engine->pool.d_out_token;
+}
+
+// 测试：H2D token_ids -> last_logits -> D2H logits [vocab, T] col-major
 extern "C" int inference_engine_forward_token_host(InferenceEngine *engine,
                                                    const int *token_ids_host,
                                                    float *logits_out_host, int num_tokens,
@@ -455,38 +526,17 @@ extern "C" int inference_engine_forward_token_host(InferenceEngine *engine,
         return -1;
     }
 
-    const ModelConfig *cfg = transformer_model_get_config(engine->model);
-    if (cfg == nullptr) {
-        return -1;
+    const int rc =
+        inference_engine_forward_token_last_logits(engine, token_ids_host, num_tokens, pos_offset);
+    if (rc != 0) {
+        return rc;
     }
 
     cudaStream_t stream = engine->stream;
-    const int vocab_size = cfg->vocab_size;
-    const size_t logits_bytes =
-        static_cast<size_t>(vocab_size) * static_cast<size_t>(num_tokens) * sizeof(float);
-
-    int *d_token_ids = nullptr;
-    float *d_logits = nullptr;
-
-    CUDA_CHECK(
-        cudaMallocAsync(&d_token_ids, static_cast<size_t>(num_tokens) * sizeof(int), stream));
-    CUDA_CHECK(cudaMallocAsync(&d_logits, logits_bytes, stream));
-
-    CUDA_CHECK(cudaMemcpyAsync(d_token_ids, token_ids_host,
-                               static_cast<size_t>(num_tokens) * sizeof(int),
-                               cudaMemcpyHostToDevice, stream));
-
-    const int rc = inference_engine_forward_token_device(engine, d_token_ids, d_logits, num_tokens,
-                                                         pos_offset);
-
-    if (rc == 0) {
-        CUDA_CHECK(cudaMemcpyAsync(logits_out_host, d_logits, logits_bytes, cudaMemcpyDeviceToHost,
-                                   stream));
-        CUDA_CHECK(cudaStreamSynchronize(stream));
-    }
-
-    CUDA_CHECK(cudaFreeAsync(d_token_ids, stream));
-    CUDA_CHECK(cudaFreeAsync(d_logits, stream));
+    const size_t logits_bytes = static_cast<size_t>(engine->pool.vocab_size) *
+                                static_cast<size_t>(num_tokens) * sizeof(float);
+    CUDA_CHECK(cudaMemcpyAsync(logits_out_host, engine->pool.d_logits, logits_bytes,
+                               cudaMemcpyDeviceToHost, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
-    return rc;
+    return 0;
 }

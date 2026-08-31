@@ -334,7 +334,8 @@ cuda 算子保持 dumb、好单测：给指针就能跑，不依赖 `Transformer
 InferenceEngine
   ├── TransformerModel*      只读引用
   ├── KVCache(num_layers=N)
-  ├── BufferPool             hidden、logits、d_pos、FA staging…
+  ├── BufferPool             FA staging；session：d_token_ids / d_logits / d_hidden_out / d_out_token
+                             （create 按 max_seq 一次分配，prefill/decode 复用）
   ├── cudaStream / cublasHandle
   └── SessionState           cache_len；next_pos
 
@@ -385,7 +386,7 @@ prefill：`T>1`，`pos=[0..T-1]`。decode：`T=1`，`pos=[cache_len]`，`num_kv_
 ### 3.5 API 与测试（规划）
 
 - [x] C：`inference_engine_create` / `destroy` / `reset` / `forward_device` / `forward_hidden_host`
-- [x] C：`inference_engine_forward_token_device`（token embed + lm_head；GenerateLoop 生产路径）
+- [x] C：`inference_engine_forward_token_last_logits`（host token -> pool H2D + device forward；末列留在 GPU）
 - [x] C：`inference_engine_forward_token_host`（H2D/D2H 测试包装，内部调 forward_token_device）
 - [x] Python：`inference_engine_me` — create/destroy/reset/kv_cache_len/forward_hidden_host/forward_token_host
 - [x] `../guide/inference_engine_device_api.md`
@@ -426,15 +427,32 @@ GenerateLoop **借用** `InferenceEngine*`；不 create/destroy Engine、不 own
 
 ### 4.4 生产化（骨架后，roadmap 模块 4 / §2.6）
 
-骨架期 `forward_token_step` 每步 cudaMalloc 为过渡；收工顺序：
+骨架期 `forward_token_step` 每步 cudaMalloc。本轮已做完 1+2：Engine create 按 `max_seq_len` 开辟 session buffer，GenerateLoop 复用，decode 不再每步 malloc。
 
-1. Engine：`inference_engine_forward_token_last_logits`（承接 host↔GPU 步进）
-2. BufferPool：`d_token_ids` / `d_logits` / `d_hidden_out` 按 T session 复用
-3. GenerateLoop：仅循环 + stop，无 CUDA glue
-4. Sampler：`sampler_top_k.cu` 中 **TODO(perf-topk)** — `top_k>1` 现 `<<<1,1>>>` 单线程扫 vocab；改并行 top-k + sample（大词表 decode 前）
-5. Sampler：`sampler_top_p.cu` 中 **TODO(perf-topp)** — `top_p<1` 现 `<<<1,1>>>` + O(n^2) 排序 + 每步 temp buffer；改并行 nucleus + sample（大词表 decode 前）
+~~~
+create_engine 一次（按 cfg.max_seq_len / vocab / hidden）
+  pool.d_token_ids    int[max_seq]
+  pool.d_logits       float[vocab, max_seq]  col-major
+  pool.d_hidden_out   float[hidden, max_seq]
+  pool.d_out_token    int[1]
 
-代码内见 `// TODO(生产化)`（`generate_loop.cpp`、`inference_engine.cpp`）与 `// TODO(perf-topk)`（`sampler_top_k.cu`）、`// TODO(perf-topp)`（`sampler_top_p.cu`、`generate_loop.cpp`）。
+每步 last_logits(host token_ids, T, pos)
+  H2D 前 T 个 id -> pool.d_token_ids
+  forward_token_device(pool tokens, pool logits, T)   内部用 pool.d_hidden_out
+  末列 = pool.d_logits + vocab*(T-1)
+
+例：prompt T=3 再 decode 三次 T=1，malloc 只发生在 create_engine；
+    decode 三次只见 H2D 1 个 int + forward + 采样，没有 cudaMallocAsync。
+~~~
+
+尺寸核对（TinyLlama 2 层切片，max_seq=256）：logits 约 32MB，hidden 约 2MB。Orin 全局显存约 3.8GB，create 时一次分完可接受。
+
+仍未做：
+
+3. GenerateLoop：仅循环 + stop，无 CUDA glue（采样 / D2H token 仍在 loop）
+4. Sampler：TODO(perf-topk) / TODO(perf-topp)
+
+代码：`inference_engine_forward_token_last_logits`；pool 在 `inference_engine_create`。
 
 ---
 

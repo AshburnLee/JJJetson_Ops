@@ -29,7 +29,7 @@ GenerateLoop 只借用 `InferenceEngine*`；session 里 KV 的增长、reset、d
 
 **Step A — prefill（T=3）**
 
-`forward_token_step` 把 `prompt_token_ids[0..2]` H2D，调 `inference_engine_forward_token_device(..., num_tokens=3, pos_offset=0)`，再 D2H **最后一列** logits `logits_last[vocab]`（不是整表 `[vocab,3]`）。
+`forward_token_step` 把 `prompt_token_ids[0..2]` 交给 `inference_engine_forward_token_last_logits`（H2D 进 Engine pool，不每步 malloc），在 GPU **最后一列** logits 上采样，再 D2H 一个 token id。
 
 此时 Engine 里 `kv_cache_len` 变为 3。
 
@@ -48,7 +48,7 @@ GenerateLoop 只借用 `InferenceEngine*`；session 里 KV 的增长、reset、d
 - 已生成 `max_new_tokens` 个 -> 返回；
 - 或某步 `next == eos_token_id`（且 `eos_token_id >= 0`）-> 提前返回，已生成长度可能小于 `max_new_tokens`。
 
-骨架期 `forward_token_step` 每步 `cudaMalloc` token/logits buffer，属于过渡实现；生产化迁入 Engine + BufferPool（lifecycle 第 4.4 节）。
+token / logits / hidden / out_token 在 `inference_engine_create` 按 max_seq 一次分配，`forward_token_last_logits` 复用。decode 三次不再 `cudaMallocAsync`。采样仍在 GenerateLoop；并行 top-k/top-p 仍是 TODO(perf-*)。
 
 ---
 
@@ -239,7 +239,7 @@ Python 写 fixture、`import *.so` 不在这棵树上（nsys 自己的 `dlopen`�
   ▼
 generate_loop_me.generate(engine, prompt, max_new, eos)
   │
-  ├─ prefill: forward_token_step -> inference_engine_forward_token_device
+  ├─ prefill: forward_token_step -> inference_engine_forward_token_last_logits
   ├─ sample_token_device: top_p<1 -> sampler_top_p_device，否则 sampler_top_k_device
   └─ decode × (max_new-1): forward_token_step(T=1, pos=kv_cache_len)
        └─ sample_token_device(...)
@@ -247,7 +247,7 @@ generate_loop_me.generate(engine, prompt, max_new, eos)
 Engine 细节（pos_offset、KV、layout）不在本文重复；见 inference_engine_device_api.md。
 ~~~
 
-GenerateLoop **不**调用 `inference_engine_forward_token_host`；host token 单步测试走 Engine binding，GenerateLoop 走 device 路径 + 局部 H2D/D2H glue。
+GenerateLoop **不**调用 `inference_engine_forward_token_host`；host token 单步测试走 Engine binding，GenerateLoop 走 `forward_token_last_logits` + 采样。
 
 ---
 
@@ -280,14 +280,13 @@ GenerateLoop e2e 目前用随机 prompt token id，不依赖真实 tokenizer；�
 
 ---
 
-## 生产化（未做，不在本文 API 承诺内）
+## 生产化（进行中）
 
-骨架期限制：
+已做：Engine BufferPool + `forward_token_last_logits`；GenerateLoop 不再每步 malloc。
 
-- `forward_token_step` 每步 device malloc / free；
-- Sampler 已在 GPU 末列 logits 上采样；**top_k>1 / top_p<1 为 TODO(perf-*) 单线程 kernel**（见上文）。
+仍未做：loop 里还有采样 / D2H token；**top_k>1 / top_p<1 为 TODO(perf-*) 单线程 kernel**。
 
-收工方向见 lifecycle 第 4.4 节：`inference_engine_forward_token_last_logits`、session 级 buffer 池、GenerateLoop 只保留循环 + stop、**并行 top-k sampler**。
+见 lifecycle 第 4.4 节。
 
 ---
 
