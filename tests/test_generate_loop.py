@@ -99,7 +99,8 @@ def test_generate_loop_binding_prefill_decode() -> None:
     model, engine, fixture_dir = _setup_engine()
     try:
         prompt = np.array([3, 17, 42], dtype=np.int32)
-        max_new = 4
+        # prefill 产出第 1 个新 token，decode 再跑 5 次，一共 6 个生成 token。
+        max_new = 6
         out = generate_loop_me.generate(engine, prompt, max_new)
         assert len(out) == max_new
         assert all(isinstance(t, int) for t in out)

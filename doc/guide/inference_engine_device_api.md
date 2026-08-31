@@ -13,7 +13,7 @@ C 头文件：`src/engine/inference_engine.h`。Python 模块：`inference_engin
 Engine 只管中间这块 session。它**借用**已经 create 好、并且 load 完权重的 `TransformerModel`，自己额外持有：
 
 - 多层 `KVCache`（每一层各有一份 K/V 历史）；
-- 按 `num_tokens` 懒分配的 layer workspace（和 Phase 1 Runner 里的 `buffers_by_tokens[T]` 同类东西）；
+- 按 `num_tokens` 分桶的 layer workspace（和 Phase 1 Runner 里的 `buffers_by_tokens[T]` 同类东西）。`create` 预热 T=1；其它 T 仍首次 forward 时懒分配；
 - FA 用的 fp16 K/V staging；
 - 一个 `cudaStream` 和 `cublasHandle`。
 

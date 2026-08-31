@@ -23,7 +23,8 @@ static int sample_token_device(void *stream, const float *d_logits_last, int voc
 }
 
 // last_logits（pool H2D + forward）-> 末列采样 -> D2H token id。不每步 malloc。
-// 例：prefill ids=[3,17,42] T=3；decode ids=[x] T=1 三次，共用 Engine pool。
+// 例：prefill ids=[3,17,42] T=3；decode ids=[x] T=1 三次。
+// T=1 workspace 已在 create 预热；token/logits 共用 pool。
 static int forward_token_step(InferenceEngine *engine, const int *token_ids_host, int num_tokens,
                               int pos_offset, int vocab_size, int top_k, float temperature,
                               float top_p, uint64_t seed, int *out_token) {

@@ -140,6 +140,7 @@ static int *inference_engine_d_pos_get(InferenceEngine *engine, int num_tokens, 
 //   step 4) KVCache(256, 32, 2, num_layers=2)，cache_len=0
 //   step 5) FA staging：d_k/d_v_fa_fp16 各 32*256*2*sizeof(fp16) bytes
 //   step 6) session token/logits/hidden/out_token：按 max_seq 一次 malloc，decode 复用
+//   step 7) 预热 T=1 layer workspace + d_pos[1]，避免第一次 decode 在 forward 里 cudaMalloc
 //   OUTPUT：InferenceEngine*，session.next_pos=0；失败返回 nullptr 并释放已分配部分
 //
 // 调用方：Model 须先于 Engine create；Engine destroy 后 Model 才能 destroy。
@@ -202,6 +203,17 @@ extern "C" InferenceEngine *inference_engine_create(TransformerModel *model, voi
     CUDA_CHECK(cudaMalloc(&engine->pool.d_hidden_out,
                           inference_col_major_bytes(cfg->hidden_size, cfg->max_seq_len)));
     CUDA_CHECK(cudaMalloc(&engine->pool.d_out_token, sizeof(int)));
+
+    // step 7：decode 永远 T=1。例：hidden=128 -> d_hidden 只占 128*1*4B；
+    //   现在就把桶[1]填上。reset 不清这套；prefill T=3 仍走懒分配。
+    const int q_dim = cfg->num_q_heads * cfg->head_dim;
+    const int kv_dim = cfg->num_kv_heads * cfg->head_dim;
+    inference_engine_layer_buffers_get(engine, /*num_tokens=*/1, cfg->hidden_size, q_dim, kv_dim,
+                                       cfg->intermediate_size, cfg->head_dim, cfg->num_q_heads,
+                                       cfg->num_kv_heads);
+    int *d_pos_t1 = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_pos_t1, sizeof(int)));
+    engine->pool.d_pos_by_tokens[1] = d_pos_t1;
 
     engine->session.next_pos = 0; // 与 kv cache_len=0 对齐，forward 后推进
     return engine;
@@ -475,7 +487,8 @@ extern "C" int inference_engine_forward_token_device(InferenceEngine *engine,
 }
 
 // host token -> pool H2D -> forward_token_device。末列留在 GPU 给 sampler。
-// 例：prefill [3,17,42] T=3；随后 decode T=1 三次，同一块 pool.d_token_ids / d_logits，无 malloc。
+// 例：prefill [3,17,42] T=3；随后 decode T=1 三次，同一块 pool.d_token_ids / d_logits。
+// T=1 layer workspace 已在 create 预热，decode 不再 malloc。
 extern "C" int inference_engine_forward_token_last_logits(InferenceEngine *engine,
                                                           const int *token_ids_host, int num_tokens,
                                                           int pos_offset) {

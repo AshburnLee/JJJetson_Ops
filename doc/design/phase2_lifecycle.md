@@ -336,6 +336,7 @@ InferenceEngine
   ├── KVCache(num_layers=N)
   ├── BufferPool             FA staging；session：d_token_ids / d_logits / d_hidden_out / d_out_token
                              （create 按 max_seq 一次分配，prefill/decode 复用）
+                             layer workspace 按 T 分桶；create 预热 T=1
   ├── cudaStream / cublasHandle
   └── SessionState           cache_len；next_pos
 
@@ -348,7 +349,7 @@ InferenceEngine
 ~~~
 操作                  行为
 ──────────────────────────────────────────────────────────────────
-engine_create(model)  KVCache(N)、pool、stream；cache_len=0
+engine_create(model)  KVCache(N)、pool、stream；cache_len=0；预热 T=1 workspace
 engine_reset          kv_cache_reset；cache_len=0；不动 Model / pool
 engine_destroy        释放 KV、pool、stream；不 destroy model
 forward 每步          栈上 InferenceForwardCtx
@@ -441,8 +442,8 @@ create_engine 一次（按 cfg.max_seq_len / vocab / hidden）
   forward_token_device(pool tokens, pool logits, T)   内部用 pool.d_hidden_out
   末列 = pool.d_logits + vocab*(T-1)
 
-例：prompt T=3 再 decode 三次 T=1，malloc 只发生在 create_engine；
-    decode 三次只见 H2D 1 个 int + forward + 采样，没有 cudaMallocAsync。
+例：prompt T=3 再 decode 三次 T=1。create 预热 T=1 layer workspace + d_pos[1]；
+    decode 三次只见 H2D 1 个 int + forward + 采样。prefill T=3 仍可能第一次懒分配。
 ~~~
 
 尺寸核对（TinyLlama 2 层切片，max_seq=256）：logits 约 32MB，hidden 约 2MB。Orin 全局显存约 3.8GB，create 时一次分完可接受。

@@ -48,7 +48,7 @@ GenerateLoop 只借用 `InferenceEngine*`；session 里 KV 的增长、reset、d
 - 已生成 `max_new_tokens` 个 -> 返回；
 - 或某步 `next == eos_token_id`（且 `eos_token_id >= 0`）-> 提前返回，已生成长度可能小于 `max_new_tokens`。
 
-token / logits / hidden / out_token 在 `inference_engine_create` 按 max_seq 一次分配，`forward_token_last_logits` 复用。decode 三次不再 `cudaMallocAsync`。采样仍在 GenerateLoop；并行 top-k/top-p 仍是 TODO(perf-*)。
+token / logits / hidden / out_token 在 `inference_engine_create` 按 max_seq 一次分配；T=1 layer workspace 也在 create 预热。`forward_token_last_logits` 复用。decode 不再 `cudaMallocAsync`。采样仍在 GenerateLoop；并行 top-k/top-p 仍是 TODO(perf-*)。
 
 ---
 
