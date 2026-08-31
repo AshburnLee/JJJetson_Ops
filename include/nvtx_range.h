@@ -2,8 +2,10 @@
 
 // NVTX 范围的 RAII 包装：构造时 push，析构时 pop。
 // 放 include/，Model / Engine / GenerateLoop 都能直接 #include。
-// 约定：只打最外层组件（create_model / create_engine）和最外层步骤
-// （load_weights / generate / prefill / decode），不拆子块。
+// 约定：最外层组件（create_model / create_engine）、最外层步骤
+// （load_safetensors / load_fixture / load_weights / generate / prefill / decode），
+// 以及 Engine 生产入口 forward_token_device（色块名 forward，谁调都有）。
+// 不拆 q_linear / malloc / layer_N。
 // 两端各钉一条瞬时 mark：engine_start（进 C++）/ engine_end（destroy_model 拆完）。
 //
 // 为什么不用手写 nvtxRangePushA / nvtxRangePop：

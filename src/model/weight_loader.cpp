@@ -1,6 +1,7 @@
 #include "weight_loader.h"
 
 #include "hf_llama_weight_map.h"
+#include "nvtx_range.h"
 #include "safetensors_reader.h"
 
 #include <cctype>
@@ -328,6 +329,11 @@ int weight_loader_load_fixture(const char *path, WeightLoadResult *out) {
         return -1;
     }
 
+    // 钉在 callee：读 fixture 目录到 host，不碰 GPU。后面才是 load_weights 的 H2D。
+    // 例：fixture 里 layer0.w_q + embed -> 一块 load_fixture，create_model 和 load_weights
+    // 中间不再空白。
+    NVTX_RANGE("load_fixture");
+
     weight_load_result_destroy(out);
     weight_load_result_init(out);
 
@@ -415,6 +421,10 @@ int weight_loader_load_safetensors(const char *path, WeightLoadResult *out) {
 }
 
 int weight_loader_load_safetensors_hf_llama(const char *path, WeightLoadResult *out) {
+    // 钉在 callee：读 .safetensors + HF 映射/转置，全程 host。后面才是 load_weights 的 H2D。
+    // 例：tinyllama_2layer/model.safetensors（约 837MB）-> 一块 load_safetensors，
+    //     nsys 上它填在 create_model 和 load_weights 之间。
+    NVTX_RANGE("load_safetensors");
     if (weight_loader_load_safetensors(path, out) != 0) {
         return -1;
     }

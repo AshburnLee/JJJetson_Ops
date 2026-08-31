@@ -415,6 +415,10 @@ extern "C" int inference_engine_forward_token_device(InferenceEngine *engine,
         return -1;
     }
 
+    // 钉在 callee：GenerateLoop 的 prefill/decode、测试的 forward_token_host 都进这里。
+    // 例：token_ids=[1,2,3,4]、pos_offset=0 -> 一块 forward，盖住 embed + N 层 + lm_head。
+    NVTX_RANGE("forward");
+
     cudaStream_t stream = engine->stream;
     const int hidden_size = cfg->hidden_size;
     const size_t hidden_bytes = inference_col_major_bytes(hidden_size, num_tokens);

@@ -201,17 +201,25 @@ generate(engine_handle, prompt_token_ids, max_new_tokens, eos_token_id=-1, top_k
 
 ## NVTX 时间线（`./build_all.sh --nvtx` 后才有事件）
 
-默认编译是空操作。打开 `ENABLE_NVTX` 后，只打最外层组件和最外层步骤，不拆子块
-（不打 `q_linear` / `malloc` / `layer_N` 这类）：
+默认编译是空操作。打开 `ENABLE_NVTX` 后，只打最外层组件、最外层步骤，以及 Engine
+生产入口 `forward_token_device`（色块名 `forward`）。不拆 `q_linear` / `malloc` / `layer_N`。
+
+GenerateLoop 路径（fixture，嵌套）：
 
 ~~~
 create_model          Model 组件：分配权重槽 + RoPE cache
+load_fixture          Loader：读 fixture 目录到 host（不碰 GPU）
 load_weights          步骤：整份权重 H2D
 create_engine         Engine 组件：stream / cublas / KV / FA staging
 generate              步骤：一次 generate_loop_run
   prefill             步骤：prompt 一次 forward + sample
+    forward           Engine：embed + N 层 + lm_head
   decode              步骤：后续 T=1 循环
+    forward           每步一次
 ~~~
+
+HF 切片路径（例如 `test_hf_llama_real_slice_logits`）：`load_fixture` 换成 `load_safetensors`
+（读盘 + HF 映射 + 转置，host）。没有 generate / prefill / decode，create_engine 之后是 `forward`。
 
 第一次 `cudaMalloc` 的 CUDA context 冷启动会算进 `create_model`。
 Python 写 fixture、`import *.so` 不在这棵树上（nsys 自己的 `dlopen`）。

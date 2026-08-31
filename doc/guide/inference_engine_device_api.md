@@ -160,6 +160,8 @@ inference_engine_me.forward_token_host(engine, T, 0, token_ids, logits)
 `d_token_ids`、`d_logits` 已在 device 上；内部临时 malloc `d_hidden_out`，调 `forward_device`。
 `generate_loop.cpp` 里的 `forward_token_step` 走的就是这条（外面再包 H2D/D2H 末列 logits）。骨架期有每步 malloc，生产化会收到 Engine + BufferPool（见 roadmap 模块 4 / Phase 2.6）。
 
+`ENABLE_NVTX` 打开时，本函数钉一块 `forward`（钉在 callee，不钉在某一个调用者）。`forward_token_host` 内部也会走进来，所以 logits 对拍测试时间线上 create_engine 之后能看到它。GenerateLoop 里它嵌在 `prefill` / `decode` 下面。
+
 ---
 
 ## 张量 layout（传错 order 是最常见的坑）
@@ -287,6 +289,8 @@ load_weights_from_safetensors_hf_llama(model, path/to/model.safetensors)
     Loader: load_safetensors_hf_llama -> transformer_model_load_weights
     同目录需 config.txt，或 HF config.json（切片后 num_hidden_layers 须等于实际层数）
 ~~~
+
+`ENABLE_NVTX` 打开时：Loader 钉 `load_fixture` / `load_safetensors`（host 读盘），Model 钉 `load_weights`（H2D）。两条色块前后相接，中间不应再空白。
 embed / lm_head / final_norm / 各层权重都挂在 Model 上；Engine forward 时按 `layer_idx` 向 Model 要指针。
 
 典型 ownership：`Loader` 输出 host 数据 -> `Model` 拥有 GPU 权重 -> `Engine` 引用 Model + 拥有 KV -> `GenerateLoop` 引用 Engine -> 销毁顺序反过来。
