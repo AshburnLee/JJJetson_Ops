@@ -4,9 +4,9 @@ Phase 2 交付的是 单 request 完整生成链（embed → N×Pre-LN block →
 
 **状态**：设计图纸（未实现）。Phase 1 对照：[`phase1_lifecycle.md`](phase1_lifecycle.md)（同目录）。
 
-**组织原则**：Phase 2 按 **实体模块** 划分（Loader | Model | Engine | Sampler）；lifecycle 切面（资源、时序、forward、API）作为 **各模块内实现细节**，不再作为顶层 checklist 维度。
+**组织原则**：Phase 2 按 **实体模块** 划分（Loader | Model | Engine | Sampler）；lifecycle 切面（资源、时序、forward、API）作为 **各模块内实现细节**，不再作为顶层 checklist 维度。落地另两块：**Tokenizer**（引擎外，文本 <-> id）与 **量化显存**（权重 FP16 / INT4，整模进 Orin）。清单与勾选见 roadmap 模块 5 / 6。
 
-**目标**：单 request **加载权重 → prefill → decode → 采样出 token**；多 layer。batching / Paged KV 见 roadmap 2.7。
+**目标**：单 request **加载权重 -> prefill -> decode -> 采样出 token**；多 layer。落地还要文本进出、整模不超 ~4GB。batching / Paged KV 见 roadmap Phase 3。
 
 ---
 
@@ -17,9 +17,14 @@ Phase 2 交付的是 单 request 完整生成链（embed → N×Pre-LN block →
 ~~~
 WeightLoader                TransformerModel           InferenceEngine          Sampler / GenerateLoop
   读模型文件/fixture  ──►    GPU 权重容器      ◄──引用──  session + 编排  ◄──调用──  logits → token
-  输出 host tensor           immutable                 KVCache(N)               greedy / …
+    输出 host tensor           immutable                 KVCache(N)               greedy / …
   name → tensor              embed / lm_head 权重       prefill/decode 调度
                              LayerWeights[N]
+
+引擎外（落地模块 5，不进 GPU Engine）：
+  Tokenizer / Detokenizer    文本 <-> token_ids     再交给 GenerateLoop
+
+落地模块 6：Model 权重 dtype 从 F32 扩到 FP16 / INT4（immutable 边界不变）
 
 Phase 1 复用：transformer_layer_linears_forward_device（Engine 内按 layer_idx 调用）
 ~~~
@@ -458,18 +463,20 @@ create_engine 一次（按 cfg.max_seq_len / vocab / hidden）
 ## 5. 并行分支（不改四模块对象模型）
 
 - **MoE FFN**：替换 Model 内 layer FFN 路径
-- **性能**：BufferPool 完善、FP16/INT4、CUDA Graph、profiling
-- **2.7**：batching、Paged KV、Radix cache
+- **热路径性能**：BufferPool、CUDA Graph、profiling（见 opt-roadmap）
+- **落地**（优先于 Graph / MoE）：Tokenizer（引擎外）+ 量化显存（FP16 / INT4）；checklist 见 roadmap 模块 5 / 6
+- **Phase 3**：batching、Paged KV、Radix cache
 
 ---
 
-## 6. 实现顺序（模块骨架 → 细节）
+## 6. 实现顺序（模块骨架 -> 细节）
 
 1. **WeightLoader** — fixture（可并行起步）
 2. **TransformerModel** — 容器 + embed/lm_head + fixture H2D 拷贝
 3. **InferenceEngine** — session + N-layer forward + prefill/decode
 4. **Sampler / GenerateLoop** — 闭合 token 环
 5. **WeightLoader** — safetensors（1 只读格式 -> 2 fixture roundtrip -> 3 HF 名映射 -> 4 真模型验证）
-6. **并行**：MoE、Graph、量化
+6. **落地**：Tokenizer（文本进出）+ 量化显存（整模进 Orin）
+7. **并行**：MoE、Graph（量化已从本条拆到落地）
 
 **API 契约**（收工前）：[`../guide/inference_engine_device_api.md`](../guide/inference_engine_device_api.md)（Engine 为主；Loader/Model load API 可同文档分节）。

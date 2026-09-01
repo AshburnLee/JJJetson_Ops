@@ -9,7 +9,7 @@ Phase 蓝图、模块边界、生命周期、编码架构决策。
 | 文件 | 内容 |
 |------|------|
 | [phase1_lifecycle.md](design/phase1_lifecycle.md) | Phase 1 TransformerRunner Session |
-| [phase2_lifecycle.md](design/phase2_lifecycle.md) | Phase 2 Loader / Model / Engine / Sampler（§2.3 Model immutable 语义） |
+| [phase2_lifecycle.md](design/phase2_lifecycle.md) | Phase 2 Loader / Model / Engine / Sampler；落地 Tokenizer + 量化显存（§2.3 Model immutable 语义） |
 | [header_cpp_layout.md](design/header_cpp_layout.md) | `.h` / `.cpp` 分工（opaque vs POD） |
 | [pre_ln_vs_post_ln.md](design/pre_ln_vs_post_ln.md) | Pre-LN vs Post-LN 选型 |
 
