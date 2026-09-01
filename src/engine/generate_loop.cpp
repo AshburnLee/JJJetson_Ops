@@ -12,7 +12,7 @@
 // Big picture 里它在哪？
 //   Loader / Model(权重) / Engine.create 都已经做完；
 //   调用方把 InferenceEngine* 借给 [本函数]，本函数只驱动循环和停条件。
-//   每步调 inference_engine_forward_token_sample（forward + 采样 + D2H token），
+//   每步调 ie_forward_token_sample（forward + 采样 + D2H token），
 //   本文件不碰 stream / memcpy / sampler kernel。
 //   不 own Engine / KV / 权重，也不 create、destroy、reset session。
 //   对照：Engine 的 forward_token_device 是单步；本函数是把单步串成一次 generate。
@@ -41,7 +41,7 @@ extern "C" int generate_loop_run(InferenceEngine *engine, const int *prompt_toke
         return -1;
     }
 
-    const TransformerModel *model = inference_engine_get_model(engine);
+    const TransformerModel *model = ie_get_model(engine);
     const ModelConfig *cfg = transformer_model_get_config(model);
     if (cfg == nullptr || transformer_model_is_weights_loaded(model) != 1) {
         return -1;
@@ -65,8 +65,8 @@ extern "C" int generate_loop_run(InferenceEngine *engine, const int *prompt_toke
     // step 1：prefill，T=prompt_len，pos 从 0；采出第一个新 token
     {
         NVTX_RANGE("prefill");
-        if (inference_engine_forward_token_sample(engine, prompt_token_ids, prompt_len, 0, top_k,
-                                                  temperature, top_p, seed, &next_token) != 0) {
+        if (ie_forward_token_sample(engine, prompt_token_ids, prompt_len, 0, top_k, temperature,
+                                    top_p, seed, &next_token) != 0) {
             fprintf(stderr, "generate_loop_run: prefill forward failed\n");
             return -1;
         }
@@ -82,13 +82,13 @@ extern "C" int generate_loop_run(InferenceEngine *engine, const int *prompt_toke
     {
         NVTX_RANGE("decode");
         for (int step = 1; step < max_new_tokens; ++step) {
-            const int cache_len = inference_engine_kv_cache_len(engine);
+            const int cache_len = ie_kv_cache_len(engine);
             if (cache_len + 1 > max_seq_len) {
                 fprintf(stderr, "generate_loop_run: decode exceeds max_seq_len\n");
                 return -1;
             }
-            if (inference_engine_forward_token_sample(engine, &decode_token, 1, cache_len, top_k,
-                                                      temperature, top_p, seed, &next_token) != 0) {
+            if (ie_forward_token_sample(engine, &decode_token, 1, cache_len, top_k, temperature,
+                                        top_p, seed, &next_token) != 0) {
                 fprintf(stderr, "generate_loop_run: decode forward failed\n");
                 return -1;
             }

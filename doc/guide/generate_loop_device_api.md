@@ -29,7 +29,7 @@ GenerateLoop 只借用 `InferenceEngine*`；session 里 KV 的增长、reset、d
 
 **Step A — prefill（T=3）**
 
-`generate_loop_run` 把 `prompt_token_ids[0..2]` 交给 `inference_engine_forward_token_sample`：H2D 进 Engine pool，forward，在 GPU **最后一列** logits 上采样，D2H 一个 token id。
+`generate_loop_run` 把 `prompt_token_ids[0..2]` 交给 `ie_forward_token_sample`：H2D 进 Engine pool，forward，在 GPU **最后一列** logits 上采样，D2H 一个 token id。
 
 此时 Engine 里 `kv_cache_len` 变为 3。
 
@@ -48,14 +48,14 @@ GenerateLoop 只借用 `InferenceEngine*`；session 里 KV 的增长、reset、d
 - 已生成 `max_new_tokens` 个 -> 返回；
 - 或某步 `next == eos_token_id`（且 `eos_token_id >= 0`）-> 提前返回，已生成长度可能小于 `max_new_tokens`。
 
-token / logits / hidden / out_token 在 `inference_engine_create` 按 max_seq 一次分配；T=1 layer workspace 也在 create 预热。GenerateLoop 每步只调 `forward_token_sample`。并行 top-k/top-p 仍是 TODO(perf-*)。
+token / logits / hidden / out_token 在 `ie_create` 按 max_seq 一次分配；T=1 layer workspace 也在 create 预热。GenerateLoop 每步只调 `forward_token_sample`。并行 top-k/top-p 仍是 TODO(perf-*)。
 
 ---
 
 ## 末 token logits slice（已实现）
 
 prefill 时 Engine 一次产出 `[vocab, T]` 的 logits，但采样只需要**最后一个输入位置**上的分布（预测 [下一个 token]）。
-`inference_engine_forward_token_sample` 在 GPU 上切末列再采样：
+`ie_forward_token_sample` 在 GPU 上切末列再采样：
 
 ~~~
 d_logits_last = d_logits + vocab_size * (num_tokens - 1)
@@ -95,7 +95,7 @@ Python：`generate_loop_me.sampler_top_k_host(logits, top_k, seed=0, temperature
 
 CUDA 算子：`src/cuda/sampler_top_k.{h,cu}`。在 **device logits [vocab]** 上做 top-k + softmax/T + 采样；`top_k == 1` 走并行 greedy kernel（忽略 temperature）。
 
-GenerateLoop 生产路径：`inference_engine_forward_token_sample` 在 GPU 末列 logits 上调用 `sampler_top_k_device`（或 top_p），只 D2H **token id**（不再 D2H 整段 vocab）。
+GenerateLoop 生产路径：`ie_forward_token_sample` 在 GPU 末列 logits 上调用 `sampler_top_k_device`（或 top_p），只 D2H **token id**（不再 D2H 整段 vocab）。
 
 Python 测试：`generate_loop_me.sampler_top_k_host`（内部 H2D -> device -> token）。
 
@@ -181,7 +181,7 @@ out_capacity      容量；须 >= max_new_tokens
 **边界**
 
 - `prompt_len + max_new_tokens - 1` 不得超过 `ModelConfig.max_seq_len`；
-- 不在内部调 `engine_reset`；若需新对话，调用方先 `inference_engine_reset`。
+- 不在内部调 `engine_reset`；若需新对话，调用方先 `ie_reset`。
 
 ---
 
@@ -239,14 +239,14 @@ Python 写 fixture、`import *.so` 不在这棵树上（nsys 自己的 `dlopen`�
   ▼
 generate_loop_me.generate(engine, prompt, max_new, eos)
   │
-  ├─ prefill: inference_engine_forward_token_sample(prompt, T=prompt_len, pos=0)
-  └─ decode × (max_new-1): inference_engine_forward_token_sample(T=1, pos=kv_cache_len)
+  ├─ prefill: ie_forward_token_sample(prompt, T=prompt_len, pos=0)
+  └─ decode × (max_new-1): ie_forward_token_sample(T=1, pos=kv_cache_len)
        内部：last_logits + sampler_top_k/top_p_device + D2H 1 个 int
 
 Engine 细节（pos_offset、KV、layout）不在本文重复；见 inference_engine_device_api.md。
 ~~~
 
-GenerateLoop **不**调用 `inference_engine_forward_token_host`；host token 单步测试走 Engine binding，GenerateLoop 走 `forward_token_sample`。
+GenerateLoop **不**调用 `ie_forward_token_host`；host token 单步测试走 Engine binding，GenerateLoop 走 `forward_token_sample`。
 
 ---
 

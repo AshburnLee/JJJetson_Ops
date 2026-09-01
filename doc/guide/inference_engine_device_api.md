@@ -33,7 +33,7 @@ transformer_model_me.load_weights_from_fixture(model, fixture_dir)
 engine = inference_engine_me.create_engine(model)
 ~~~
 
-C 里等价于 `inference_engine_create(model, stream)`，其中 `model` 必须已经 `transformer_model_load_weights` 成功。若权重未 load，`forward_*` 会打印 `model weights not loaded` 并返回 `-1`。
+C 里等价于 `ie_create(model, stream)`，其中 `model` 必须已经 `transformer_model_load_weights` 成功。若权重未 load，`forward_*` 会打印 `model weights not loaded` 并返回 `-1`。
 
 `stream` 传 `nullptr` 时 Engine 自建 non-blocking stream；传外部 stream 则 forward 走你的 stream（binding 里 Python 目前总是传 `nullptr`）。
 
@@ -89,7 +89,7 @@ inference_engine_me.forward_token_host(engine, 1, kv_cache_len(engine), np.array
 
 ## 单步 forward 内部在做什么
 
-无论走哪条 API，核心都是 `inference_engine_forward_device`。用 prefill、`T=3`、`cache_len` 从 0 开始举例，顺序是：
+无论走哪条 API，核心都是 `ie_forward_device`。用 prefill、`T=3`、`cache_len` 从 0 开始举例，顺序是：
 
 1. **入口 hidden**
    - 若 ctx 带了 `d_token_ids`：调 Model 的 embed，得到 `[hidden_size, 3]` 的 hidden。
@@ -118,13 +118,13 @@ inference_engine_me.forward_token_host(engine, 1, kv_cache_len(engine), np.array
 
 Engine 对外有三层 [包装厚度] 不同的入口。名字里带 `_host` 的都是**测试用**：内部会 `cudaMalloc` 输入/输出 buffer，跑完再 free——**不要**当生产热路径。
 
-### `inference_engine_forward_device` — 生产核心
+### `ie_forward_device` — 生产核心
 
 你自己在 GPU 上准备好 `d_token_ids` 或 `d_hidden_in`、`d_pos`、`d_hidden_out`、可选 `d_logits`，栈上填一个 `InferenceForwardCtx`，调这一层。
 
 GenerateLoop 的生产路径不走这个直接暴露的 ctx，而是走 `forward_token_sample`（内部 `last_logits` -> `forward_token_device` -> `forward_device`）。token / logits / hidden / out_token 来自 create 时的 BufferPool。
 
-### `inference_engine_forward_hidden_host` — 从 hidden 进，跳过 embed
+### `ie_forward_hidden_host` — 从 hidden 进，跳过 embed
 
 名字里的 `_hidden_` 就是在强调：**这一步不从 token 开始**，调用方已经有一份 hidden 状态。
 
@@ -140,7 +140,7 @@ inference_engine_me.forward_hidden_host(engine, T, pos_offset, hidden, out)
 
 输出 `out` 与 `hidden` 同 shape：`[hidden_size, T, 1, 1]`，是 final_norm 之后、**lm_head 之前**的 hidden。
 
-### `inference_engine_forward_token_host` — 从 token 进，到 logits 出
+### `ie_forward_token_host` — 从 token 进，到 logits 出
 
 这是完整 [token 环] 的单步测试 API：`token_ids` -> embed -> N 层 -> final_norm -> lm_head -> host logits。
 
@@ -155,14 +155,14 @@ inference_engine_me.forward_token_host(engine, T, 0, token_ids, logits)
 
 `logits[v, t]` 是第 `t` 个输入 token 位置上、词表第 `v` 维的 logit。GenerateLoop 在 decode 时只关心**最后一列** `logits[:, T-1]` 做 greedy；这个 API 把整表都 D2H 回来，方便和 ref 逐列对比。
 
-### `inference_engine_forward_token_device` — token 环的 GPU 侧单步
+### `ie_forward_token_device` — token 环的 GPU 侧单步
 
 `d_token_ids`、`d_logits` 已在 device 上；`d_hidden_out` 用 Engine BufferPool（create 时按 max_seq 分配），调 `forward_device`。
 GenerateLoop 不直接调本函数，走 `forward_token_sample`（内部再进 `last_logits`，再进这里）。
 
 `ENABLE_NVTX` 打开时，本函数钉一块 `forward`。
 
-### `inference_engine_forward_token_last_logits` — 单步进 GPU，末列留在 device
+### `ie_forward_token_last_logits` — 单步进 GPU，末列留在 device
 
 host `token_ids` 进，H2D 写入 pool `d_token_ids`，forward 写入 pool `d_logits`。**不每步 malloc**。
 成功后末列在 GPU 上：`d_logits + vocab*(T-1)`。给测试或 [先 forward 再自己采样] 用。
@@ -171,7 +171,7 @@ GenerateLoop 生产步进不直接调本函数，走下面的 `forward_token_sam
 例：`token_ids_host=[3,17,42]`，T=3，pos=0 -> 一次 H2D 3 个 int，logits 表 `[vocab,3]` 落在 pool 前 3 列。
 随后 decode T=1 三次，仍用同一块 pool，只覆盖第 0 列。
 
-### `inference_engine_forward_token_sample` — GenerateLoop 生产步进
+### `ie_forward_token_sample` — GenerateLoop 生产步进
 
 在 `last_logits` 之后，用 pool 的 `d_out_token` 在末列上采样，再 D2H **一个** token id。
 Python **不暴露**（测试走 `generate_loop_me.generate`）。
@@ -232,19 +232,19 @@ d_logits        调用方（GPU）   可选；非空则写 lm_head 输出
 ~~~
 函数                                    返回值          你调用它时期望发生什么
 ────────────────────────────────────────────────────────────────────────────────────────
-inference_engine_create(model, stream)   Engine*/null    挂 N 层 KV、pool、stream；cache_len=0
-inference_engine_destroy(engine)        void            释放 session 资源；不碰 model
-inference_engine_reset(engine)            void            KV 清零；pool 保留
-inference_engine_kv_cache_len(engine)     int             当前已 advance 的序列长度 L
-inference_engine_next_pos(engine)       int             与 L 同步；下一步 decode 的 pos_offset
-inference_engine_forward_device(...)    0 / -1          生产单步 forward
-inference_engine_forward_hidden_host(...) 0 / -1        测试：hidden 进，hidden 出
-inference_engine_forward_token_host(...)  0 / -1        测试：token 进，logits 出（走 pool）
-inference_engine_forward_token_device(...) 0 / -1       GPU token 单步；hidden 用 pool
-inference_engine_forward_token_last_logits(...) 0 / -1  生产步进：host token -> pool + forward
-inference_engine_d_logits_last(engine)    float*        pool 上末列 logits（采样用）
-inference_engine_d_out_token(engine)      int*          pool 上 1 个 token 槽（采样输出）
-inference_engine_get_model / ...        指针            集成或调试
+ie_create(model, stream)   Engine*/null    挂 N 层 KV、pool、stream；cache_len=0
+ie_destroy(engine)        void            释放 session 资源；不碰 model
+ie_reset(engine)            void            KV 清零；pool 保留
+ie_kv_cache_len(engine)     int             当前已 advance 的序列长度 L
+ie_next_pos(engine)       int             与 L 同步；下一步 decode 的 pos_offset
+ie_forward_device(...)    0 / -1          生产单步 forward
+ie_forward_hidden_host(...) 0 / -1        测试：hidden 进，hidden 出
+ie_forward_token_host(...)  0 / -1        测试：token 进，logits 出（走 pool）
+ie_forward_token_device(...) 0 / -1       GPU token 单步；hidden 用 pool
+ie_forward_token_last_logits(...) 0 / -1  生产步进：host token -> pool + forward
+ie_d_logits_last(engine)    float*        pool 上末列 logits（采样用）
+ie_d_out_token(engine)      int*          pool 上 1 个 token 槽（采样输出）
+ie_get_model / ...        指针            集成或调试
 ~~~
 
 **常见失败原因**
@@ -262,11 +262,11 @@ Python 用 `uintptr_t` 传递 handle，**没有 RAII**；必须 `create_engine` 
 ~~~
 Python                                              对应 C                         用途
 ────────────────────────────────────────────────────────────────────────────────────────────
-create_engine(model_handle)                         inference_engine_create        开始 session
-destroy_engine(engine_handle)                       inference_engine_destroy       结束 session
-reset_engine(engine_handle)                         inference_engine_reset         新对话
-kv_cache_len(engine_handle)                         inference_engine_kv_cache_len  断言 L
-next_pos(engine_handle)                             inference_engine_next_pos      断言下一位置
+create_engine(model_handle)                         ie_create        开始 session
+destroy_engine(engine_handle)                       ie_destroy       结束 session
+reset_engine(engine_handle)                         ie_reset         新对话
+kv_cache_len(engine_handle)                         ie_kv_cache_len  断言 L
+next_pos(engine_handle)                             ie_next_pos      断言下一位置
 kv_cache_num_layers(engine_handle)                  kv_cache_get_num_layers        层数 N
 forward_hidden_host(engine, T, pos, h_in, h_out)    forward_hidden_host            测试 block 链
 forward_token_host(engine, T, pos, ids, logits)     forward_token_host             测试 token 环
@@ -278,7 +278,7 @@ forward_token_host(engine, T, pos, ids, logits)     forward_token_host          
 
 ## 和 GenerateLoop 怎么配合
 
-[`generate_loop_me.generate`](../../src/bindings/generate_loop_binding.cpp) **不**经过 `inference_engine_me.forward_token_host`。它在 C++ 里循环调用 `inference_engine_forward_token_sample`，只拿回 **token id**，并处理 EOS。
+[`generate_loop_me.generate`](../../src/bindings/generate_loop_binding.cpp) **不**经过 `inference_engine_me.forward_token_host`。它在 C++ 里循环调用 `ie_forward_token_sample`，只拿回 **token id**，并处理 EOS。
 
 关系可以这么记：
 
@@ -344,7 +344,7 @@ ref 先用 fixture 里的 `embed` 表查 token 得到 hidden，再走同一套 l
 权重在哪          runner create 时 H2D              Model 上，Engine 只引用
 层数              固定 1                            cfg.num_layers
 KV                单层                              KVCache(num_layers=N)
-单步核心          transformer_runner_forward_device inference_engine_forward_device
+单步核心          transformer_runner_forward_device ie_forward_device
 final_norm        无（Phase 1 block 外）            Engine 内建
 embed / lm_head   无                                Model + forward 可选
 测试 hidden 路径  forward_host                      forward_hidden_host

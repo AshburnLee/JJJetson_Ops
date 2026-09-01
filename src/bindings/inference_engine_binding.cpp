@@ -15,9 +15,9 @@ PYBIND11_MODULE(inference_engine_me, m) {
         "create_engine",
         [](uintptr_t model_handle) -> uintptr_t {
             TransformerModel *model = reinterpret_cast<TransformerModel *>(model_handle);
-            InferenceEngine *engine = inference_engine_create(model, nullptr);
+            InferenceEngine *engine = ie_create(model, nullptr);
             if (engine == nullptr) {
-                throw std::runtime_error("inference_engine_create failed");
+                throw std::runtime_error("ie_create failed");
             }
             return reinterpret_cast<uintptr_t>(engine);
         },
@@ -26,29 +26,28 @@ PYBIND11_MODULE(inference_engine_me, m) {
     m.def(
         "destroy_engine",
         [](uintptr_t engine_handle) {
-            inference_engine_destroy(reinterpret_cast<InferenceEngine *>(engine_handle));
+            ie_destroy(reinterpret_cast<InferenceEngine *>(engine_handle));
         },
         py::arg("engine_handle"));
 
     m.def(
         "reset_engine",
         [](uintptr_t engine_handle) {
-            inference_engine_reset(reinterpret_cast<InferenceEngine *>(engine_handle));
+            ie_reset(reinterpret_cast<InferenceEngine *>(engine_handle));
         },
         py::arg("engine_handle"));
 
     m.def(
         "kv_cache_len",
         [](uintptr_t engine_handle) -> int {
-            return inference_engine_kv_cache_len(
-                reinterpret_cast<InferenceEngine *>(engine_handle));
+            return ie_kv_cache_len(reinterpret_cast<InferenceEngine *>(engine_handle));
         },
         py::arg("engine_handle"));
 
     m.def(
         "next_pos",
         [](uintptr_t engine_handle) -> int {
-            return inference_engine_next_pos(reinterpret_cast<InferenceEngine *>(engine_handle));
+            return ie_next_pos(reinterpret_cast<InferenceEngine *>(engine_handle));
         },
         py::arg("engine_handle"));
 
@@ -56,7 +55,7 @@ PYBIND11_MODULE(inference_engine_me, m) {
         "kv_cache_num_layers",
         [](uintptr_t engine_handle) -> int {
             InferenceEngine *engine = reinterpret_cast<InferenceEngine *>(engine_handle);
-            KVCache *cache = inference_engine_get_kv_cache(engine);
+            KVCache *cache = ie_get_kv_cache(engine);
             if (cache == nullptr) {
                 return 0;
             }
@@ -72,10 +71,10 @@ PYBIND11_MODULE(inference_engine_me, m) {
             auto in_buf = hidden_in.request();
             auto out_buf = hidden_out.request();
             InferenceEngine *engine = reinterpret_cast<InferenceEngine *>(engine_handle);
-            if (inference_engine_forward_hidden_host(engine, static_cast<float *>(in_buf.ptr),
-                                                     static_cast<float *>(out_buf.ptr), num_tokens,
-                                                     pos_offset) != 0) {
-                throw std::runtime_error("inference_engine_forward_hidden_host failed");
+            if (ie_forward_hidden_host(engine, static_cast<float *>(in_buf.ptr),
+                                       static_cast<float *>(out_buf.ptr), num_tokens,
+                                       pos_offset) != 0) {
+                throw std::runtime_error("ie_forward_hidden_host failed");
             }
         },
         py::arg("engine_handle"), py::arg("num_tokens"), py::arg("pos_offset") = 0,
@@ -97,10 +96,10 @@ PYBIND11_MODULE(inference_engine_me, m) {
                 throw std::runtime_error("logits_out must be [vocab_size, num_tokens] Fortran");
             }
             InferenceEngine *engine = reinterpret_cast<InferenceEngine *>(engine_handle);
-            if (inference_engine_forward_token_host(engine, static_cast<const int *>(tok_buf.ptr),
-                                                    static_cast<float *>(log_buf.ptr), num_tokens,
-                                                    pos_offset) != 0) {
-                throw std::runtime_error("inference_engine_forward_token_host failed");
+            if (ie_forward_token_host(engine, static_cast<const int *>(tok_buf.ptr),
+                                      static_cast<float *>(log_buf.ptr), num_tokens,
+                                      pos_offset) != 0) {
+                throw std::runtime_error("ie_forward_token_host failed");
             }
         },
         py::arg("engine_handle"), py::arg("num_tokens"), py::arg("pos_offset") = 0,

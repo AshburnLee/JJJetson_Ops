@@ -19,7 +19,7 @@ prompt token_ids
     -> GenerateLoop 写回，再喂 Engine decode
 ~~~
 
-`inference_engine_forward_token_*` **没有** temperature 参数；调 temperature 的是 `generate_loop_run` / `sampler_top_k_device`。
+`ie_forward_token_*` **没有** temperature 参数；调 temperature 的是 `generate_loop_run` / `sampler_top_k_device`。
 
 ---
 

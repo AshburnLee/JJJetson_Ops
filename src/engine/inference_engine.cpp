@@ -52,7 +52,7 @@ static size_t inference_col_major_bytes(int features, int num_tokens) {
     return static_cast<size_t>(features) * num_tokens * sizeof(float);
 }
 
-static void inference_engine_buffer_pool_destroy(InferenceEngineBufferPool *pool) {
+static void ie_buffer_pool_destroy(InferenceEngineBufferPool *pool) {
     if (pool == nullptr) {
         return;
     }
@@ -91,9 +91,9 @@ static void inference_engine_buffer_pool_destroy(InferenceEngineBufferPool *pool
 }
 
 static TransformerLayerLinearDeviceBuffers *
-inference_engine_layer_buffers_get(InferenceEngine *engine, int num_tokens, int hidden_size,
-                                   int q_dim, int kv_dim, int intermediate_size, int head_dim,
-                                   int num_q_heads, int num_kv_heads) {
+ie_layer_buffers_get(InferenceEngine *engine, int num_tokens, int hidden_size, int q_dim,
+                     int kv_dim, int intermediate_size, int head_dim, int num_q_heads,
+                     int num_kv_heads) {
     const auto it = engine->pool.layer_buffers_by_tokens.find(num_tokens);
     if (it != engine->pool.layer_buffers_by_tokens.end()) {
         return it->second;
@@ -105,8 +105,8 @@ inference_engine_layer_buffers_get(InferenceEngine *engine, int num_tokens, int 
     return buffers;
 }
 
-static int *inference_engine_d_pos_get(InferenceEngine *engine, int num_tokens, int pos_offset,
-                                       cudaStream_t stream) {
+static int *ie_d_pos_get(InferenceEngine *engine, int num_tokens, int pos_offset,
+                         cudaStream_t stream) {
     int *d_pos = nullptr;
     const auto it = engine->pool.d_pos_by_tokens.find(num_tokens);
     if (it != engine->pool.d_pos_by_tokens.end()) {
@@ -129,7 +129,7 @@ static int *inference_engine_d_pos_get(InferenceEngine *engine, int num_tokens, 
 // 创建 Phase 2 推理 session：在已有 Model 上挂 KV、buffer pool、stream，准备 prefill/decode。
 //
 // Big picture 里它在哪？
-//   Model(create+load 权重) -> [本函数 engine_create] -> forward / reset / destroy
+//   Model(create+load 权重) -> [本函数 ie_create] -> forward / reset / destroy
 //   本函数 **借用** model 指针，不 load 权重、不 free Model；destroy Engine 后 Model 仍可复用。
 //   对照 Phase 1：类似 transformer_runner_create，但权重在 Model 里，KV 是 num_layers 层。
 //   图纸：doc/design/phase2_lifecycle.md §3.2
@@ -146,15 +146,15 @@ static int *inference_engine_d_pos_get(InferenceEngine *engine, int num_tokens, 
 //   OUTPUT：InferenceEngine*，session.next_pos=0；失败返回 nullptr 并释放已分配部分
 //
 // 调用方：Model 须先于 Engine create；Engine destroy 后 Model 才能 destroy。
-extern "C" InferenceEngine *inference_engine_create(TransformerModel *model, void *stream_in) {
+extern "C" InferenceEngine *ie_create(TransformerModel *model, void *stream_in) {
     // step 0：Model 与 cfg 必须合法
     if (model == nullptr) {
-        std::fprintf(stderr, "inference_engine_create: null model\n");
+        std::fprintf(stderr, "ie_create: null model\n");
         return nullptr;
     }
     const ModelConfig *cfg = transformer_model_get_config(model);
     if (cfg == nullptr || model_config_validate(cfg) != 0) {
-        std::fprintf(stderr, "inference_engine_create: invalid model config\n");
+        std::fprintf(stderr, "ie_create: invalid model config\n");
         return nullptr;
     }
 
@@ -179,7 +179,7 @@ extern "C" InferenceEngine *inference_engine_create(TransformerModel *model, voi
     engine->kv_cache =
         kv_cache_create(cfg->max_seq_len, cfg->head_dim, cfg->num_kv_heads, cfg->num_layers);
     if (engine->kv_cache == nullptr) {
-        inference_engine_destroy(engine);
+        ie_destroy(engine);
         return nullptr;
     }
 
@@ -210,9 +210,9 @@ extern "C" InferenceEngine *inference_engine_create(TransformerModel *model, voi
     //   现在就把桶[1]填上。reset 不清这套；prefill T=3 仍走懒分配。
     const int q_dim = cfg->num_q_heads * cfg->head_dim;
     const int kv_dim = cfg->num_kv_heads * cfg->head_dim;
-    inference_engine_layer_buffers_get(engine, /*num_tokens=*/1, cfg->hidden_size, q_dim, kv_dim,
-                                       cfg->intermediate_size, cfg->head_dim, cfg->num_q_heads,
-                                       cfg->num_kv_heads);
+    ie_layer_buffers_get(engine, /*num_tokens=*/1, cfg->hidden_size, q_dim, kv_dim,
+                         cfg->intermediate_size, cfg->head_dim, cfg->num_q_heads,
+                         cfg->num_kv_heads);
     int *d_pos_t1 = nullptr;
     CUDA_CHECK(cudaMalloc(&d_pos_t1, sizeof(int)));
     engine->pool.d_pos_by_tokens[1] = d_pos_t1;
@@ -221,11 +221,11 @@ extern "C" InferenceEngine *inference_engine_create(TransformerModel *model, voi
     return engine;
 }
 
-extern "C" void inference_engine_destroy(InferenceEngine *engine) {
+extern "C" void ie_destroy(InferenceEngine *engine) {
     if (engine == nullptr) {
         return;
     }
-    inference_engine_buffer_pool_destroy(&engine->pool);
+    ie_buffer_pool_destroy(&engine->pool);
     kv_cache_destroy(engine->kv_cache);
     engine->kv_cache = nullptr;
     if (engine->cublas_handle != nullptr) {
@@ -239,7 +239,7 @@ extern "C" void inference_engine_destroy(InferenceEngine *engine) {
     delete engine;
 }
 
-extern "C" void inference_engine_reset(InferenceEngine *engine) {
+extern "C" void ie_reset(InferenceEngine *engine) {
     if (engine == nullptr) {
         return;
     }
@@ -247,29 +247,29 @@ extern "C" void inference_engine_reset(InferenceEngine *engine) {
     engine->session.next_pos = 0;
 }
 
-extern "C" const TransformerModel *inference_engine_get_model(const InferenceEngine *engine) {
+extern "C" const TransformerModel *ie_get_model(const InferenceEngine *engine) {
     return engine != nullptr ? engine->model : nullptr;
 }
 
-extern "C" KVCache *inference_engine_get_kv_cache(InferenceEngine *engine) {
+extern "C" KVCache *ie_get_kv_cache(InferenceEngine *engine) {
     return engine != nullptr ? engine->kv_cache : nullptr;
 }
 
-extern "C" int inference_engine_kv_cache_len(const InferenceEngine *engine) {
+extern "C" int ie_kv_cache_len(const InferenceEngine *engine) {
     if (engine == nullptr || engine->kv_cache == nullptr) {
         return 0;
     }
     return kv_cache_get_len(engine->kv_cache);
 }
 
-extern "C" int inference_engine_next_pos(const InferenceEngine *engine) {
+extern "C" int ie_next_pos(const InferenceEngine *engine) {
     if (engine == nullptr) {
         return 0;
     }
     return engine->session.next_pos;
 }
 
-extern "C" void *inference_engine_get_stream(InferenceEngine *engine) {
+extern "C" void *ie_get_stream(InferenceEngine *engine) {
     if (engine == nullptr) {
         return nullptr;
     }
@@ -296,21 +296,20 @@ extern "C" void *inference_engine_get_stream(InferenceEngine *engine) {
 //   5) D2D 到 ctx->d_hidden_out；若 ctx->d_logits 非空再 lm_head(Model)
 //
 // ctx 栈上构造，不持久化；调用方保证 d_pos 已在 GPU 上。
-extern "C" int inference_engine_forward_device(InferenceEngine *engine,
-                                               const InferenceForwardCtx *ctx) {
+extern "C" int ie_forward_device(InferenceEngine *engine, const InferenceForwardCtx *ctx) {
     if (engine == nullptr || ctx == nullptr) {
         return -1;
     }
     if (ctx->num_tokens <= 0 || ctx->d_hidden_out == nullptr || ctx->d_pos == nullptr) {
-        std::fprintf(stderr, "inference_engine_forward_device: invalid ctx\n");
+        std::fprintf(stderr, "ie_forward_device: invalid ctx\n");
         return -1;
     }
     if (ctx->d_token_ids == nullptr && ctx->d_hidden_in == nullptr) {
-        std::fprintf(stderr, "inference_engine_forward_device: need d_token_ids or d_hidden_in\n");
+        std::fprintf(stderr, "ie_forward_device: need d_token_ids or d_hidden_in\n");
         return -1;
     }
     if (transformer_model_is_weights_loaded(engine->model) != 1) {
-        std::fprintf(stderr, "inference_engine_forward_device: model weights not loaded\n");
+        std::fprintf(stderr, "ie_forward_device: model weights not loaded\n");
         return -1;
     }
 
@@ -324,22 +323,22 @@ extern "C" int inference_engine_forward_device(InferenceEngine *engine,
     // step 1：会话边界检查——本步写入后不能超过 max_seq（例：L=250,T=10,max=256 -> 拒绝）
     const int cache_len_before = kv_cache_get_len(engine->kv_cache);
     if (cache_len_before + T > cfg->max_seq_len) {
-        std::fprintf(stderr, "inference_engine_forward_device: exceeds max_seq_len\n");
+        std::fprintf(stderr, "ie_forward_device: exceeds max_seq_len\n");
         return -1;
     }
 
     cudaStream_t stream =
         ctx->stream != nullptr ? static_cast<cudaStream_t>(ctx->stream) : engine->stream;
 
-    TransformerLayerLinearDeviceBuffers *buffers = inference_engine_layer_buffers_get(
-        engine, T, hidden_size, q_dim, kv_dim, cfg->intermediate_size, cfg->head_dim,
-        cfg->num_q_heads, cfg->num_kv_heads);
+    TransformerLayerLinearDeviceBuffers *buffers =
+        ie_layer_buffers_get(engine, T, hidden_size, q_dim, kv_dim, cfg->intermediate_size,
+                             cfg->head_dim, cfg->num_q_heads, cfg->num_kv_heads);
 
     // step 2：得到本步 layer 输入 hidden [hidden_size, T]（col-major）
     if (ctx->d_token_ids != nullptr) {
         if (transformer_model_embed_forward_device(stream, engine->model, ctx->d_token_ids,
                                                    buffers->d_hidden, T) != 0) {
-            std::fprintf(stderr, "inference_engine_forward_device: embed failed\n");
+            std::fprintf(stderr, "ie_forward_device: embed failed\n");
             return -1;
         }
     } else {
@@ -357,8 +356,7 @@ extern "C" int inference_engine_forward_device(InferenceEngine *engine,
         const TransformerLayerWeights *layer_weights =
             transformer_model_get_layer_weights(engine->model, layer_idx);
         if (layer_weights == nullptr) {
-            std::fprintf(stderr, "inference_engine_forward_device: null layer %d weights\n",
-                         layer_idx);
+            std::fprintf(stderr, "ie_forward_device: null layer %d weights\n", layer_idx);
             return -1;
         }
         transformer_layer_linears_forward_device(
@@ -373,7 +371,7 @@ extern "C" int inference_engine_forward_device(InferenceEngine *engine,
 
     // step 4：全 layer KV append 完毕，推进 cache_len（例：L=0,T=3 -> L=3）
     if (kv_cache_advance_len(engine->kv_cache, T) != 0) {
-        std::fprintf(stderr, "inference_engine_forward_device: kv_cache_advance_len failed\n");
+        std::fprintf(stderr, "ie_forward_device: kv_cache_advance_len failed\n");
         return -1;
     }
     engine->session.next_pos = kv_cache_get_len(engine->kv_cache);
@@ -381,7 +379,7 @@ extern "C" int inference_engine_forward_device(InferenceEngine *engine,
     // step 5：最后一层 block 输出做 final RMSNorm（权重在 Model 上）
     if (transformer_model_final_norm_forward_device(stream, engine->model, buffers->d_hidden_out,
                                                     buffers->d_hidden_out, T) != 0) {
-        std::fprintf(stderr, "inference_engine_forward_device: final_norm failed\n");
+        std::fprintf(stderr, "ie_forward_device: final_norm failed\n");
         return -1;
     }
 
@@ -392,7 +390,7 @@ extern "C" int inference_engine_forward_device(InferenceEngine *engine,
         if (transformer_model_lm_head_forward_device(stream, engine->cublas_handle, engine->model,
                                                      buffers->d_hidden_out, ctx->d_logits,
                                                      T) != 0) {
-            std::fprintf(stderr, "inference_engine_forward_device: lm_head failed\n");
+            std::fprintf(stderr, "ie_forward_device: lm_head failed\n");
             return -1;
         }
     }
@@ -402,10 +400,8 @@ extern "C" int inference_engine_forward_device(InferenceEngine *engine,
 }
 
 // _hidden_ 表示：这一步从 hidden 状态进，不走 embed
-extern "C" int inference_engine_forward_hidden_host(InferenceEngine *engine,
-                                                    const float *hidden_in_host,
-                                                    float *hidden_out_host, int num_tokens,
-                                                    int pos_offset) {
+extern "C" int ie_forward_hidden_host(InferenceEngine *engine, const float *hidden_in_host,
+                                      float *hidden_out_host, int num_tokens, int pos_offset) {
     if (engine == nullptr || hidden_in_host == nullptr || hidden_out_host == nullptr ||
         num_tokens <= 0) {
         return -1;
@@ -422,7 +418,7 @@ extern "C" int inference_engine_forward_hidden_host(InferenceEngine *engine,
 
     float *d_hidden_in = nullptr;
     float *d_hidden_out = nullptr;
-    int *d_pos = inference_engine_d_pos_get(engine, num_tokens, pos_offset, stream);
+    int *d_pos = ie_d_pos_get(engine, num_tokens, pos_offset, stream);
 
     CUDA_CHECK(cudaMallocAsync(&d_hidden_in, hidden_bytes, stream));
     CUDA_CHECK(cudaMallocAsync(&d_hidden_out, hidden_bytes, stream));
@@ -438,7 +434,7 @@ extern "C" int inference_engine_forward_hidden_host(InferenceEngine *engine,
     ctx.d_pos = d_pos;
     ctx.d_logits = nullptr;
 
-    const int rc = inference_engine_forward_device(engine, &ctx);
+    const int rc = ie_forward_device(engine, &ctx);
 
     if (rc == 0) {
         CUDA_CHECK(cudaMemcpyAsync(hidden_out_host, d_hidden_out, hidden_bytes,
@@ -454,9 +450,8 @@ extern "C" int inference_engine_forward_hidden_host(InferenceEngine *engine,
 
 // 编排/production：token embed + N×layer + lm_head；d_token_ids / d_logits 已在 GPU。
 // d_hidden_out 用 create 时的 pool，不每步 malloc。
-extern "C" int inference_engine_forward_token_device(InferenceEngine *engine,
-                                                     const int *d_token_ids, float *d_logits,
-                                                     int num_tokens, int pos_offset) {
+extern "C" int ie_forward_token_device(InferenceEngine *engine, const int *d_token_ids,
+                                       float *d_logits, int num_tokens, int pos_offset) {
     if (engine == nullptr || d_token_ids == nullptr || d_logits == nullptr || num_tokens <= 0) {
         return -1;
     }
@@ -475,7 +470,7 @@ extern "C" int inference_engine_forward_token_device(InferenceEngine *engine,
     NVTX_RANGE("forward");
 
     cudaStream_t stream = engine->stream;
-    int *d_pos = inference_engine_d_pos_get(engine, num_tokens, pos_offset, stream);
+    int *d_pos = ie_d_pos_get(engine, num_tokens, pos_offset, stream);
 
     InferenceForwardCtx ctx{};
     ctx.num_tokens = num_tokens;
@@ -485,15 +480,14 @@ extern "C" int inference_engine_forward_token_device(InferenceEngine *engine,
     ctx.d_pos = d_pos;
     ctx.d_logits = d_logits;
 
-    return inference_engine_forward_device(engine, &ctx);
+    return ie_forward_device(engine, &ctx);
 }
 
 // host token -> pool H2D -> forward_token_device。末列留在 GPU 给 sampler。
 // 例：prefill [3,17,42] T=3；随后 decode T=1 三次，同一块 pool.d_token_ids / d_logits。
 // T=1 layer workspace 已在 create 预热，decode 不再 malloc。
-extern "C" int inference_engine_forward_token_last_logits(InferenceEngine *engine,
-                                                          const int *token_ids_host, int num_tokens,
-                                                          int pos_offset) {
+extern "C" int ie_forward_token_last_logits(InferenceEngine *engine, const int *token_ids_host,
+                                            int num_tokens, int pos_offset) {
     if (engine == nullptr || token_ids_host == nullptr || num_tokens <= 0) {
         return -1;
     }
@@ -507,15 +501,15 @@ extern "C" int inference_engine_forward_token_last_logits(InferenceEngine *engin
                                static_cast<size_t>(num_tokens) * sizeof(int),
                                cudaMemcpyHostToDevice, stream));
 
-    const int rc = inference_engine_forward_token_device(
-        engine, engine->pool.d_token_ids, engine->pool.d_logits, num_tokens, pos_offset);
+    const int rc = ie_forward_token_device(engine, engine->pool.d_token_ids, engine->pool.d_logits,
+                                           num_tokens, pos_offset);
     if (rc == 0) {
         engine->pool.last_num_tokens = num_tokens;
     }
     return rc;
 }
 
-extern "C" const float *inference_engine_d_logits_last(const InferenceEngine *engine) {
+extern "C" const float *ie_d_logits_last(const InferenceEngine *engine) {
     if (engine == nullptr || engine->pool.d_logits == nullptr ||
         engine->pool.last_num_tokens <= 0) {
         return nullptr;
@@ -524,7 +518,7 @@ extern "C" const float *inference_engine_d_logits_last(const InferenceEngine *en
                                        static_cast<size_t>(engine->pool.last_num_tokens - 1);
 }
 
-extern "C" int *inference_engine_d_out_token(InferenceEngine *engine) {
+extern "C" int *ie_d_out_token(InferenceEngine *engine) {
     if (engine == nullptr) {
         return nullptr;
     }
@@ -533,9 +527,9 @@ extern "C" int *inference_engine_d_out_token(InferenceEngine *engine) {
 
 // TODO(perf-topk)：top_k>1 时 sampler_top_k.cu 为 <<<1,1>>> 单线程扫 vocab。
 // TODO(perf-topp)：top_p<1 时 sampler_top_p.cu 为 <<<1,1>>> + O(n^2) sort + 每步 temp malloc。
-static int inference_engine_sample_token_device(void *stream, const float *d_logits_last,
-                                                int vocab_size, int top_k, float temperature,
-                                                float top_p, uint64_t seed, int *d_out_token) {
+static int ie_sample_token_device(void *stream, const float *d_logits_last, int vocab_size,
+                                  int top_k, float temperature, float top_p, uint64_t seed,
+                                  int *d_out_token) {
     if (top_p < 1.f) {
         return sampler_top_p_device(stream, d_logits_last, vocab_size, top_p, temperature, top_k,
                                     seed, d_out_token);
@@ -554,11 +548,9 @@ static int inference_engine_sample_token_device(void *stream, const float *d_log
 //   step 2. 在末列 [vocab] 上采样，写入 pool.d_out_token
 //   step 3. D2H 一个 int。OUTPUT：*out_token_host 是采到的 id
 // decode 同路径，只是 T=1、ids=[上一步 token]、pos=cache_len。
-extern "C" int inference_engine_forward_token_sample(InferenceEngine *engine,
-                                                     const int *token_ids_host, int num_tokens,
-                                                     int pos_offset, int top_k, float temperature,
-                                                     float top_p, uint64_t seed,
-                                                     int *out_token_host) {
+extern "C" int ie_forward_token_sample(InferenceEngine *engine, const int *token_ids_host,
+                                       int num_tokens, int pos_offset, int top_k, float temperature,
+                                       float top_p, uint64_t seed, int *out_token_host) {
     // step 0：参数合法性检查
     if (engine == nullptr || token_ids_host == nullptr || out_token_host == nullptr ||
         num_tokens <= 0 || top_k <= 0 || temperature <= 0.f || top_p <= 0.f || top_p > 1.f) {
@@ -566,21 +558,20 @@ extern "C" int inference_engine_forward_token_sample(InferenceEngine *engine,
     }
 
     // step 1：H2D token + forward，末列 logits 留在 GPU
-    if (inference_engine_forward_token_last_logits(engine, token_ids_host, num_tokens,
-                                                   pos_offset) != 0) {
+    if (ie_forward_token_last_logits(engine, token_ids_host, num_tokens, pos_offset) != 0) {
         return -1;
     }
 
-    const float *d_logits_last = inference_engine_d_logits_last(engine);
-    int *d_out_token = inference_engine_d_out_token(engine);
+    const float *d_logits_last = ie_d_logits_last(engine);
+    int *d_out_token = ie_d_out_token(engine);
     if (d_logits_last == nullptr || d_out_token == nullptr) {
         return -1;
     }
 
     // step 2：末列采样，结果写进 pool.d_out_token
     cudaStream_t stream = engine->stream;
-    if (inference_engine_sample_token_device(stream, d_logits_last, engine->pool.vocab_size, top_k,
-                                             temperature, top_p, seed, d_out_token) != 0) {
+    if (ie_sample_token_device(stream, d_logits_last, engine->pool.vocab_size, top_k, temperature,
+                               top_p, seed, d_out_token) != 0) {
         return -1;
     }
     // step 3：把那一个 token id 拷回 host
@@ -591,17 +582,14 @@ extern "C" int inference_engine_forward_token_sample(InferenceEngine *engine,
 }
 
 // 测试：H2D token_ids -> last_logits -> D2H logits [vocab, T] col-major
-extern "C" int inference_engine_forward_token_host(InferenceEngine *engine,
-                                                   const int *token_ids_host,
-                                                   float *logits_out_host, int num_tokens,
-                                                   int pos_offset) {
+extern "C" int ie_forward_token_host(InferenceEngine *engine, const int *token_ids_host,
+                                     float *logits_out_host, int num_tokens, int pos_offset) {
     if (engine == nullptr || token_ids_host == nullptr || logits_out_host == nullptr ||
         num_tokens <= 0) {
         return -1;
     }
 
-    const int rc =
-        inference_engine_forward_token_last_logits(engine, token_ids_host, num_tokens, pos_offset);
+    const int rc = ie_forward_token_last_logits(engine, token_ids_host, num_tokens, pos_offset);
     if (rc != 0) {
         return rc;
     }

@@ -355,14 +355,14 @@ engine_destroy        释放 KV、pool、stream；不 destroy model
 forward 每步          栈上 InferenceForwardCtx
 ~~~
 
-**骨架（已实现）**：`src/engine/inference_engine.{h,cpp}` — `inference_engine_create` /
+**骨架（已实现）**：`src/engine/inference_engine.{h,cpp}` — `ie_create` /
 `destroy` / `reset`；`KVCache(num_layers)` + FA staging BufferPool + `SessionState.next_pos`；
 Python `inference_engine_me`；`tests/test_inference_engine.py`。
 
 ### 3.3 单步 forward（模块内核心数据流）
 
 ~~~
-inference_engine_forward(engine, &ctx)
+ie_forward_device(engine, &ctx)
   embed（Model）或跳过（测试传 hidden）
   for layer = 0..N-1:
       transformer_layer_linears_forward_device(
@@ -375,7 +375,7 @@ inference_engine_forward(engine, &ctx)
 
 prefill：`T>1`，`pos=[0..T-1]`。decode：`T=1`，`pos=[cache_len]`，`num_kv_tokens=L+1`。
 
-**forward（已实现）**：`inference_engine_forward_device` / `forward_hidden_host`；数据流见 §3.3；
+**forward（已实现）**：`ie_forward_device` / `forward_hidden_host`；数据流见 §3.3；
 `tests/test_inference_engine_forward.py`（N=1/N=2 prefill、prefill+decode+reset）。
 
 ### 3.4 从 Phase 1 泛化（Engine 内细节）
@@ -386,10 +386,10 @@ prefill：`T>1`，`pos=[0..T-1]`。decode：`T=1`，`pos=[cache_len]`，`num_kv_
 
 ### 3.5 API 与测试（规划）
 
-- [x] C：`inference_engine_create` / `destroy` / `reset` / `forward_device` / `forward_hidden_host`
-- [x] C：`inference_engine_forward_token_last_logits`（host token -> pool H2D + device forward；末列留在 GPU）
-- [x] C：`inference_engine_forward_token_sample`（last_logits + 末列采样 + D2H token id；GenerateLoop 每步调这个）
-- [x] C：`inference_engine_forward_token_host`（H2D/D2H 测试包装，内部调 forward_token_device）
+- [x] C：`ie_create` / `destroy` / `reset` / `forward_device` / `forward_hidden_host`
+- [x] C：`ie_forward_token_last_logits`（host token -> pool H2D + device forward；末列留在 GPU）
+- [x] C：`ie_forward_token_sample`（last_logits + 末列采样 + D2H token id；GenerateLoop 每步调这个）
+- [x] C：`ie_forward_token_host`（H2D/D2H 测试包装，内部调 forward_token_device）
 - [x] Python：`inference_engine_me` — create/destroy/reset/kv_cache_len/forward_hidden_host/forward_token_host
 - [x] `../guide/inference_engine_device_api.md`
 - [x] 2-layer prefill e2e；N=1 退化 Phase 1；prefill+decode+reset
@@ -448,10 +448,10 @@ create_engine 一次（按 cfg.max_seq_len / vocab / hidden）
 
 尺寸核对（TinyLlama 2 层切片，max_seq=256）：logits 约 32MB，hidden 约 2MB。Orin 全局显存约 3.8GB，create 时一次分完可接受。
 
-- [x] GenerateLoop：仅循环 + stop；每步调 `inference_engine_forward_token_sample`
+- [x] GenerateLoop：仅循环 + stop；每步调 `ie_forward_token_sample`
 - [ ] Sampler：TODO(perf-topk) / TODO(perf-topp)
 
-代码：`inference_engine_forward_token_sample`（内部 `last_logits`）；pool 在 `inference_engine_create`。
+代码：`ie_forward_token_sample`（内部 `last_logits`）；pool 在 `ie_create`。
 
 ---
 

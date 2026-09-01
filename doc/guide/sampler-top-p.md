@@ -19,7 +19,7 @@ prompt token_ids
     -> GenerateLoop 写回，再喂 Engine decode
 ~~~
 
-`inference_engine_forward_token_*` **没有** top_p 参数；调 top_p 的是 `generate_loop_run` / `sampler_top_p_device`（当 `top_p < 1` 时）。
+`ie_forward_token_*` **没有** top_p 参数；调 top_p 的是 `generate_loop_run` / `sampler_top_p_device`（当 `top_p < 1` 时）。
 
 ---
 
@@ -58,7 +58,7 @@ top_k         只保留 logit 最高的 k 个       可选预截断；再在其�
 top_p         按累计 prob 裁 nucleus          在（可能已 top_k 截断的）分布上裁；至少 1 token
 ~~~
 
-**GenerateLoop 分流**（Engine `inference_engine_forward_token_sample`）：
+**GenerateLoop 分流**（Engine `ie_forward_token_sample`）：
 
 ~~~
 条件                         走哪条路径

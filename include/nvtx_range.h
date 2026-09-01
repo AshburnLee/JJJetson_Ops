@@ -15,7 +15,7 @@
 // 例（decode 一步，T=1）：
 //   {
 //     NvtxRange r("decode");          // push "decode"
-//     inference_engine_forward_token_sample(...);  // 这段里的 CUDA API / kernel 落在事件内
+//     ie_forward_token_sample(...);  // 这段里的 CUDA API / kernel 落在事件内
 //   }                                 // 析构 pop
 //   nsys 时间线上出现名为 decode 的一段 range。
 //
