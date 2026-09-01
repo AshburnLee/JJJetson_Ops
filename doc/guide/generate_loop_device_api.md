@@ -8,7 +8,7 @@ C 头文件：`src/engine/generate_loop.h`，实现：`src/engine/generate_loop.
 
 ## GenerateLoop 和 Sampler 分别管什么
 
-Engine 做完一步 forward 后，GPU 上有一份 logits（或 GenerateLoop 骨架期只 D2H 末 token 那一列）。**Sampler** 的工作是把 `[vocab]` 的 logits 变成一个 `next_token_id`。**GenerateLoop** 则负责 [何时 prefill、何时 decode、循环几次、什么时候停]——它调用 Engine 拿 logits，再调 Sampler 拿 token，把新 token 喂回下一步 decode。
+Engine 做完一步 forward 后，GPU 上有一份 logits。**Sampler** 的工作是把 `[vocab]` 的 logits 变成一个 `next_token_id`（kernel 在 `src/cuda/sampler_*.cu`，由 Engine `forward_token_sample` 调用）。**GenerateLoop** 则负责 [何时 prefill、何时 decode、循环几次、什么时候停]——每步只调 Engine 拿到一个 token id，再喂回下一步 decode。
 
 GenerateLoop **不** create/destroy Engine，**不**持有 KV 或权重。调用方必须先：
 
@@ -29,17 +29,17 @@ GenerateLoop 只借用 `InferenceEngine*`；session 里 KV 的增长、reset、d
 
 **Step A — prefill（T=3）**
 
-`forward_token_step` 把 `prompt_token_ids[0..2]` 交给 `inference_engine_forward_token_last_logits`（H2D 进 Engine pool，不每步 malloc），在 GPU **最后一列** logits 上采样，再 D2H 一个 token id。
+`generate_loop_run` 把 `prompt_token_ids[0..2]` 交给 `inference_engine_forward_token_sample`：H2D 进 Engine pool，forward，在 GPU **最后一列** logits 上采样，D2H 一个 token id。
 
 此时 Engine 里 `kv_cache_len` 变为 3。
 
 **Step B — 第一个新 token**
 
-`sampler_top_k_device` 在 GPU 末列 logits 上采样（默认 `top_k=1` greedy），写入 `out[0]`。
+采样结果写入 `out[0]`（默认 `top_k=1` greedy）。
 
 **Step C — decode 第 1 次（T=1）**
 
-用 `next` 作为唯一输入 token，`pos_offset = kv_cache_len()`（此时为 3），再 forward -> D2H 末列 logits -> greedy -> `out[1]`。
+用 `next` 作为唯一输入 token，`pos_offset = kv_cache_len()`（此时为 3），再调 `forward_token_sample` -> `out[1]`。
 
 此时 `kv_cache_len` 变为 4。公式：`len(prompt) + num_generated - 1`（prefill 后已含 prompt 全长，decode 每步 +1）。
 
@@ -48,14 +48,14 @@ GenerateLoop 只借用 `InferenceEngine*`；session 里 KV 的增长、reset、d
 - 已生成 `max_new_tokens` 个 -> 返回；
 - 或某步 `next == eos_token_id`（且 `eos_token_id >= 0`）-> 提前返回，已生成长度可能小于 `max_new_tokens`。
 
-token / logits / hidden / out_token 在 `inference_engine_create` 按 max_seq 一次分配；T=1 layer workspace 也在 create 预热。`forward_token_last_logits` 复用。decode 不再 `cudaMallocAsync`。采样仍在 GenerateLoop；并行 top-k/top-p 仍是 TODO(perf-*)。
+token / logits / hidden / out_token 在 `inference_engine_create` 按 max_seq 一次分配；T=1 layer workspace 也在 create 预热。GenerateLoop 每步只调 `forward_token_sample`。并行 top-k/top-p 仍是 TODO(perf-*)。
 
 ---
 
 ## 末 token logits slice（已实现）
 
 prefill 时 Engine 一次产出 `[vocab, T]` 的 logits，但采样只需要**最后一个输入位置**上的分布（预测 [下一个 token]）。
-`generate_loop.cpp` 里 `forward_token_step` 在 D2H 时只拷贝：
+`inference_engine_forward_token_sample` 在 GPU 上切末列再采样：
 
 ~~~
 d_logits_last = d_logits + vocab_size * (num_tokens - 1)
@@ -95,7 +95,7 @@ Python：`generate_loop_me.sampler_top_k_host(logits, top_k, seed=0, temperature
 
 CUDA 算子：`src/cuda/sampler_top_k.{h,cu}`。在 **device logits [vocab]** 上做 top-k + softmax/T + 采样；`top_k == 1` 走并行 greedy kernel（忽略 temperature）。
 
-GenerateLoop 过渡路径：`forward_token_step` 在 GPU 末列 logits 上调用 `sampler_top_k_device`，只 D2H **token id**（不再 D2H 整段 vocab）。
+GenerateLoop 生产路径：`inference_engine_forward_token_sample` 在 GPU 末列 logits 上调用 `sampler_top_k_device`（或 top_p），只 D2H **token id**（不再 D2H 整段 vocab）。
 
 Python 测试：`generate_loop_me.sampler_top_k_host`（内部 H2D -> device -> token）。
 
@@ -104,7 +104,7 @@ Python 测试：`generate_loop_me.sampler_top_k_host`（内部 H2D -> device -> 
 - 现状：`sampler_top_k_kernel` 使用 `<<<1, 1>>>`，仅 1 个 thread 顺序扫完整个 vocab，再 softmax + 采样。功能正确，但 GPU SM 几乎空闲；大词表连续 decode 时 launch 开销 + O(vocab) 单线程会成为瓶颈。
 - `top_k == 1` 不受影响：走 `sampler_greedy_kernel`（256 线程并行 argmax）。
 - 目标：多 thread 分块维护 local top-k 再 block merge；或 CUB/thrust select-k；长期对齐 vLLM/SGLang 的 fused top-k + top-p + sample kernel。
-- 相关文件：`src/cuda/sampler_top_k.cu`（kernel + launch）、`src/engine/generate_loop.cpp`（调用点）；roadmap 模块 4 生产化 / Phase 2.6。
+- 相关文件：`src/cuda/sampler_top_k.cu`（kernel + launch）、`src/engine/inference_engine.cpp`（`forward_token_sample` 调用点）；roadmap 模块 4 生产化 / Phase 2.6。
 
 ### `sampler_top_p_host` / `sampler_top_p_device`（已实现）
 
@@ -128,7 +128,7 @@ Python 测试：`generate_loop_me.sampler_top_p_host`（内部 H2D -> device -> 
 
 - 现状：`sampler_top_p_kernel` 使用 `<<<1, 1>>>`，单 thread 扫 vocab、O(n^2) 选择排序、每步 `cudaMallocAsync` probs/indices 临时 buffer。功能正确，大词表连续 decode 时成为瓶颈。
 - 目标：并行 softmax + sort（CUB/thrust）、nucleus mask + sample；长期与 top-k 合并为 fused kernel（vLLM/SGLang 方向）。
-- 相关文件：`src/cuda/sampler_top_p.cu`（kernel + launch + temp alloc）、`src/engine/generate_loop.cpp`（`sample_token_device` 调用点）；roadmap 模块 4 生产化 / Phase 2.6。详见 [`sampler-top-p.md`](sampler-top-p.md)。
+- 相关文件：`src/cuda/sampler_top_p.cu`（kernel + launch + temp alloc）、`src/engine/inference_engine.cpp`（`forward_token_sample` 调用点）；roadmap 模块 4 生产化 / Phase 2.6。详见 [`sampler-top-p.md`](sampler-top-p.md)。
 
 ### 策略组合
 
@@ -239,15 +239,14 @@ Python 写 fixture、`import *.so` 不在这棵树上（nsys 自己的 `dlopen`�
   ▼
 generate_loop_me.generate(engine, prompt, max_new, eos)
   │
-  ├─ prefill: forward_token_step -> inference_engine_forward_token_last_logits
-  ├─ sample_token_device: top_p<1 -> sampler_top_p_device，否则 sampler_top_k_device
-  └─ decode × (max_new-1): forward_token_step(T=1, pos=kv_cache_len)
-       └─ sample_token_device(...)
+  ├─ prefill: inference_engine_forward_token_sample(prompt, T=prompt_len, pos=0)
+  └─ decode × (max_new-1): inference_engine_forward_token_sample(T=1, pos=kv_cache_len)
+       内部：last_logits + sampler_top_k/top_p_device + D2H 1 个 int
 
 Engine 细节（pos_offset、KV、layout）不在本文重复；见 inference_engine_device_api.md。
 ~~~
 
-GenerateLoop **不**调用 `inference_engine_forward_token_host`；host token 单步测试走 Engine binding，GenerateLoop 走 `forward_token_last_logits` + 采样。
+GenerateLoop **不**调用 `inference_engine_forward_token_host`；host token 单步测试走 Engine binding，GenerateLoop 走 `forward_token_sample`。
 
 ---
 
@@ -280,11 +279,12 @@ GenerateLoop e2e 目前用随机 prompt token id，不依赖真实 tokenizer；�
 
 ---
 
-## 生产化（进行中）
+## 生产化
 
-已做：Engine BufferPool + `forward_token_last_logits`；GenerateLoop 不再每步 malloc。
+已做：Engine BufferPool + `forward_token_last_logits` + `forward_token_sample`。
+GenerateLoop 只留循环 + stop，不碰 CUDA。
 
-仍未做：loop 里还有采样 / D2H token；**top_k>1 / top_p<1 为 TODO(perf-*) 单线程 kernel**。
+仍未做：**top_k>1 / top_p<1 为 TODO(perf-*) 单线程 kernel**。
 
 见 lifecycle 第 4.4 节。
 

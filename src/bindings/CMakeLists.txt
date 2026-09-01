@@ -492,6 +492,8 @@ add_library(inference_engine_me MODULE
   $<TARGET_OBJECTS:weight_loader_model>
   $<TARGET_OBJECTS:embed_cuda>
   $<TARGET_OBJECTS:lm_head_cuda>
+  $<TARGET_OBJECTS:sampler_top_k_cuda>
+  $<TARGET_OBJECTS:sampler_top_p_cuda>
   $<TARGET_OBJECTS:rms_norm_cuda>
   $<TARGET_OBJECTS:linear_cuda>
   $<TARGET_OBJECTS:swiglu_cuda>

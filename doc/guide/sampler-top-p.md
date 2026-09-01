@@ -58,7 +58,7 @@ top_k         只保留 logit 最高的 k 个       可选预截断；再在其�
 top_p         按累计 prob 裁 nucleus          在（可能已 top_k 截断的）分布上裁；至少 1 token
 ~~~
 
-**GenerateLoop 分流**（`src/engine/generate_loop.cpp` 中 `sample_token_device`）：
+**GenerateLoop 分流**（Engine `inference_engine_forward_token_sample`）：
 
 ~~~
 条件                         走哪条路径
@@ -96,7 +96,7 @@ top_p < 1                    sampler_top_p_device（temperature + top_p + 可选
   - 现状：`<<<1,1>>>` 单 thread；O(n^2) 选择排序；`sampler_top_p_device` 每 call `cudaMallocAsync` probs/indices
   - 瓶颈：大词表 decode 时 SM 空闲 + 排序/分配开销
   - 目标：CUB/thrust 并行 sort + nucleus mask + sample；或与 top-k 合并 fused kernel（vLLM/SGLang）
-  - 代码：`src/cuda/sampler_top_p.cu`（kernel / launch / temp alloc）；`src/engine/generate_loop.cpp`（调用点）
+  - 代码：`src/cuda/sampler_top_p.cu`（kernel / launch / temp alloc）；`src/engine/inference_engine.cpp`（`forward_token_sample` 调用点）
 
 API 签名见 [`generate_loop_device_api.md`](generate_loop_device_api.md) [Sampler API] 节。
 
@@ -111,5 +111,6 @@ doc/guide/generate_loop_device_api.md   # GenerateLoop + Sampler API
 doc/design/phase2_lifecycle.md          # 模块 4 lifecycle
 src/cuda/sampler_top_p.{h,cu}           # top-p 算子
 src/cuda/sampler_top_k.{h,cu}           # top_k 路径（top_p==1）
-src/engine/generate_loop.{h,cpp}        # sample_token_device 分流
+src/engine/inference_engine.cpp         # forward_token_sample 调 sampler
+src/engine/generate_loop.{h,cpp}        # 循环 + stop
 ~~~

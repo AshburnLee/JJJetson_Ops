@@ -2,60 +2,39 @@
 
 #include <stdio.h>
 
-#include "cuda_utils.h"
 #include "inference_engine.h"
 #include "nvtx_range.h"
-#include "sampler_top_k.h"
-#include "sampler_top_p.h"
 #include "transformer_model.h"
 
-// TODO(perf-topk)：top_k>1 时 sampler_top_k.cu 为 <<<1,1>>> 单线程扫 vocab。
-// TODO(perf-topp)：top_p<1 时 sampler_top_p.cu 为 <<<1,1>>> + O(n^2) sort + 每步 temp malloc。
-//   大词表 decode 前需并行 kernel；grep TODO(perf-topk) / TODO(perf-topp)。
-static int sample_token_device(void *stream, const float *d_logits_last, int vocab_size, int top_k,
-                               float temperature, float top_p, uint64_t seed, int *d_out_token) {
-    if (top_p < 1.f) {
-        return sampler_top_p_device(stream, d_logits_last, vocab_size, top_p, temperature, top_k,
-                                    seed, d_out_token);
-    }
-    return sampler_top_k_device(stream, d_logits_last, vocab_size, top_k, temperature, seed,
-                                d_out_token);
-}
-
-// last_logits（pool H2D + forward）-> 末列采样 -> D2H token id。不每步 malloc。
-// 例：prefill ids=[3,17,42] T=3；decode ids=[x] T=1 三次。
-// T=1 workspace 已在 create 预热；token/logits 共用 pool。
-static int forward_token_step(InferenceEngine *engine, const int *token_ids_host, int num_tokens,
-                              int pos_offset, int vocab_size, int top_k, float temperature,
-                              float top_p, uint64_t seed, int *out_token) {
-    cudaStream_t stream = static_cast<cudaStream_t>(inference_engine_get_stream(engine));
-
-    if (inference_engine_forward_token_last_logits(engine, token_ids_host, num_tokens,
-                                                   pos_offset) != 0) {
-        return -1;
-    }
-
-    const float *d_logits_last = inference_engine_d_logits_last(engine);
-    int *d_out_token = inference_engine_d_out_token(engine);
-    if (d_logits_last == nullptr || d_out_token == nullptr) {
-        return -1;
-    }
-
-    if (sample_token_device(stream, d_logits_last, vocab_size, top_k, temperature, top_p, seed,
-                            d_out_token) != 0) {
-        return -1;
-    }
-    CUDA_CHECK(
-        cudaMemcpyAsync(out_token, d_out_token, sizeof(int), cudaMemcpyDeviceToHost, stream));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-    return 0;
-}
-
-// Module 4 GenerateLoop 入口：在已有 Engine session 上跑 prefill + decode 循环。
+// Module 4 GenerateLoop 生产入口：在已有 Engine session 上跑完 [prefill 一次 + decode 若干次]，
+// 把新生成的 token id 写进 out_token_ids，返回实际生成个数。
+//
+// Big picture 里它在哪？
+//   Loader / Model(权重) / Engine.create 都已经做完；
+//   调用方把 InferenceEngine* 借给 [本函数]，本函数只驱动循环和停条件。
+//   每步调 inference_engine_forward_token_sample（forward + 采样 + D2H token），
+//   本文件不碰 stream / memcpy / sampler kernel。
+//   不 own Engine / KV / 权重，也不 create、destroy、reset session。
+//   对照：Engine 的 forward_token_device 是单步；本函数是把单步串成一次 generate。
+//   图纸：doc/design/phase2_lifecycle.md §4；doc/guide/generate_loop_device_api.md
+//
+// 函数内部顺序（例：prompt_ids=[3,17,42]，prompt_len=3，max_new_tokens=6，eos 关闭）：
+//   INPUT：cache_len=0，out 空
+//   step 0. 校验指针、max_new、采样超参；prompt 与 [prompt+max_new-1] 不得超 max_seq
+//   step 1. prefill：T=3、pos 从 0。Engine sample 一步，cache_len 变成 3，得到 x0
+//   step 2. out[0]=x0。若 x0 等于 eos_token_id（且 eos>=0）则到此返回 1
+//   step 3. decode 循环 step=1..5：每次 T=1，pos=当前 cache_len，输入是上一步的 token。
+//           第 1 次 decode 输入 x0、cache_len=3；得到 x1，cache_len 变成 4；依此类推。
+//           采到 eos 就提前停。OUTPUT：out=[x0..x5] 共 6 个 id，cache_len=8
+//           （公式：len(prompt)+num_generated-1 = 3+6-1）
+//
+// 调用契约：engine 必须已 create 且权重已 load；out_token_ids 由调用方分配，容量 >= max_new。
+// eos_token_id<0 表示不启用早停。失败返回 -1；成功返回写入 out 的个数（可能因 EOS 小于 max_new）。
 extern "C" int generate_loop_run(InferenceEngine *engine, const int *prompt_token_ids,
                                  int prompt_len, int max_new_tokens, int eos_token_id, int top_k,
                                  float temperature, float top_p, uint64_t seed, int *out_token_ids,
                                  int out_capacity) {
+    // step 0：入参与 session 合法性；后面按 prompt_len + max_new - 1 估最终 cache
     if (engine == nullptr || prompt_token_ids == nullptr || prompt_len <= 0 ||
         max_new_tokens <= 0 || out_token_ids == nullptr || out_capacity < max_new_tokens ||
         top_k <= 0 || temperature <= 0.f || top_p <= 0.f || top_p > 1.f) {
@@ -68,7 +47,6 @@ extern "C" int generate_loop_run(InferenceEngine *engine, const int *prompt_toke
         return -1;
     }
 
-    const int vocab_size = cfg->vocab_size;
     const int max_seq_len = cfg->max_seq_len;
     if (prompt_len > max_seq_len) {
         fprintf(stderr, "generate_loop_run: prompt_len exceeds max_seq_len\n");
@@ -84,20 +62,23 @@ extern "C" int generate_loop_run(InferenceEngine *engine, const int *prompt_toke
 
     int num_generated = 0;
     int next_token = 0;
+    // step 1：prefill，T=prompt_len，pos 从 0；采出第一个新 token
     {
         NVTX_RANGE("prefill");
-        if (forward_token_step(engine, prompt_token_ids, prompt_len, 0, vocab_size, top_k,
-                               temperature, top_p, seed, &next_token) != 0) {
+        if (inference_engine_forward_token_sample(engine, prompt_token_ids, prompt_len, 0, top_k,
+                                                  temperature, top_p, seed, &next_token) != 0) {
             fprintf(stderr, "generate_loop_run: prefill forward failed\n");
             return -1;
         }
     }
+    // step 2：写入 out[0]；prefill 就碰到 EOS 则不进 decode
     out_token_ids[num_generated++] = next_token;
     if (eos_token_id >= 0 && next_token == eos_token_id) {
         return num_generated;
     }
 
     int decode_token = next_token;
+    // step 3：decode 循环，每次 T=1、pos=cache_len，输入是上一步 token；EOS 提前停
     {
         NVTX_RANGE("decode");
         for (int step = 1; step < max_new_tokens; ++step) {
@@ -106,8 +87,8 @@ extern "C" int generate_loop_run(InferenceEngine *engine, const int *prompt_toke
                 fprintf(stderr, "generate_loop_run: decode exceeds max_seq_len\n");
                 return -1;
             }
-            if (forward_token_step(engine, &decode_token, 1, cache_len, vocab_size, top_k,
-                                   temperature, top_p, seed, &next_token) != 0) {
+            if (inference_engine_forward_token_sample(engine, &decode_token, 1, cache_len, top_k,
+                                                      temperature, top_p, seed, &next_token) != 0) {
                 fprintf(stderr, "generate_loop_run: decode forward failed\n");
                 return -1;
             }

@@ -47,9 +47,11 @@ int inference_engine_forward_device(InferenceEngine *engine, const InferenceForw
 int inference_engine_forward_token_device(InferenceEngine *engine, const int *d_token_ids,
                                           float *d_logits, int num_tokens, int pos_offset);
 
-// 生产：host token_ids H2D 进 pool，forward，末列 logits 留在 GPU（不每步 malloc）
-int inference_engine_forward_token_last_logits(InferenceEngine *engine, const int *token_ids_host,
-                                               int num_tokens, int pos_offset);
+// 生产：last_logits + 末列采样 + D2H 一个 token id。Python 不暴露。
+int inference_engine_forward_token_sample(InferenceEngine *engine, const int *token_ids_host,
+                                          int num_tokens, int pos_offset, int top_k,
+                                          float temperature, float top_p, uint64_t seed,
+                                          int *out_token_host);
 
 const float *inference_engine_d_logits_last(const InferenceEngine *engine);
 

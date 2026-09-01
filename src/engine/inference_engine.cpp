@@ -11,6 +11,8 @@
 #include "nvtx_range.h"
 #include "transformer_model.h"
 #include "transformer_runner.h"
+#include "sampler_top_k.h"
+#include "sampler_top_p.h"
 
 struct InferenceEngineBufferPool {
     int max_seq_len = 0;
@@ -527,6 +529,65 @@ extern "C" int *inference_engine_d_out_token(InferenceEngine *engine) {
         return nullptr;
     }
     return engine->pool.d_out_token;
+}
+
+// TODO(perf-topk)：top_k>1 时 sampler_top_k.cu 为 <<<1,1>>> 单线程扫 vocab。
+// TODO(perf-topp)：top_p<1 时 sampler_top_p.cu 为 <<<1,1>>> + O(n^2) sort + 每步 temp malloc。
+static int inference_engine_sample_token_device(void *stream, const float *d_logits_last,
+                                                int vocab_size, int top_k, float temperature,
+                                                float top_p, uint64_t seed, int *d_out_token) {
+    if (top_p < 1.f) {
+        return sampler_top_p_device(stream, d_logits_last, vocab_size, top_p, temperature, top_k,
+                                    seed, d_out_token);
+    }
+    return sampler_top_k_device(stream, d_logits_last, vocab_size, top_k, temperature, seed,
+                                d_out_token);
+}
+
+// 生产步进：host token 进，走 last_logits，末列采样，再 D2H 一个 token id。
+// GenerateLoop 每步调这个；本函数 own stream / sampler / memcpy，loop 不碰 CUDA。
+//
+// 例：prompt_ids=[3,17,42] T=3 pos=0
+//   INPUT：host 3 个 int
+//   step 0. 校验 engine / token 指针、T、top_k / temperature / top_p
+//   step 1. last_logits：H2D 进 pool，forward，末列留在 GPU
+//   step 2. 在末列 [vocab] 上采样，写入 pool.d_out_token
+//   step 3. D2H 一个 int。OUTPUT：*out_token_host 是采到的 id
+// decode 同路径，只是 T=1、ids=[上一步 token]、pos=cache_len。
+extern "C" int inference_engine_forward_token_sample(InferenceEngine *engine,
+                                                     const int *token_ids_host, int num_tokens,
+                                                     int pos_offset, int top_k, float temperature,
+                                                     float top_p, uint64_t seed,
+                                                     int *out_token_host) {
+    // step 0：参数合法性检查
+    if (engine == nullptr || token_ids_host == nullptr || out_token_host == nullptr ||
+        num_tokens <= 0 || top_k <= 0 || temperature <= 0.f || top_p <= 0.f || top_p > 1.f) {
+        return -1;
+    }
+
+    // step 1：H2D token + forward，末列 logits 留在 GPU
+    if (inference_engine_forward_token_last_logits(engine, token_ids_host, num_tokens,
+                                                   pos_offset) != 0) {
+        return -1;
+    }
+
+    const float *d_logits_last = inference_engine_d_logits_last(engine);
+    int *d_out_token = inference_engine_d_out_token(engine);
+    if (d_logits_last == nullptr || d_out_token == nullptr) {
+        return -1;
+    }
+
+    // step 2：末列采样，结果写进 pool.d_out_token
+    cudaStream_t stream = engine->stream;
+    if (inference_engine_sample_token_device(stream, d_logits_last, engine->pool.vocab_size, top_k,
+                                             temperature, top_p, seed, d_out_token) != 0) {
+        return -1;
+    }
+    // step 3：把那一个 token id 拷回 host
+    CUDA_CHECK(
+        cudaMemcpyAsync(out_token_host, d_out_token, sizeof(int), cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    return 0;
 }
 
 // 测试：H2D token_ids -> last_logits -> D2H logits [vocab, T] col-major

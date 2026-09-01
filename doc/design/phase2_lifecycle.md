@@ -388,6 +388,7 @@ prefill：`T>1`，`pos=[0..T-1]`。decode：`T=1`，`pos=[cache_len]`，`num_kv_
 
 - [x] C：`inference_engine_create` / `destroy` / `reset` / `forward_device` / `forward_hidden_host`
 - [x] C：`inference_engine_forward_token_last_logits`（host token -> pool H2D + device forward；末列留在 GPU）
+- [x] C：`inference_engine_forward_token_sample`（last_logits + 末列采样 + D2H token id；GenerateLoop 每步调这个）
 - [x] C：`inference_engine_forward_token_host`（H2D/D2H 测试包装，内部调 forward_token_device）
 - [x] Python：`inference_engine_me` — create/destroy/reset/kv_cache_len/forward_hidden_host/forward_token_host
 - [x] `../guide/inference_engine_device_api.md`
@@ -416,7 +417,7 @@ GenerateLoop **借用** `InferenceEngine*`；不 create/destroy Engine、不 own
 
 **Sampler / 文档**
 
-- [x] 末 token logits slice（GenerateLoop 内 `forward_token_step`）
+- [x] 末 token logits slice（Engine `forward_token_sample` 内切末列）
 - [x] greedy（`top_k==1` via `sampler_top_k_device`）
 - [x] temperature（`sampler_top_k_device` 的 `temperature` 参数 + `generate` 透传）
 - [x] top-k（`sampler_top_k_host` + `generate` 的 `top_k`/`seed`）
@@ -428,7 +429,7 @@ GenerateLoop **借用** `InferenceEngine*`；不 create/destroy Engine、不 own
 
 ### 4.4 生产化（骨架后，roadmap 模块 4 / §2.6）
 
-骨架期 `forward_token_step` 每步 cudaMalloc。本轮已做完 1+2：Engine create 按 `max_seq_len` 开辟 session buffer，GenerateLoop 复用，decode 不再每步 malloc。
+骨架期 `forward_token_step` 每步 cudaMalloc。BufferPool + last_logits + GenerateLoop 只留循环已做完。
 
 ~~~
 create_engine 一次（按 cfg.max_seq_len / vocab / hidden）
@@ -437,10 +438,9 @@ create_engine 一次（按 cfg.max_seq_len / vocab / hidden）
   pool.d_hidden_out   float[hidden, max_seq]
   pool.d_out_token    int[1]
 
-每步 last_logits(host token_ids, T, pos)
-  H2D 前 T 个 id -> pool.d_token_ids
-  forward_token_device(pool tokens, pool logits, T)   内部用 pool.d_hidden_out
-  末列 = pool.d_logits + vocab*(T-1)
+每步 sample(host token_ids, T, pos, 采样超参) -> host 上 1 个 token id
+  内部：last_logits（H2D + forward）+ 末列采样 + D2H 1 个 int
+  GenerateLoop 只调这一步，不碰 stream / memcpy / sampler kernel
 
 例：prompt T=3 再 decode 三次 T=1。create 预热 T=1 layer workspace + d_pos[1]；
     decode 三次只见 H2D 1 个 int + forward + 采样。prefill T=3 仍可能第一次懒分配。
@@ -448,12 +448,10 @@ create_engine 一次（按 cfg.max_seq_len / vocab / hidden）
 
 尺寸核对（TinyLlama 2 层切片，max_seq=256）：logits 约 32MB，hidden 约 2MB。Orin 全局显存约 3.8GB，create 时一次分完可接受。
 
-仍未做：
+- [x] GenerateLoop：仅循环 + stop；每步调 `inference_engine_forward_token_sample`
+- [ ] Sampler：TODO(perf-topk) / TODO(perf-topp)
 
-3. GenerateLoop：仅循环 + stop，无 CUDA glue（采样 / D2H token 仍在 loop）
-4. Sampler：TODO(perf-topk) / TODO(perf-topp)
-
-代码：`inference_engine_forward_token_last_logits`；pool 在 `inference_engine_create`。
+代码：`inference_engine_forward_token_sample`（内部 `last_logits`）；pool 在 `inference_engine_create`。
 
 ---
 

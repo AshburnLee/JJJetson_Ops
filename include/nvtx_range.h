@@ -10,12 +10,12 @@
 //
 // 为什么不用手写 nvtxRangePushA / nvtxRangePop：
 //   中间 return / 抛错时容易漏 pop，nsys 时间线会对不齐。
-//   对象活多久，色块就有多长，跟 C++ 作用域绑死。
+//   对象活多久，事件就有多长，跟 C++ 作用域绑死。
 //
 // 例（decode 一步，T=1）：
 //   {
 //     NvtxRange r("decode");          // push "decode"
-//     forward_token_step(...);        // 这段里的 CUDA API / kernel 落在色块内
+//     inference_engine_forward_token_sample(...);  // 这段里的 CUDA API / kernel 落在事件内
 //   }                                 // 析构 pop
 //   nsys 时间线上出现名为 decode 的一段 range。
 //

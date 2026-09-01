@@ -21,7 +21,7 @@ add_library(generate_loop OBJECT
   generate_loop.cpp
 )
 
-target_link_libraries(generate_loop PRIVATE CUDA::cudart CUDA::cublas)
+target_link_libraries(generate_loop PRIVATE CUDA::cudart)
 
 set_target_properties(moe_engine transformer_engine inference_engine generate_loop PROPERTIES
   POSITION_INDEPENDENT_CODE ON
