@@ -1,5 +1,7 @@
 """文本 e2e：encode (CPU) -> GenerateLoop (GPU) -> detokenize (CPU)。
 
+正式入口：py/hf_tokenizer.py（契约 doc/guide/tokenizer_api.md）。
+
 依赖：
   - JJ_HF_LLAMA_SLICE_DIR 指向 2 层 TinyLlama 切片（或本机默认 models/tinyllama_2layer）
   - tokenizer 文件（JJ_HF_TOKENIZER_DIR 或 models/hf_src/TinyLlama__TinyLlama-1.1B-Chat-v1.0）
@@ -13,19 +15,19 @@ from __future__ import annotations
 import os
 
 import generate_loop_me
+import hf_tokenizer
 import inference_engine_me
 import numpy as np
 import transformer_model_me
 
-from hf_tokenizer import (
-    decode,
-    encode,
-    eos_token_id,
-    generate_text,
-    load_tokenizer,
-    resolve_tokenizer_dir,
-)
 from test_hf_llama_real_slice_smoke import _parse_config_txt
+
+decode = hf_tokenizer.decode
+encode = hf_tokenizer.encode
+eos_token_id = hf_tokenizer.eos_token_id
+generate_text = hf_tokenizer.generate_text
+load_tokenizer = hf_tokenizer.load_tokenizer
+resolve_tokenizer_dir = hf_tokenizer.resolve_tokenizer_dir
 
 _DEFAULT_SLICE_REL = os.path.join("models", "tinyllama_2layer")
 

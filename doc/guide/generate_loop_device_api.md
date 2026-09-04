@@ -273,9 +273,10 @@ EOS 在第 1 个新 token 就触发时：`kv_cache_len == prompt_len`（decode �
 generate binding e2e          tests/test_generate_loop.py
 Engine 单步 token->logits     tests/test_inference_engine_forward_token.py
 hidden 路径（无 GenerateLoop） tests/test_inference_engine_forward.py
+文本 e2e（encode/decode）     tests/test_text_generate_e2e.py
 ~~~
 
-GenerateLoop e2e 目前用随机 prompt token id，不依赖真实 tokenizer；与 Engine token 测试同一 fixture 权重策略。
+GenerateLoop 本身仍吃 token id。文本进出走引擎外正式入口 `py/hf_tokenizer.py`（`generate_text`）；契约见 [`tokenizer_api.md`](tokenizer_api.md)。id 级 binding 测试仍用手写 / 随机 id + fixture 权重。
 
 ---
 
@@ -299,5 +300,6 @@ GenerateLoop 只留循环 + stop，不碰 CUDA。
 Python binding    src/bindings/generate_loop_binding.cpp
 生命周期          doc/design/phase2_lifecycle.md（第 4 节）
 Engine API        doc/guide/inference_engine_device_api.md
-e2e 测试          tests/test_generate_loop.py
+文本入口          py/hf_tokenizer.py；doc/guide/tokenizer_api.md
+e2e 测试          tests/test_generate_loop.py；tests/test_text_generate_e2e.py
 ~~~

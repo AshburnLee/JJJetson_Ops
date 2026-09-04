@@ -34,11 +34,19 @@ Phase 1 复用：transformer_layer_linears_forward_device（Engine 内按 layer_
 ### 0.2 端到端时序（跨模块）
 
 ~~~
-[Loader] load(path) → host tensors
-[Model]  model_create + fill_weights → TransformerModel on GPU
+[Loader] load(path) -> host tensors
+[Model]  model_create + fill_weights -> TransformerModel on GPU
 [Engine] engine_create(model)
-         prefill / decode×N  （engine_forward）
-[Sampler] logits → next_token  （GenerateLoop 驱动 decode 循环）
+
+# id 路径（模块 1-4）
+[GenerateLoop] prompt_ids -> 新 token_ids
+
+# 文本路径（模块 5，引擎外 Python）
+[Tokenizer] encode(prompt) -> prompt_ids
+[GenerateLoop] 同上
+[Tokenizer] decode(new_ids) -> 文本
+# 正式入口：py/hf_tokenizer.py 的 generate_text
+
 [Engine] engine_destroy
 [Model]  model_destroy
 ~~~
@@ -460,23 +468,51 @@ create_engine 一次（按 cfg.max_seq_len / vocab / hidden）
 
 ---
 
-## 5. 并行分支（不改四模块对象模型）
+## 5. 模块 — Tokenizer / Detokenizer（引擎外）
+
+**职责**：文本 <-> `token_ids`；**不**持有 Engine / KV / 权重，**不**进 C++。
+
+**正式入口**：`py/hf_tokenizer.py`（`import hf_tokenizer`）。契约见 [`../guide/tokenizer_api.md`](../guide/tokenizer_api.md)。
+`python/` 只放 binding `.so`（gitignore）；引擎外纯 Python 放 `py/`。
+
+~~~
+切面        内容
+──────────────────────────────────────────────────────────────────
+输入        文本 prompt；或已有 token_ids（decode）
+输出        token_ids / 文本；generate_text 只返回新生成文本
+生命周期    无 GPU 对象；词表文件只读；依赖 transformers（CPU）
+边界        Engine 仍是 ids 进、ids 出；本模块夹在 GenerateLoop 两侧
+~~~
+
+**骨架（已实现）**
+
+- [x] 接 TinyLlama HF 词表（不自研 BPE）
+- [x] `encode` / `decode` / `eos_token_id` / `bos_token_id`
+- [x] `generate_text`：encode -> `generate_loop_me.generate` -> decode
+- [x] e2e：`tests/test_text_generate_e2e.py`
+
+**不做**：C++ Tokenizer；streaming 逐 token 吐字；改 `ie_*` 签名。Chat template 可选。
+
+---
+
+## 6. 并行分支（不改四模块对象模型）
 
 - **MoE FFN**：替换 Model 内 layer FFN 路径
 - **热路径性能**：BufferPool、CUDA Graph、profiling（见 opt-roadmap）
-- **落地**（优先于 Graph / MoE）：Tokenizer（引擎外）+ 量化显存（FP16 / INT4）；checklist 见 roadmap 模块 5 / 6
+- **落地模块 6**：量化显存（FP16 / INT4）；模块 5 Tokenizer 见上节
 - **Phase 3**：batching、Paged KV、Radix cache
 
 ---
 
-## 6. 实现顺序（模块骨架 -> 细节）
+## 7. 实现顺序（模块骨架 -> 细节）
 
 1. **WeightLoader** — fixture（可并行起步）
 2. **TransformerModel** — 容器 + embed/lm_head + fixture H2D 拷贝
 3. **InferenceEngine** — session + N-layer forward + prefill/decode
 4. **Sampler / GenerateLoop** — 闭合 token 环
 5. **WeightLoader** — safetensors（1 只读格式 -> 2 fixture roundtrip -> 3 HF 名映射 -> 4 真模型验证）
-6. **落地**：Tokenizer（文本进出）+ 量化显存（整模进 Orin）
-7. **并行**：MoE、Graph（量化已从本条拆到落地）
+6. **落地模块 5**：Tokenizer（文本进出；已收口）
+7. **落地模块 6**：量化显存（整模进 Orin）
+8. **并行**：MoE、Graph
 
-**API 契约**（收工前）：[`../guide/inference_engine_device_api.md`](../guide/inference_engine_device_api.md)（Engine 为主；Loader/Model load API 可同文档分节）。
+**API 契约**：[`../guide/inference_engine_device_api.md`](../guide/inference_engine_device_api.md)；文本入口 [`../guide/tokenizer_api.md`](../guide/tokenizer_api.md)。

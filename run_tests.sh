@@ -3,7 +3,10 @@
 # run_tests.sh — 跑 JJJetson_Ops/tests 下的 Python 单测
 #
 # 前置：已 build（python/*_me.so）；建议 conda activate cuda-ops
-# 脚本会自动设置 PYTHONPATH=python:tests
+# 脚本会自动设置 PYTHONPATH=python:py:tests
+#   python/ — CMake 输出的 *_me.so（gitignore）
+#   py/     — 可提交的纯 Python 正式入口（如 hf_tokenizer）
+#   tests/  — 单测
 #
 # -----------------------------------------------------------------------
 # 用法
@@ -38,7 +41,7 @@ set -x
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
 
-export PYTHONPATH="${ROOT_DIR}/python:${ROOT_DIR}/tests:${PYTHONPATH-}"
+export PYTHONPATH="${ROOT_DIR}/python:${ROOT_DIR}/py:${ROOT_DIR}/tests:${PYTHONPATH-}"
 
 usage() {
   cat <<EOF
